@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 2,
+  "acafConnectFeePercent": 20,
+  "acafDailyFeePercent": 20,
+  "corporateBenefitPerMonth": 44.9,
+  "feeModel": {
+    "gymPortalVisible": "20% sobre o valor de cada diária e sobre o total mensal dos planos Connect (colaborador + benefício corporativo).",
+    "corporateNotShownToGym": "Legado: o benefício corporativo integra o total visível ao parceiro; a taxa de 20% incide sobre a soma."
+  },
+  "connectPlans": [
+    {
+      "id": "connect-start",
+      "name": "ACAF Start",
+      "pricePerMonth": 39.8,
+      "tierIndex": 0,
+      "description": "Plano de entrada na rede ACAF Connect."
+    },
+    {
+      "id": "connect-plus",
+      "name": "ACAF Plus",
+      "pricePerMonth": 69.9,
+      "tierIndex": 1,
+      "description": "Mais flexibilidade dentro da rede."
+    },
+    {
+      "id": "connect-multi",
+      "name": "ACAF Multi",
+      "pricePerMonth": 129.9,
+      "tierIndex": 2,
+      "description": "Para quem treina com frequência em várias unidades."
+    },
+    {
+      "id": "connect-pro",
+      "name": "ACAF Pro",
+      "pricePerMonth": 189.9,
+      "tierIndex": 3,
+      "description": "Tier avançado para uso intenso da rede."
+    },
+    {
+      "id": "connect-total",
+      "name": "ACAF Total",
+      "pricePerMonth": 299.9,
+      "tierIndex": 4,
+      "description": "Máximo nível de benefícios ACAF Connect."
+    }
+  ],
+  "modalityCatalog": [
+    "Musculação",
+    "Natação",
+    "Bike Indoor",
+    "Hidroginástica",
+    "Boxe",
+    "Pilates",
+    "Hatha Yoga",
+    "Full Body",
+    "Funcional",
+    "FitDance"
+  ],
+  "checkInCodePatterns": {
+    "connectMemberPrefix": "CHK-",
+    "dailyPassPrefix": "ACAF-",
+    "memberCodeHelp": "CHK-{UNIT_ID}-{DAY_OF_MONTH} — gerado no app associado",
+    "dailyPassCodeHelp": "ACAF-{TOKEN}-{UNIT_ID} — QR da diária na carteira"
+  },
+  "checkInGeo": {
+    "maxRadiusKm": 1,
+    "help": "Check-in no app só é permitido dentro de 1 km da unidade, com GPS ativo. A liberação na academia é automática."
+  },
+  "checkInLimits": {
+    "maxPerPersonPerDay": 1,
+    "connectScope": "network",
+    "dailyPassScope": "unit",
+    "help": "Cada pessoa pode fazer apenas 1 check-in por dia (Connect: em qualquer unidade da rede; diária: na unidade da compra)."
+  }
+}
