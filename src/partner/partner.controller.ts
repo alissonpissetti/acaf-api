@@ -434,6 +434,12 @@ export class PartnerController {
 export class SharedController {
   constructor(private readonly partner: PartnerService) {}
 
+  /** Ping público — use GET /test (sem prefixo /api) para checar se o serviço responde. */
+  @Get('test')
+  test() {
+    return this.partner.getTest();
+  }
+
   @Get('shared/connect_domain.json')
   @Header('Content-Type', 'application/json')
   connectDomain(@Res() res: Response) {

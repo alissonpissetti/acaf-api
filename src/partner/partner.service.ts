@@ -85,6 +85,16 @@ export class PartnerService {
     return { status: 'ok', service: 'acaf-api' };
   }
 
+  getTest() {
+    return {
+      ok: true,
+      service: 'acaf-api',
+      message: 'API no ar',
+      timestamp: new Date().toISOString(),
+      uptimeSeconds: Math.floor(process.uptime()),
+    };
+  }
+
   async getDomain() {
     const domain = getDomain() as Record<string, unknown>;
     return {

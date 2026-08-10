@@ -10,7 +10,10 @@ async function bootstrap() {
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
   app.setGlobalPrefix('api', {
-    exclude: [{ path: 'shared/connect_domain.json', method: RequestMethod.GET }],
+    exclude: [
+      { path: 'test', method: RequestMethod.GET },
+      { path: 'shared/connect_domain.json', method: RequestMethod.GET },
+    ],
   });
   app.enableCors();
 

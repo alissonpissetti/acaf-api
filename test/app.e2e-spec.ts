@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, RequestMethod } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -13,12 +13,24 @@ describe('Partner API (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.setGlobalPrefix('api');
+    app.setGlobalPrefix('api', {
+      exclude: [{ path: 'test', method: RequestMethod.GET }],
+    });
     await app.init();
   });
 
   afterEach(async () => {
     await app.close();
+  });
+
+  it('/test (GET)', () => {
+    return request(app.getHttpServer())
+      .get('/test')
+      .expect(200)
+      .expect((res) => {
+        expect(res.body.ok).toBe(true);
+        expect(res.body.service).toBe('acaf-api');
+      });
   });
 
   it('/api/health (GET)', () => {
