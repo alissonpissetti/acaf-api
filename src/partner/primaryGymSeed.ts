@@ -1,4 +1,5 @@
 import { normalizeHolderKey } from './checkIn';
+import { recomputeConnectPayouts } from './connectPayout';
 import type { ApiStore, ConnectMemberRecord, ConnectPlanId, MonthlyPayout } from './types';
 import { syncConnectMemberStudent } from './connectMember';
 
@@ -160,6 +161,8 @@ export function applyCarpeBatelPrimaryScenario(
 
   const membersAfter = (store.connectMembers ?? []).length;
   membersCreated += Math.max(0, membersAfter - membersBefore - membersAssigned);
+
+  recomputeConnectPayouts(store);
 
   return {
     unitId: unit.id,

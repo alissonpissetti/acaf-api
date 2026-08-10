@@ -78,7 +78,17 @@ export function recomputeConnectPayouts(store: ApiStore): void {
 
     const history = store.payoutHistoryByUnit[unit.id];
     if (history?.length) {
-      history[history.length - 1] = { ...updated };
+      const lastIdx = history.length - 1;
+      const last = history[lastIdx];
+      // Só atualiza Connect no mês em aberto; meses fechados preservam o extrato histórico.
+      if (last.status !== 'paid') {
+        history[lastIdx] = {
+          ...last,
+          connectLines,
+          connectRepasseTotal,
+          totalNet: Math.round((last.dailyPassNet + connectRepasseTotal) * 100) / 100,
+        };
+      }
     }
   }
 }
