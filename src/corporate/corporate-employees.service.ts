@@ -223,12 +223,19 @@ export class CorporateEmployeesService {
     this.assertCanInvite(row);
     const { token, inviteUrl } = await this.ensureInviteToken(company, row);
 
-    await this.mail.sendEmployeeInvite({
+    const mailResult = await this.mail.sendEmployeeInvite({
       to: row.user.email,
       employeeName: row.user.name,
       companyName: company.tradeName || company.legalName,
       token,
     });
+
+    if (!mailResult.sent) {
+      throw new BadRequestException(
+        mailResult.reason ??
+          'Não foi possível enviar o e-mail. Use "Copiar link" e envie manualmente ao colaborador.',
+      );
+    }
 
     await this.markInviteSent(row);
     return this.toDto(row, inviteUrl);

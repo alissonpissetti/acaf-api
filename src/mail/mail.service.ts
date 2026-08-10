@@ -1,14 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
 
 export type SendMailResult = {
   sent: boolean;
   inviteUrl?: string;
+  reason?: string;
 };
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
+  private transporter: Transporter | null = null;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -21,6 +25,26 @@ export class MailService {
 
   buildInviteUrl(token: string): string {
     return `${this.getCorporateAppUrl()}/ativar?token=${encodeURIComponent(token)}`;
+  }
+
+  private getTransporter(): Transporter | null {
+    if (this.transporter) return this.transporter;
+
+    const host = this.config.get<string>('SMTP_HOST');
+    if (!host) return null;
+
+    const port = Number(this.config.get<string>('SMTP_PORT') ?? 587);
+    const user = this.config.get<string>('SMTP_USER');
+    const pass = this.config.get<string>('SMTP_PASS');
+
+    this.transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465 || this.config.get<string>('SMTP_SECURE') === 'true',
+      auth: user && pass ? { user, pass } : undefined,
+    });
+
+    return this.transporter;
   }
 
   async sendEmployeeInvite(input: {
@@ -41,15 +65,47 @@ export class MailService {
       'Este link expira em 7 dias.',
     ].join('\n');
 
-    const host = this.config.get<string>('SMTP_HOST');
-    if (!host) {
-      this.logger.log(`[dev] Convite para ${input.to}: ${inviteUrl}`);
-      return { sent: false, inviteUrl };
+    const transporter = this.getTransporter();
+    if (!transporter) {
+      this.logger.warn(
+        `SMTP_HOST não configurado — convite não enviado para ${input.to}. Link: ${inviteUrl}`,
+      );
+      return {
+        sent: false,
+        inviteUrl,
+        reason: 'SMTP não configurado na API. Use "Copiar link" ou configure SMTP_HOST.',
+      };
     }
 
-    this.logger.warn(
-      `SMTP configurado mas nodemailer não instalado. Link dev: ${inviteUrl}`,
-    );
-    return { sent: false, inviteUrl };
+    const from =
+      this.config.get<string>('SMTP_FROM')?.trim() ||
+      this.config.get<string>('SMTP_USER')?.trim() ||
+      'noreply@acaf.com.br';
+
+    try {
+      await transporter.sendMail({
+        from,
+        to: input.to,
+        subject,
+        text: body,
+        html: [
+          `<p>Olá${input.employeeName ? `, <strong>${input.employeeName}</strong>` : ''}!</p>`,
+          `<p><strong>${input.companyName}</strong> convidou você para o benefício ACAF Connect.</p>`,
+          `<p><a href="${inviteUrl}">Ativar conta e definir senha</a></p>`,
+          `<p style="color:#666;font-size:13px">Ou copie o link: ${inviteUrl}</p>`,
+          '<p style="color:#666;font-size:13px">Este link expira em 7 dias.</p>',
+        ].join(''),
+      });
+      this.logger.log(`Convite enviado por e-mail para ${input.to}`);
+      return { sent: true, inviteUrl };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Falha ao enviar e-mail para ${input.to}: ${message}`);
+      return {
+        sent: false,
+        inviteUrl,
+        reason: `Falha ao enviar e-mail: ${message}`,
+      };
+    }
   }
 }
