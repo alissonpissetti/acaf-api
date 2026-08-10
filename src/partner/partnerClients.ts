@@ -6,7 +6,7 @@ import type {
   PrimaryGymChangeRecord,
 } from './types';
 import { normalizeHolderKey } from './checkIn';
-import { DEMO_TODAY } from './demoSeedGenerators';
+import { currentMonthPrefix } from './student-stats';
 import { getDomain } from './store';
 import type { UnitScope } from './aggregatePayout';
 
@@ -197,7 +197,7 @@ export function listPartnerClients(
   unitScope: UnitScope = 'all',
 ): PartnerClientSummary[] {
   const scopeUnits = scopedUnitIds(unitIds, unitScope, store.activeUnitId);
-  const monthPrefix = DEMO_TODAY.slice(0, 7);
+  const monthPrefix = currentMonthPrefix();
   const map = new Map<string, ClientAccumulator>();
 
   for (const entry of store.checkInLog) {

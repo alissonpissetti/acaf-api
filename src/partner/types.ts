@@ -126,7 +126,7 @@ export type GymStudent = {
   channel: StudentChannel;
   connectPlanId?: ConnectPlanId;
   corporateBenefitPerMonth?: number;
-  /** Slug estável da empresa empregadora (demo). */
+  /** Slug estável da empresa empregadora. */
   companySlug?: string;
   /** Nome fantasia da empresa empregadora. */
   companyName?: string;
@@ -257,21 +257,10 @@ export type PrimaryGymChangeRecord = {
   changedAt: string;
 };
 
-import { buildDemoStore } from './demoSeed';
 import { aggregatePayouts, type UnitScope } from './aggregatePayout';
 import { recentCheckInsForPortal } from './checkInLog';
 import type { PendingCheckInRequest } from './pendingCheckIn';
 import { createEmptyStore } from './store-normalize';
-
-/** Usado apenas por scripts de seed/demo locais — não no boot da API. */
-export function createInitialStore(): ApiStore {
-  return buildDemoStore();
-}
-
-/** Store vazio para produção. */
-export function createProductionStore(): ApiStore {
-  return createEmptyStore();
-}
 
 export type { UnitScope };
 

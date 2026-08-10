@@ -15,7 +15,6 @@ import { CorporateCompaniesService } from './corporate-companies.service';
 import { CorporateController } from './corporate.controller';
 import { CorporateEmployeesService } from './corporate-employees.service';
 import { CorporateInvoicesService } from './corporate-invoices.service';
-import { CorporateSeedService } from './corporate-seed.service';
 
 @Module({
   imports: [
@@ -38,7 +37,6 @@ import { CorporateSeedService } from './corporate-seed.service';
     CorporateCompaniesService,
     CorporateEmployeesService,
     CorporateInvoicesService,
-    CorporateSeedService,
   ],
   exports: [
     CorporateAccessService,

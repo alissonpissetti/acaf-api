@@ -31,6 +31,10 @@ export class Company {
   @Column({ type: 'varchar', length: 16, default: 'pending' })
   status: CompanyStatus;
 
+  /** Código de adesão para colaboradores no app (ex.: ACAF-2026). */
+  @Column({ name: 'enrollment_code', type: 'varchar', length: 32, nullable: true, unique: true })
+  enrollmentCode: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

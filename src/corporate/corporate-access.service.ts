@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { UsersService } from '../users/users.service';
 import { CompanyAccess } from './company-access.entity';
 import { Company, type CompanyStatus } from './company.entity';
+import { normalizeEnrollmentCode } from './enrollment-code';
 
 export type LinkedCorporateUser = {
   id: string;
@@ -118,5 +119,13 @@ export class CorporateAccessService {
     if (!company) throw new NotFoundException('Empresa não encontrada.');
     company.status = status;
     return this.companies.save(company);
+  }
+
+  async findActiveByEnrollmentCode(code: string): Promise<Company | null> {
+    const normalized = normalizeEnrollmentCode(code);
+    if (!normalized) return null;
+    return this.companies.findOne({
+      where: { enrollmentCode: normalized, status: 'active' },
+    });
   }
 }

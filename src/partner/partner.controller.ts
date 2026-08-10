@@ -258,12 +258,6 @@ export class PartnerController {
     return this.partner.dismissPending(id, body.unitId, body.scope, req.user.unitIds);
   }
 
-  @Get('check-ins/demo-code')
-  @UseGuards(PartnerJwtAuthGuard)
-  demoCode(@Query('unitId') unitId: string | undefined, @Req() req: PartnerRequest) {
-    return this.partner.getDemoCodes(unitId, req.user.unitIds);
-  }
-
   @Get('units/:unitId/modality-slots')
   @UseGuards(PartnerJwtAuthGuard)
   getModalitySlots(@Param('unitId') unitId: string, @Req() req: PartnerRequest) {

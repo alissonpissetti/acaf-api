@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ApiStore } from './types';
 import { normalizeHolderKey } from './checkIn';
-import { applyStudentStatsFromLog } from './demoSeedGenerators';
+import { applyStudentStatsFromLog } from './student-stats';
 import { brDateKeyToday } from './gymLocalTime';
 
 const ACAF_FEE_PERCENT = 20;

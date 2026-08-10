@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { UnitScope } from './aggregatePayout';
-import { applySuccessfulCheckIn, demoMemberCode, duplicateCheckInTodayMessage, normalizeHolderKey, requestGeoCheckIn as processGeoCheckInRequest, validateCheckInCode } from './checkIn';
+import { applySuccessfulCheckIn, duplicateCheckInTodayMessage, normalizeHolderKey, requestGeoCheckIn as processGeoCheckInRequest, validateCheckInCode } from './checkIn';
 import {
   approvePendingCheckIn,
   dismissPendingCheckIn,
@@ -49,7 +49,8 @@ import {
   type ModalitySlotTemplate,
 } from './types';
 import { buildNewUnit, emptyMonthlyPayout, type CreateUnitInput } from './unitFactory';
-import { demoCompanyForEnrollmentCode, normalizeEnrollmentCode } from '../corporate/demo-corporate-companies';
+import { CorporateAccessService } from '../corporate/corporate-access.service';
+import { normalizeEnrollmentCode } from '../corporate/enrollment-code';
 import { registerDailyPassPurchase } from './dailyPassSales';
 import { isRemotePhotoUrl, resolveCatalogPhotoUrl, sanitizeUnitPhotosForApi } from './photoUrls';
 import { UnitScheduleService } from './unit-schedule.service';
@@ -79,6 +80,7 @@ export class PartnerService {
     private readonly modalities: ModalitiesService,
     private readonly unitSchedule: UnitScheduleService,
     private readonly unitCoordinates: UnitCoordinatesService,
+    private readonly corporateAccess: CorporateAccessService,
   ) {}
 
   getHealth() {
@@ -484,15 +486,6 @@ export class PartnerService {
     };
   }
 
-  getDemoCodes(unitId?: string, unitIds?: string[]) {
-    const id = unitId ?? unitIds?.[0] ?? 'g_carpe';
-    if (unitIds?.length) assertUnitAccess(id, unitIds);
-    return {
-      memberToday: demoMemberCode(id),
-      dailyDemo: 'ACAF-MCK-DEMO-G_CARPE',
-    };
-  }
-
   getConnectMember(holderName: string): ConnectMemberProfile | null {
     return getConnectMemberProfile(holderName);
   }
@@ -699,13 +692,13 @@ export class PartnerService {
     };
   }
 
-  validateConnectEnrollmentCode(rawCode: string) {
+  async validateConnectEnrollmentCode(rawCode: string) {
     const normalized = normalizeEnrollmentCode(rawCode);
     if (!normalized) {
       throw new BadRequestException('Informe o código de adesão.');
     }
-    const company = demoCompanyForEnrollmentCode(normalized);
-    if (!company || company.status !== 'active') {
+    const company = await this.corporateAccess.findActiveByEnrollmentCode(normalized);
+    if (!company) {
       throw new BadRequestException('Código inválido ou expirado. Verifique com o RH da sua empresa.');
     }
     return {

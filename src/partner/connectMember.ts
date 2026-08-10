@@ -7,7 +7,6 @@ import type {
 } from './types';
 import { normalizeHolderKey } from './checkIn';
 import { loadStore, updateStore } from './store';
-import { withDemoCorporateFields } from '../corporate/demo-corporate-companies';
 import { recomputeConnectPayouts } from './connectPayout';
 
 export const MIN_PRIMARY_CHECKINS_TO_CHANGE = 12;
@@ -318,8 +317,6 @@ export function syncConnectMemberStudent(store: ApiStore, member: ConnectMemberR
     lastVisit: '—',
     dailyPassesThisMonth: 0,
   };
-
-  student = withDemoCorporateFields(student);
 
   const idx = store.students.findIndex((s) => s.id === studentId);
   if (idx >= 0) {

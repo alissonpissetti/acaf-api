@@ -16,7 +16,7 @@ import {
   validateConnectCheckInAtUnit,
 } from './connectMember';
 import { recomputeConnectPayouts } from './connectPayout';
-import { applyStudentStatsFromLog, DEMO_TODAY } from './demoSeedGenerators';
+import { applyStudentStatsFromLog, currentMonthPrefix } from './student-stats';
 
 export type ValidateResult =
   | { ok: true; type: CheckInLogEntry['type']; holderName: string; message: string }
@@ -362,11 +362,6 @@ export function requestGeoCheckIn(
   return { ok: true, entry, message: effectiveResult.message };
 }
 
-/** Gera código CHK demo igual ao app Flutter MemberCheckInScreen. */
-export function demoMemberCode(unitId: string, date = new Date()): string {
-  return `CHK-${normalizeUnitToken(unitId)}-${date.getDate()}`;
-}
-
 export function listCheckInsForUnit(
   store: ApiStore,
   unitId: string,
@@ -399,7 +394,7 @@ export function cancelCheckInEntry(
     recomputeConnectPayouts(store);
   }
 
-  const monthPrefix = DEMO_TODAY.slice(0, 7);
+  const monthPrefix = currentMonthPrefix();
   store.students = applyStudentStatsFromLog(store.students, store.checkInLog, monthPrefix);
 
   return entry;

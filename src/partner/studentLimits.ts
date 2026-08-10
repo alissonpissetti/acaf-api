@@ -1,4 +1,4 @@
-/** Máximo de diárias compradas por aluno no mês (demo e regras de negócio). */
+/** Máximo de diárias compradas por aluno no mês (regra de negócio). */
 export const MAX_DAILY_PASSES_PER_MONTH = 3;
 
 /** Máximo de check-ins por aluno no mês (planos mensais e diária). */
