@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { GymStudent } from '../partner/types';
-import { loadStore, saveStore } from '../partner/store';
+import { loadStore, saveStore, whenStoreReady } from '../partner/store';
 import { UsersService } from './users.service';
 
 @Injectable()
@@ -18,6 +18,7 @@ export class UsersStoreSyncService implements OnModuleInit {
   }
 
   async syncStoreStudents(): Promise<void> {
+    await whenStoreReady();
     let store;
     try {
       store = loadStore();

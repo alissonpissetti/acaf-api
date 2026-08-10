@@ -6,8 +6,7 @@ import {
   normalizeModalitySlotOverrides,
   normalizeModalitySlotTemplates,
 } from './modalitySchedule';
-import { DEMO_UNIT_IDS } from './demoSeedMerge';
-import { loadStore } from './store';
+import { loadStore, whenStoreReady } from './store';
 import type { GymUnit, ModalitySlotOverride, ModalitySlotTemplate } from './types';
 import { UnitSchedule } from './unit-schedule.entity';
 
@@ -28,8 +27,8 @@ export class UnitScheduleService implements OnModuleInit {
 
   async onModuleInit() {
     try {
+      await whenStoreReady();
       await this.migrateFromStoreIfNeeded();
-      await this.syncDemoSchedulesFromStore();
     } catch (err) {
       this.logger.error('Falha ao migrar agendas do store para o banco', err);
     }
@@ -65,41 +64,7 @@ export class UnitScheduleService implements OnModuleInit {
     }
 
     if (migrated > 0) {
-      this.logger.log(`${migrated} agenda(s) migrada(s) de store.json para MariaDB.`);
-    }
-  }
-
-  /** Mantém faixas demo (Portão etc.) alinhadas ao store após `npm run seed:store`. */
-  private async syncDemoSchedulesFromStore() {
-    let store;
-    try {
-      store = loadStore();
-    } catch {
-      return;
-    }
-
-    let synced = 0;
-    for (const unit of store.units) {
-      if (!DEMO_UNIT_IDS.has(unit.id)) continue;
-      const templates = normalizeModalitySlotTemplates(unit, unit.modalitySlotTemplates ?? []);
-      const overrides = normalizeModalitySlotOverrides(unit, unit.modalitySlotOverrides ?? []);
-      if (!templates.length && !overrides.length) continue;
-
-      const instructors = mergeInstructorRegistry(unit, templates, overrides);
-      let row = await this.repo.findOne({ where: { unitId: unit.id } });
-      if (!row) {
-        row = this.repo.create({ unitId: unit.id, templates, overrides, instructors });
-      } else {
-        row.templates = templates;
-        row.overrides = overrides;
-        row.instructors = instructors;
-      }
-      await this.repo.save(row);
-      synced += 1;
-    }
-
-    if (synced > 0) {
-      this.logger.log(`${synced} agenda(s) demo sincronizada(s) com store.json.`);
+      this.logger.log(`${migrated} agenda(s) migrada(s) para MariaDB.`);
     }
   }
 

@@ -18,6 +18,7 @@ import { CompanyInvite } from './corporate/company-invite.entity';
 import { CompanyInvoice } from './corporate/company-invoice.entity';
 import { CorporateModule } from './corporate/corporate.module';
 import { UnitSchedule } from './partner/unit-schedule.entity';
+import { PartnerStore } from './partner/partner-store.entity';
 import { User } from './users/user.entity';
 import { UsersModule } from './users/users.module';
 
@@ -48,6 +49,7 @@ import { UsersModule } from './users/users.module';
             CompanyInvite,
             CompanyInvoice,
             UnitSchedule,
+            PartnerStore,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,

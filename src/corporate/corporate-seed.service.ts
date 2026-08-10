@@ -31,6 +31,10 @@ export class CorporateSeedService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    if (process.env.ACAF_SEED_DEMO !== 'true') {
+      this.logger.log('Seed demo corporativo ignorado (defina ACAF_SEED_DEMO=true para ativar).');
+      return;
+    }
     const companyBySlug = await this.ensureDemoCompanies();
     await this.ensureDemoManager(companyBySlug.get('corp_tagsa')!);
     await this.syncEmployeesFromStore(companyBySlug);
