@@ -18,6 +18,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { PartnerJwtAuthGuard } from '../partner-auth/partner-jwt-auth.guard';
 import type { GymUnit, ModalitySlotOverride, ModalitySlotTemplate, ConnectPlanId } from './types';
@@ -30,6 +31,8 @@ type PartnerRequest = Request & {
   user: { platformUserId: string; unitIds: string[] };
 };
 
+@ApiTags('App & Parceiro')
+@ApiBearerAuth('partner-jwt')
 @Controller()
 export class PartnerController {
   constructor(
@@ -430,12 +433,14 @@ export class PartnerController {
   }
 }
 
+@ApiTags('Público')
 @Controller()
 export class SharedController {
   constructor(private readonly partner: PartnerService) {}
 
   /** Ping público — use GET /test (sem prefixo /api) para checar se o serviço responde. */
   @Get('test')
+  @ApiOperation({ summary: 'Ping de disponibilidade (sem /api)' })
   test() {
     return this.partner.getTest();
   }

@@ -90,6 +90,8 @@ export class PartnerService {
       ok: true,
       service: 'acaf-api',
       message: 'API no ar',
+      docs: '/docs',
+      openapi: '/docs/openapi.json',
       timestamp: new Date().toISOString(),
       uptimeSeconds: Math.floor(process.uptime()),
     };

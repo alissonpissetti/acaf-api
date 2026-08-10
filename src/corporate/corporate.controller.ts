@@ -8,6 +8,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { CorporateAccessService } from './corporate-access.service';
 import { CorporateCompaniesService } from './corporate-companies.service';
@@ -19,6 +20,8 @@ type CorpRequest = Request & {
   user: { userId: string; companyIds: string[]; companyId: string };
 };
 
+@ApiTags('Corporativo')
+@ApiBearerAuth('corporate-jwt')
 @Controller('corporate')
 export class CorporateController {
   constructor(

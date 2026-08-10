@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { User, UserRole } from './user.entity';
@@ -6,6 +7,8 @@ import { UsersService } from './users.service';
 
 type AuthRequest = Request & { user: { userId: string } };
 
+@ApiTags('Admin · API')
+@ApiBearerAuth('admin-jwt')
 @Controller('admin/users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {

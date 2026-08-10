@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Body, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { CorporateAuthService } from './corporate-auth.service';
 import { CorporateJwtAuthGuard } from './corporate-jwt-auth.guard';
@@ -7,6 +8,7 @@ type CorpAuthRequest = Request & {
   user: { userId: string; companyId: string; companyIds: string[] };
 };
 
+@ApiTags('Corporativo · Auth')
 @Controller('corporate/auth')
 export class CorporateAuthController {
   constructor(private readonly auth: CorporateAuthService) {}
@@ -40,6 +42,7 @@ export class CorporateAuthController {
 
   @Get('me')
   @UseGuards(CorporateJwtAuthGuard)
+  @ApiBearerAuth('corporate-jwt')
   me(@Req() req: CorpAuthRequest) {
     return this.auth.me(req.user.userId, req.user.companyId);
   }

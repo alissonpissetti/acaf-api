@@ -15,12 +15,15 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { GymUnit, NetworkSocialContacts } from './types';
 import type { CompanyStatus } from '../corporate/company.entity';
 import type { UnitWeeklySchedule } from './weeklySchedule';
 import { AdminService } from './admin.service';
 
+@ApiTags('Admin · API')
+@ApiBearerAuth('admin-jwt')
 @Controller('admin')
 @UseGuards(JwtAuthGuard)
 export class AdminController {
