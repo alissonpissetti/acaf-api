@@ -27,6 +27,8 @@ export function registerDailyPassPurchase(
     code: string;
     pricePaid: number;
     occurrenceDate?: string;
+    companyName?: string;
+    companySlug?: string;
   },
 ): void {
   const holderName = input.holderName.trim() || 'Visitante app';
@@ -35,6 +37,8 @@ export function registerDailyPassPurchase(
   const saleDate = input.occurrenceDate?.trim() || brDateKeyToday();
   const monthPrefix = saleDate.slice(0, 7);
   const holderKey = normalizeHolderKey(holderName);
+  const companyName = input.companyName?.trim();
+  const companySlug = input.companySlug?.trim();
 
   const alreadyLogged = store.checkInLog.some(
     (e) => e.code.toUpperCase() === codeNorm && e.type === 'daily_pass',
@@ -70,9 +74,17 @@ export function registerDailyPassPurchase(
       lastVisit: saleDate,
       dailyPassesThisMonth: 0,
       dailyPassPricePaid: gross,
+      companyName: companyName || undefined,
+      companySlug: companySlug || undefined,
     });
   } else {
     existingStudent.dailyPassPricePaid = gross;
+    if (companyName && !existingStudent.companyName?.trim()) {
+      existingStudent.companyName = companyName;
+    }
+    if (companySlug && !existingStudent.companySlug?.trim()) {
+      existingStudent.companySlug = companySlug;
+    }
   }
 
   store.students = applyStudentStatsFromLog(store.students, store.checkInLog, monthPrefix);

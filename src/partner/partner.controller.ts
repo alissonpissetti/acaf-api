@@ -209,6 +209,8 @@ export class PartnerController {
       type?: 'daily_pass';
       offerId?: string;
       occurrenceDate?: string;
+      companyName?: string;
+      companySlug?: string;
     },
   ) {
     return this.partner.issueCheckIn(body);

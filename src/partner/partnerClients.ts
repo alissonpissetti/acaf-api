@@ -114,6 +114,32 @@ function mergeStudentFields(acc: ClientAccumulator, student: GymStudent): void {
   if (student.name.trim().length >= acc.name.trim().length) acc.name = student.name.trim();
 }
 
+function resolveCompanyForHolder(store: ApiStore, holderKey: string): string | undefined {
+  for (const member of store.connectMembers ?? []) {
+    if (member.holderKey === holderKey && member.companyName?.trim()) {
+      return member.companyName.trim();
+    }
+  }
+  for (const student of store.students) {
+    if (normalizeHolderKey(student.name) === holderKey && student.companyName?.trim()) {
+      return student.companyName.trim();
+    }
+  }
+  return undefined;
+}
+
+/** Vincula empresa do cadastro global (qualquer unidade) ao cliente da unidade. */
+function enrichClientFromGlobalStore(store: ApiStore, acc: ClientAccumulator): void {
+  for (const student of store.students) {
+    if (normalizeHolderKey(student.name) !== acc.holderKey) continue;
+    mergeStudentFields(acc, student);
+  }
+  if (!acc.companyName?.trim()) {
+    const company = resolveCompanyForHolder(store, acc.holderKey);
+    if (company) acc.companyName = company;
+  }
+}
+
 function relationshipFor(acc: ClientAccumulator): PartnerClientRelationship {
   if (acc.isPrimaryMember) {
     if (acc.hadDailyCheckIn && !acc.hadConnectCheckIn) return 'mixed';
@@ -224,6 +250,10 @@ export function listPartnerClients(
     const acc = ensureClient(map, student.name);
     mergeStudentFields(acc, student);
     acc.studentIds.add(student.id);
+  }
+
+  for (const acc of map.values()) {
+    enrichClientFromGlobalStore(store, acc);
   }
 
   return [...map.values()]

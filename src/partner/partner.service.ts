@@ -313,6 +313,8 @@ export class PartnerService {
     type?: 'daily_pass';
     offerId?: string;
     occurrenceDate?: string;
+    companyName?: string;
+    companySlug?: string;
   }) {
     const store = loadStore();
     const unit = store.units.find((u) => u.id === body.unitId);
@@ -361,6 +363,8 @@ export class PartnerService {
         code: body.code,
         pricePaid: pricePaid ?? unit.dailyPassPrice,
         occurrenceDate,
+        companyName: body.companyName,
+        companySlug: body.companySlug,
       });
     });
     return { ok: true, issued: body.code, pricePaid: pricePaid ?? unit.dailyPassPrice };

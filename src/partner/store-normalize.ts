@@ -1,4 +1,4 @@
-import { dedupeCheckInLogByPersonPerDay } from './checkIn';
+import { dedupeCheckInLogByPersonPerDay, normalizeHolderKey } from './checkIn';
 import { mergePlanSpecsWithDomain } from './planSpecs';
 import {
   normalizeModalitySlotOverrides,
@@ -137,5 +137,28 @@ export function normalizeStoreSnapshot(store: ApiStore): ApiStore {
     store.primaryGymChanges = [];
   }
 
+  backfillStudentCompanies(store);
+
   return store;
+}
+
+function backfillStudentCompanies(store: ApiStore): void {
+  for (const student of store.students) {
+    if (student.companyName?.trim()) continue;
+    const holderKey = normalizeHolderKey(student.name);
+    for (const member of store.connectMembers ?? []) {
+      if (member.holderKey === holderKey && member.companyName?.trim()) {
+        student.companyName = member.companyName.trim();
+        break;
+      }
+    }
+    if (student.companyName?.trim()) continue;
+    for (const other of store.students) {
+      if (normalizeHolderKey(other.name) !== holderKey) continue;
+      if (!other.companyName?.trim()) continue;
+      student.companyName = other.companyName.trim();
+      if (!student.companySlug && other.companySlug) student.companySlug = other.companySlug;
+      break;
+    }
+  }
 }
