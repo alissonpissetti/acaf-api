@@ -5,7 +5,7 @@ import type { Transporter } from 'nodemailer';
 
 export type SendMailResult = {
   sent: boolean;
-  inviteUrl?: string;
+  enrollmentCode?: string;
   reason?: string;
 };
 
@@ -16,15 +16,9 @@ export class MailService {
 
   constructor(private readonly config: ConfigService) {}
 
-  getCorporateAppUrl(): string {
-    return (
-      this.config.get<string>('CORPORATE_APP_URL')?.replace(/\/$/, '') ??
-      'http://127.0.0.1:5177'
-    );
-  }
-
-  buildInviteUrl(token: string): string {
-    return `${this.getCorporateAppUrl()}/ativar?token=${encodeURIComponent(token)}`;
+  getConnectAppUrl(): string | null {
+    const raw = this.config.get<string>('CONNECT_APP_URL')?.trim();
+    return raw ? raw.replace(/\/$/, '') : null;
   }
 
   private getTransporter(): Transporter | null {
@@ -47,33 +41,42 @@ export class MailService {
     return this.transporter;
   }
 
-  async sendEmployeeInvite(input: {
+  async sendEmployeeEnrollmentCode(input: {
     to: string;
     employeeName: string;
     companyName: string;
-    token: string;
+    enrollmentCode: string;
   }): Promise<SendMailResult> {
-    const inviteUrl = this.buildInviteUrl(input.token);
-    const subject = `Convite ACAF Connect — ${input.companyName}`;
+    const code = input.enrollmentCode.trim();
+    const appUrl = this.getConnectAppUrl();
+    const appSteps = appUrl
+      ? `Baixe o app ACAF Connect (${appUrl}) e abra Minha conta.`
+      : 'Abra o app ACAF Connect e vá em Minha conta.';
+
+    const subject = `Código ACAF Connect — ${input.companyName}`;
     const body = [
       `Olá${input.employeeName ? `, ${input.employeeName}` : ''}!`,
       '',
-      `${input.companyName} convidou você para o benefício ACAF Connect.`,
-      'Ative sua conta e defina sua senha:',
-      inviteUrl,
+      `${input.companyName} liberou o benefício ACAF Connect para colaboradores.`,
       '',
-      'Este link expira em 7 dias.',
+      'Código de adesão da empresa:',
+      code,
+      '',
+      appSteps,
+      'Informe o código para validar sua empresa e escolher o plano.',
+      '',
+      'Compartilhe este código apenas com colaboradores autorizados.',
     ].join('\n');
 
     const transporter = this.getTransporter();
     if (!transporter) {
       this.logger.warn(
-        `SMTP_HOST não configurado — convite não enviado para ${input.to}. Link: ${inviteUrl}`,
+        `SMTP_HOST não configurado — código não enviado para ${input.to}. Código: ${code}`,
       );
       return {
         sent: false,
-        inviteUrl,
-        reason: 'SMTP não configurado na API. Use "Copiar link" ou configure SMTP_HOST.',
+        enrollmentCode: code,
+        reason: 'SMTP não configurado na API. Use "Copiar código" ou configure SMTP_HOST.',
       };
     }
 
@@ -81,6 +84,10 @@ export class MailService {
       this.config.get<string>('SMTP_FROM')?.trim() ||
       this.config.get<string>('SMTP_USER')?.trim() ||
       'noreply@acaf.com.br';
+
+    const htmlAppLine = appUrl
+      ? `<p>Baixe o app ACAF Connect e abra <strong>Minha conta</strong> (<a href="${appUrl}">${appUrl}</a>).</p>`
+      : '<p>Abra o app ACAF Connect e vá em <strong>Minha conta</strong>.</p>';
 
     try {
       await transporter.sendMail({
@@ -90,20 +97,22 @@ export class MailService {
         text: body,
         html: [
           `<p>Olá${input.employeeName ? `, <strong>${input.employeeName}</strong>` : ''}!</p>`,
-          `<p><strong>${input.companyName}</strong> convidou você para o benefício ACAF Connect.</p>`,
-          `<p><a href="${inviteUrl}">Ativar conta e definir senha</a></p>`,
-          `<p style="color:#666;font-size:13px">Ou copie o link: ${inviteUrl}</p>`,
-          '<p style="color:#666;font-size:13px">Este link expira em 7 dias.</p>',
+          `<p><strong>${input.companyName}</strong> liberou o benefício ACAF Connect para colaboradores.</p>`,
+          '<p>Código de adesão da empresa:</p>',
+          `<p style="font-size:20px;font-weight:700;font-family:monospace">${code}</p>`,
+          htmlAppLine,
+          '<p>Informe o código para validar sua empresa e escolher o plano.</p>',
+          '<p style="color:#666;font-size:13px">Compartilhe este código apenas com colaboradores autorizados.</p>',
         ].join(''),
       });
-      this.logger.log(`Convite enviado por e-mail para ${input.to}`);
-      return { sent: true, inviteUrl };
+      this.logger.log(`Código de adesão enviado por e-mail para ${input.to}`);
+      return { sent: true, enrollmentCode: code };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`Falha ao enviar e-mail para ${input.to}: ${message}`);
       return {
         sent: false,
-        inviteUrl,
+        enrollmentCode: code,
         reason: `Falha ao enviar e-mail: ${message}`,
       };
     }

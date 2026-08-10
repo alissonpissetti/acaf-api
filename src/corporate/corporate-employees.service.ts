@@ -5,9 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
-import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'node:crypto';
+import { Repository } from 'typeorm';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
 import { User, UserRole } from '../users/user.entity';
@@ -20,6 +18,7 @@ import {
   normalizeMobilePhone,
 } from '../users/person.utils';
 import { UsersService } from '../users/users.service';
+import { CorporateAccessService } from './corporate-access.service';
 import { CompanyEmployee, type CompanyEmployeeStatus } from './company-employee.entity';
 import { CompanyInvite } from './company-invite.entity';
 import { Company } from './company.entity';
@@ -34,10 +33,8 @@ export type EmployeeDto = {
   status: CompanyEmployeeStatus;
   invitedAt: string | null;
   activatedAt: string | null;
-  inviteUrl?: string;
+  enrollmentCode?: string;
 };
-
-const INVITE_DAYS = 7;
 
 @Injectable()
 export class CorporateEmployeesService {
@@ -49,11 +46,12 @@ export class CorporateEmployeesService {
     @InjectRepository(User)
     private readonly users: Repository<User>,
     private readonly usersService: UsersService,
+    private readonly access: CorporateAccessService,
     private readonly mail: MailService,
     private readonly sms: SmsService,
   ) {}
 
-  private toDto(row: CompanyEmployee, inviteUrl?: string): EmployeeDto {
+  private toDto(row: CompanyEmployee, enrollmentCode?: string): EmployeeDto {
     const user = row.user;
     return {
       id: row.id,
@@ -65,8 +63,12 @@ export class CorporateEmployeesService {
       status: row.status,
       invitedAt: row.invitedAt?.toISOString() ?? null,
       activatedAt: row.activatedAt?.toISOString() ?? null,
-      inviteUrl,
+      enrollmentCode,
     };
+  }
+
+  private async enrollmentCodeFor(company: Company): Promise<string> {
+    return this.access.ensureEnrollmentCode(company);
   }
 
   async listEmployees(companyId: string): Promise<EmployeeDto[]> {
@@ -155,112 +157,82 @@ export class CorporateEmployeesService {
     return row;
   }
 
-  private assertCanInvite(row: CompanyEmployee): void {
+  private assertCanShareCode(row: CompanyEmployee): void {
     if (row.status === 'active') {
       throw new BadRequestException('Colaborador já está ativo.');
     }
     if (row.status === 'inactive') {
-      throw new BadRequestException('Reative o colaborador antes de enviar convite.');
-    }
-    if (!row.user?.email) {
-      throw new BadRequestException('Colaborador sem e-mail cadastrado.');
+      throw new BadRequestException('Reative o colaborador antes de enviar o código.');
     }
   }
 
-  private async ensureInviteToken(
-    company: Company,
-    employee: CompanyEmployee,
-  ): Promise<{ token: string; inviteUrl: string }> {
-    const email = employee.user!.email.toLowerCase().trim();
-
-    const existing = await this.invites.findOne({
-      where: { employeeId: employee.id, acceptedAt: IsNull() },
-      order: { createdAt: 'DESC' },
-    });
-
-    if (existing && existing.expiresAt.getTime() > Date.now()) {
-      return {
-        token: existing.token,
-        inviteUrl: this.mail.buildInviteUrl(existing.token),
-      };
-    }
-
-    await this.invites.delete({ employeeId: employee.id });
-
-    const token = randomBytes(32).toString('hex');
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + INVITE_DAYS);
-
-    await this.invites.save(
-      this.invites.create({
-        token,
-        companyId: company.id,
-        email,
-        employeeId: employee.id,
-        expiresAt,
-        acceptedAt: null,
-      }),
-    );
-
-    return { token, inviteUrl: this.mail.buildInviteUrl(token) };
-  }
-
-  private async markInviteSent(employee: CompanyEmployee): Promise<void> {
+  private async markCodeShared(employee: CompanyEmployee): Promise<void> {
     employee.status = 'invited';
     employee.invitedAt = new Date();
     await this.employees.save(employee);
   }
 
-  async getInviteLink(company: Company, employeeId: string): Promise<{ inviteUrl: string }> {
+  async getEnrollmentCode(company: Company): Promise<{ enrollmentCode: string }> {
+    const enrollmentCode = await this.enrollmentCodeFor(company);
+    return { enrollmentCode };
+  }
+
+  async getInviteLink(company: Company, employeeId: string): Promise<{ enrollmentCode: string }> {
     const row = await this.getEmployeeOrThrow(company.id, employeeId);
-    this.assertCanInvite(row);
-    const { inviteUrl } = await this.ensureInviteToken(company, row);
-    return { inviteUrl };
+    this.assertCanShareCode(row);
+    const enrollmentCode = await this.enrollmentCodeFor(company);
+    return { enrollmentCode };
   }
 
   async sendInviteEmail(company: Company, employeeId: string): Promise<EmployeeDto> {
     const row = await this.getEmployeeOrThrow(company.id, employeeId);
-    this.assertCanInvite(row);
-    const { token, inviteUrl } = await this.ensureInviteToken(company, row);
+    this.assertCanShareCode(row);
 
-    const mailResult = await this.mail.sendEmployeeInvite({
+    const enrollmentCode = await this.enrollmentCodeFor(company);
+    const mailResult = await this.mail.sendEmployeeEnrollmentCode({
       to: row.user.email,
       employeeName: row.user.name,
       companyName: company.tradeName || company.legalName,
-      token,
+      enrollmentCode,
     });
 
     if (!mailResult.sent) {
       throw new BadRequestException(
         mailResult.reason ??
-          'Não foi possível enviar o e-mail. Use "Copiar link" e envie manualmente ao colaborador.',
+          'Não foi possível enviar o e-mail. Use "Copiar código" e envie manualmente ao colaborador.',
       );
     }
 
-    await this.markInviteSent(row);
-    return this.toDto(row, inviteUrl);
+    await this.markCodeShared(row);
+    return this.toDto(row, enrollmentCode);
   }
 
   async sendInviteSms(company: Company, employeeId: string): Promise<EmployeeDto> {
     const row = await this.getEmployeeOrThrow(company.id, employeeId);
-    this.assertCanInvite(row);
+    this.assertCanShareCode(row);
 
     const phone = row.user?.mobilePhone;
     if (!phone || !isValidMobilePhone(phone)) {
       throw new BadRequestException('Colaborador sem celular válido cadastrado.');
     }
 
-    const { inviteUrl } = await this.ensureInviteToken(company, row);
+    const enrollmentCode = await this.enrollmentCodeFor(company);
 
-    await this.sms.sendEmployeeInvite({
+    const smsResult = await this.sms.sendEmployeeEnrollmentCode({
       to: phone,
       employeeName: row.user.name,
       companyName: company.tradeName || company.legalName,
-      inviteUrl,
+      enrollmentCode,
     });
 
-    await this.markInviteSent(row);
-    return this.toDto(row, inviteUrl);
+    if (!smsResult.sent) {
+      throw new BadRequestException(
+        'SMS não configurado na API. Use e-mail ou copie o código manualmente.',
+      );
+    }
+
+    await this.markCodeShared(row);
+    return this.toDto(row, enrollmentCode);
   }
 
   async updateEmployeeStatus(
@@ -269,9 +241,6 @@ export class CorporateEmployeesService {
     status: CompanyEmployeeStatus,
   ): Promise<EmployeeDto> {
     const row = await this.getEmployeeOrThrow(companyId, employeeId);
-    if (status === 'active' && !row.user?.passwordHash) {
-      throw new BadRequestException('Colaborador ainda não ativou o convite.');
-    }
     row.status = status;
     if (status === 'active' && !row.activatedAt) row.activatedAt = new Date();
     const saved = await this.employees.save(row);
@@ -282,6 +251,7 @@ export class CorporateEmployeesService {
     return this.sendInviteEmail(company, employeeId);
   }
 
+  /** Legado — ativação por link individual foi substituída pelo código no app. */
   async getInvitePreview(token: string) {
     const invite = await this.invites.findOne({
       where: { token },
@@ -294,23 +264,27 @@ export class CorporateEmployeesService {
       throw new BadRequestException('Convite expirado.');
     }
 
-    const user = invite.employee.user;
-    const suggestedName = user?.name?.trim() ?? '';
-    const suggestedCpf = user?.cpf ? formatCpf(user.cpf) : '';
-    const suggestedMobilePhone = user?.mobilePhone ? formatMobilePhone(user.mobilePhone) : '';
+    const enrollmentCode = await this.access.ensureEnrollmentCode(invite.company);
 
     return {
       email: invite.email,
       companyName: invite.company.tradeName || invite.company.legalName,
       expiresAt: invite.expiresAt.toISOString(),
+      enrollmentCode,
+      useApp: true,
+      message:
+        'A ativação agora é feita no app ACAF Connect: abra Minha conta e informe o código de adesão da empresa.',
       suggestions: {
-        name: suggestedName || undefined,
-        cpf: suggestedCpf || undefined,
-        mobilePhone: suggestedMobilePhone || undefined,
+        name: invite.employee.user?.name?.trim() || undefined,
+        cpf: invite.employee.user?.cpf ? formatCpf(invite.employee.user.cpf) : undefined,
+        mobilePhone: invite.employee.user?.mobilePhone
+          ? formatMobilePhone(invite.employee.user.mobilePhone)
+          : undefined,
       },
     };
   }
 
+  /** Legado — redireciona fluxo ao código compartilhado no app. */
   async acceptInvite(token: string, input: { password: string; cpf: string; name?: string }) {
     const invite = await this.invites.findOne({
       where: { token },
@@ -323,30 +297,10 @@ export class CorporateEmployeesService {
       throw new BadRequestException('Convite expirado.');
     }
 
-    const cpf = normalizeCpf(input.cpf);
-    if (!isValidCpf(cpf)) throw new BadRequestException('CPF inválido.');
-    if (!input.password || input.password.length < 6) {
-      throw new BadRequestException('Informe uma senha com ao menos 6 caracteres.');
-    }
+    const enrollmentCode = await this.access.ensureEnrollmentCode(invite.company);
 
-    const user = invite.employee.user;
-    if (input.name?.trim()) user.name = input.name.trim();
-    user.cpf = cpf;
-    user.passwordHash = await bcrypt.hash(input.password, 10);
-    const roles = new Set([...(user.roles ?? []), UserRole.MEMBER]);
-    user.roles = [...roles];
-    await this.users.save(user);
-
-    invite.employee.status = 'active';
-    invite.employee.activatedAt = new Date();
-    await this.employees.save(invite.employee);
-
-    invite.acceptedAt = new Date();
-    await this.invites.save(invite);
-
-    return {
-      ok: true,
-      message: 'Conta ativada. Você já pode usar o app ACAF Connect.',
-    };
+    throw new BadRequestException(
+      `Use o app ACAF Connect (Minha conta) com o código de adesão da empresa: ${enrollmentCode}`,
+    );
   }
 }

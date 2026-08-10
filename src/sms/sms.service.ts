@@ -11,16 +11,17 @@ export class SmsService {
 
   constructor(private readonly config: ConfigService) {}
 
-  async sendEmployeeInvite(input: {
+  async sendEmployeeEnrollmentCode(input: {
     to: string;
     employeeName: string;
     companyName: string;
-    inviteUrl: string;
+    enrollmentCode: string;
   }): Promise<SendSmsResult> {
     const message = [
       `Olá${input.employeeName ? `, ${input.employeeName}` : ''}!`,
-      `${input.companyName} convidou você para o ACAF Connect.`,
-      `Ative sua conta: ${input.inviteUrl}`,
+      `${input.companyName} — ACAF Connect.`,
+      `Código: ${input.enrollmentCode}.`,
+      'Abra o app, vá em Minha conta e informe o código.',
     ].join(' ');
 
     const provider = this.config.get<string>('SMS_PROVIDER');

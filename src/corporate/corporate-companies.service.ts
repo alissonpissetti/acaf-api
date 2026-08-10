@@ -101,7 +101,9 @@ export class CorporateCompaniesService {
       email: company.email,
       phone: company.phone,
       status: company.status,
+      enrollmentCode: company.enrollmentCode ?? null,
       createdAt: company.createdAt.toISOString(),
+      updatedAt: company.updatedAt.toISOString(),
       ...extras,
     };
   }

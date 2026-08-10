@@ -64,7 +64,11 @@ export class CorporateAuthService {
     };
     const accessToken = await this.jwt.signAsync(payload);
 
-    const company = await this.access.findCompanyById(companyIds[0]!);
+    let company = await this.access.findCompanyById(companyIds[0]!);
+    if (company?.status === 'active') {
+      await this.access.ensureEnrollmentCode(company);
+      company = await this.access.findCompanyById(companyIds[0]!);
+    }
 
     return {
       accessToken,
@@ -92,6 +96,10 @@ export class CorporateAuthService {
     const company = await this.access.getCompanyForUser(userId, companyId);
     if (!company || company.status !== 'active') {
       throw new UnauthorizedException('Sessão inválida.');
+    }
+
+    if (!company.enrollmentCode) {
+      await this.access.ensureEnrollmentCode(company);
     }
 
     const companyIds = await this.access.listActiveCompanyIdsForUser(userId);

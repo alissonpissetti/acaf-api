@@ -35,6 +35,13 @@ export class CorporateController {
     return this.access.assertCompanyAccess(req.user.userId, req.user.companyId);
   }
 
+  @Get('enrollment-code')
+  @UseGuards(CorporateJwtAuthGuard)
+  async getEnrollmentCode(@Req() req: CorpRequest) {
+    const company = await this.companyFromReq(req);
+    return this.employees.getEnrollmentCode(company);
+  }
+
   @Get('employees')
   @UseGuards(CorporateJwtAuthGuard)
   async listEmployees(@Req() req: CorpRequest) {

@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { UsersService } from '../users/users.service';
 import { CompanyAccess } from './company-access.entity';
 import { Company, type CompanyStatus } from './company.entity';
-import { normalizeEnrollmentCode } from './enrollment-code';
+import { generateEnrollmentCode, normalizeEnrollmentCode } from './enrollment-code';
 
 export type LinkedCorporateUser = {
   id: string;
@@ -118,7 +118,26 @@ export class CorporateAccessService {
     const company = await this.companies.findOne({ where: { id } });
     if (!company) throw new NotFoundException('Empresa não encontrada.');
     company.status = status;
-    return this.companies.save(company);
+    const saved = await this.companies.save(company);
+    if (saved.status === 'active') {
+      await this.ensureEnrollmentCode(saved);
+    }
+    return saved;
+  }
+
+  async ensureEnrollmentCode(company: Company): Promise<string> {
+    if (company.enrollmentCode) return company.enrollmentCode;
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const candidate = generateEnrollmentCode();
+      const clash = await this.companies.findOne({ where: { enrollmentCode: candidate } });
+      if (clash) continue;
+      company.enrollmentCode = candidate;
+      await this.companies.save(company);
+      return candidate;
+    }
+
+    throw new Error('Não foi possível gerar código de adesão para a empresa.');
   }
 
   async findActiveByEnrollmentCode(code: string): Promise<Company | null> {
