@@ -8,8 +8,6 @@ import {
   ACCESS_CONTROL_SEED,
   ADMIN_GROUP_NAME,
   COMMERCIAL_GROUP_NAME,
-  FINANCE_COST_CENTER_CODE,
-  FINANCE_DEPARTMENT_NAME,
   FINANCE_GROUP_NAME,
 } from './access-control.seed';
 import { Department } from './department.entity';
@@ -93,21 +91,14 @@ export class AccessControlSeedService implements OnModuleInit {
     private readonly groups: Repository<UserGroup>,
     @InjectRepository(GroupPermission)
     private readonly groupPermissions: Repository<GroupPermission>,
-    @InjectRepository(Department)
-    private readonly departments: Repository<Department>,
-    @InjectRepository(JobPosition)
-    private readonly jobPositions: Repository<JobPosition>,
     @InjectRepository(User)
     private readonly users: Repository<User>,
-    @InjectRepository(CostCenter)
-    private readonly costCenters: Repository<CostCenter>,
     private readonly config: ConfigService,
   ) {}
 
   async onModuleInit() {
     await this.seedModulesAndPermissions();
     await this.seedGroups();
-    await this.seedOrganization();
     await this.assignAdminsToDefaultGroup();
     await this.ensureBootstrapAdminUser();
   }
@@ -247,56 +238,6 @@ export class AccessControlSeedService implements OnModuleInit {
         this.groupPermissions.create({ groupId, permissionId }),
       ),
     );
-  }
-
-  private async seedOrganization() {
-    let department = await this.departments.findOne({
-      where: { name: FINANCE_DEPARTMENT_NAME },
-    });
-    if (!department) {
-      department = await this.departments.save(
-        this.departments.create({
-          name: FINANCE_DEPARTMENT_NAME,
-          description: 'Departamento financeiro da ACAF',
-          parentId: null,
-          sortOrder: 1,
-          active: true,
-        }),
-      );
-    }
-
-    let costCenter = await this.costCenters.findOne({
-      where: { code: FINANCE_COST_CENTER_CODE },
-    });
-    if (!costCenter) {
-      costCenter = await this.costCenters.save(
-        this.costCenters.create({
-          code: FINANCE_COST_CENTER_CODE,
-          name: 'Financeiro',
-          departmentId: department.id,
-          active: true,
-        }),
-      );
-    } else if (!costCenter.departmentId) {
-      costCenter.departmentId = department.id;
-      await this.costCenters.save(costCenter);
-    }
-
-    const existingPosition = await this.jobPositions.findOne({
-      where: { name: 'Analista Financeiro', departmentId: department.id },
-    });
-    if (!existingPosition) {
-      await this.jobPositions.save(
-        this.jobPositions.create({
-          name: 'Analista Financeiro',
-          description: 'Responsável por contas a pagar e receber',
-          departmentId: department.id,
-          parentPositionId: null,
-          sortOrder: 1,
-          active: true,
-        }),
-      );
-    }
   }
 
   private async assignAdminsToDefaultGroup() {

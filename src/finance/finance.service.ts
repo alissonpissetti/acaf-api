@@ -4,14 +4,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { NextcloudService } from '../storage/nextcloud.service';
 import { AccountPayable, type PayableAttachment, type PayableAttachmentKind } from './account-payable.entity';
 import { AccountPlan, type AccountPlanKind } from './account-plan.entity';
-import { DEFAULT_ACCOUNT_PLANS } from './account-plan.defaults';
 import { AccountReceivable } from './account-receivable.entity';
 import {
   buildPayerKey,
@@ -163,7 +161,7 @@ function mapReceivable(row: AccountReceivable) {
 }
 
 @Injectable()
-export class FinanceService implements OnModuleInit {
+export class FinanceService {
   private readonly logger = new Logger(FinanceService.name);
 
   constructor(
@@ -187,10 +185,6 @@ export class FinanceService implements OnModuleInit {
     private readonly storage: NextcloudService,
   ) {}
 
-  async onModuleInit() {
-    await this.ensureDefaultAccountPlans();
-  }
-
   private mapAccountPlan(row: AccountPlan) {
     return {
       id: row.id,
@@ -204,23 +198,6 @@ export class FinanceService implements OnModuleInit {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
-  }
-
-  private async ensureDefaultAccountPlans() {
-    for (const seed of DEFAULT_ACCOUNT_PLANS) {
-      const existing = await this.accountPlans.findOne({ where: { code: seed.code } });
-      if (existing) continue;
-      await this.accountPlans.save(
-        this.accountPlans.create({
-          code: seed.code,
-          name: seed.name,
-          description: seed.description,
-          kind: seed.kind,
-          active: true,
-        }),
-      );
-    }
-    this.logger.log('Planos de conta padrão verificados.');
   }
 
   private async resolveAccountPlanReference(

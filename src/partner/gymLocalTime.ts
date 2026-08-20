@@ -99,7 +99,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Corrige entradas fora do horário de academia ou com horários irreais no seed. */
+/** Corrige entradas fora do horário de academia ou com horários inválidos no histórico. */
 export function normalizeRealisticGymCheckInTimes(log: CheckInLogEntry[]): CheckInLogEntry[] {
   const byGroup = new Map<string, CheckInLogEntry[]>();
   for (const entry of log) {

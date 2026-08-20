@@ -199,5 +199,3 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
 export const ADMIN_GROUP_NAME = 'Administradores';
 export const COMMERCIAL_GROUP_NAME = 'Comercial';
 export const FINANCE_GROUP_NAME = 'Financeiro';
-export const FINANCE_DEPARTMENT_NAME = 'Financeiro';
-export const FINANCE_COST_CENTER_CODE = 'FIN-001';

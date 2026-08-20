@@ -3,61 +3,21 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { Modality } from './modality.entity';
-
-const DEFAULT_MODALITIES = [
-  'Musculação',
-  'Natação',
-  'Bike Indoor',
-  'Hidroginástica',
-  'Boxe',
-  'Pilates',
-  'Hatha Yoga',
-  'Full Body',
-  'Funcional',
-  'FitDance',
-];
 
 function normalizeName(name: string): string {
   return name.trim().replace(/\s+/g, ' ');
 }
 
 @Injectable()
-export class ModalitiesService implements OnModuleInit {
+export class ModalitiesService {
   constructor(
     @InjectRepository(Modality)
     private readonly repo: Repository<Modality>,
   ) {}
-
-  async onModuleInit(): Promise<void> {
-    const count = await this.repo.count();
-    if (count > 0) return;
-
-    let seed = [...DEFAULT_MODALITIES];
-    try {
-      const path = join(process.cwd(), 'shared', 'connect_domain.json');
-      const domain = JSON.parse(readFileSync(path, 'utf-8')) as {
-        modalityCatalog?: string[];
-      };
-      if (domain.modalityCatalog?.length) {
-        seed = domain.modalityCatalog.map(normalizeName).filter(Boolean);
-      }
-    } catch {
-      /* usa DEFAULT_MODALITIES */
-    }
-
-    await this.repo.save(
-      seed.map((name, index) =>
-        this.repo.create({ name, sortOrder: index, active: true }),
-      ),
-    );
-  }
 
   async findAll(): Promise<Modality[]> {
     return this.repo.find({ order: { sortOrder: 'ASC', name: 'ASC' } });

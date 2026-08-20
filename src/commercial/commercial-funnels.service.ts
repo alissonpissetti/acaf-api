@@ -1,16 +1,10 @@
 import {
   BadRequestException,
   Injectable,
-  Logger,
   NotFoundException,
-  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import {
-  DEFAULT_COMMERCIAL_FUNNELS,
-  slugifyFunnel,
-} from './commercial-funnel.defaults';
 import {
   CommercialFunnelStage,
   type FunnelStageOutcome,
@@ -20,6 +14,16 @@ import {
   type FunnelOutcomeAction,
 } from './commercial-funnel.entity';
 import { CommercialLead } from './commercial-lead.entity';
+
+function slugifyFunnel(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 type StageInput = {
   id?: string;
@@ -57,9 +61,7 @@ type FunnelDto = {
 };
 
 @Injectable()
-export class CommercialFunnelsService implements OnModuleInit {
-  private readonly logger = new Logger(CommercialFunnelsService.name);
-
+export class CommercialFunnelsService {
   constructor(
     @InjectRepository(CommercialFunnel)
     private readonly funnels: Repository<CommercialFunnel>,
@@ -68,66 +70,6 @@ export class CommercialFunnelsService implements OnModuleInit {
     @InjectRepository(CommercialLead)
     private readonly leads: Repository<CommercialLead>,
   ) {}
-
-  async onModuleInit() {
-    await this.ensureDefaults();
-  }
-
-  async ensureDefaults() {
-    for (const seed of DEFAULT_COMMERCIAL_FUNNELS) {
-      const existing = await this.funnels.findOne({ where: { slug: seed.slug } });
-      if (existing) continue;
-
-      await this.funnels.save(
-        this.funnels.create({
-          name: seed.name,
-          slug: seed.slug,
-          description: seed.description,
-          sortOrder: seed.sortOrder,
-          isDefault: Boolean(seed.isDefault),
-          active: true,
-          winAction: seed.winAction ?? 'none',
-          lossAction: seed.lossAction ?? 'none',
-        }),
-      );
-    }
-
-    for (const seed of DEFAULT_COMMERCIAL_FUNNELS) {
-      const funnel = await this.funnels.findOne({ where: { slug: seed.slug } });
-      if (!funnel) continue;
-
-      for (const stageSeed of seed.stages) {
-        const stageExists = await this.stages.findOne({
-          where: { funnelId: funnel.id, slug: stageSeed.slug },
-        });
-        if (stageExists) continue;
-
-        await this.stages.save(
-          this.stages.create({
-            funnelId: funnel.id,
-            name: stageSeed.name,
-            slug: stageSeed.slug,
-            sortOrder: stageSeed.sortOrder,
-            outcome: stageSeed.outcome,
-            active: true,
-          }),
-        );
-      }
-    }
-
-    const defaults = await this.funnels.find({ where: { isDefault: true } });
-    if (defaults.length > 1) {
-      const keep = defaults.sort((a, b) => a.sortOrder - b.sortOrder)[0];
-      for (const row of defaults) {
-        if (row.id !== keep.id) {
-          row.isDefault = false;
-          await this.funnels.save(row);
-        }
-      }
-    }
-
-    this.logger.log('Funis comerciais padrão verificados.');
-  }
 
   async list(includeInactive = false) {
     const rows = await this.funnels.find({

@@ -40,5 +40,5 @@ lerna-debug.log*
 .env.*
 !.env.example
 
-# partner mock persistence
+# partner legacy file store (deprecated — use MariaDB)
 /data/
