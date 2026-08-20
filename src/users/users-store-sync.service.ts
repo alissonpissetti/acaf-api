@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { normalizeHolderKey } from '../partner/checkIn';
+import { purgeHolderFromStoreDraft } from '../partner/purgeHolderFromStore';
 import type { GymStudent } from '../partner/types';
-import { loadStore, saveStore, whenStoreReady } from '../partner/store';
+import { loadStore, saveStore, updateStore, whenStoreReady } from '../partner/store';
 import { UsersService } from './users.service';
 
 @Injectable()
@@ -11,9 +13,9 @@ export class UsersStoreSyncService implements OnModuleInit {
 
   async onModuleInit() {
     setImmediate(() => {
-      void this.syncStoreStudents().catch((err) =>
-        this.logger.error('Falha ao sincronizar clientes do store', err),
-      );
+      void this.syncStoreStudents()
+        .then(() => this.pruneOrphanConnectMembers())
+        .catch((err) => this.logger.error('Falha ao sincronizar clientes do store', err));
     });
   }
 
@@ -32,6 +34,30 @@ export class UsersStoreSyncService implements OnModuleInit {
     store.students = students;
     saveStore(store);
     this.logger.log(`Sincronizados ${students.length} aluno(s)/cliente(s) com acaf_users.`);
+  }
+
+  async pruneOrphanConnectMembers(): Promise<void> {
+    await whenStoreReady();
+
+    const rows = await this.users.findAll();
+    const holderKeys = new Set(rows.map((user) => normalizeHolderKey(user.name)));
+
+    let removed = 0;
+    updateStore((store) => {
+      const orphanKeys = [...new Set((store.connectMembers ?? []).map((member) => member.holderKey))].filter(
+        (holderKey) => !holderKeys.has(holderKey),
+      );
+
+      for (const holderKey of orphanKeys) {
+        if (purgeHolderFromStoreDraft(store, holderKey)) {
+          removed += 1;
+        }
+      }
+    });
+
+    if (removed > 0) {
+      this.logger.log(`Removidos ${removed} assinante(s) Connect órfão(s) do store.`);
+    }
   }
 
   async linkStudentsToUsers(students: GymStudent[]): Promise<{ students: GymStudent[]; changed: boolean }> {

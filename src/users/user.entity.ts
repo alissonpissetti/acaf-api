@@ -35,8 +35,20 @@ export class User {
   @Column({ type: 'json', nullable: true })
   roles: UserRole[] | null;
 
+  @Column({ name: 'user_group_id', type: 'uuid', nullable: true })
+  userGroupId: string | null;
+
+  @Column({ name: 'job_position_id', type: 'uuid', nullable: true })
+  jobPositionId: string | null;
+
   @Column({ default: true })
   active: boolean;
+
+  @Column({ name: 'avatar_url', type: 'varchar', length: 512, nullable: true })
+  avatarUrl: string | null;
+
+  @Column({ name: 'avatar_color', type: 'varchar', length: 32, nullable: true })
+  avatarColor: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

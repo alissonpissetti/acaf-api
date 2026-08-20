@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -44,6 +44,8 @@ export class UsersController {
       mobilePhone?: string;
       active?: boolean;
       password?: string;
+      userGroupId?: string | null;
+      jobPositionId?: string | null;
     },
   ) {
     return this.users.update(id, body);
@@ -52,5 +54,13 @@ export class UsersController {
   @Delete(':id')
   remove(@Param('id') id: string, @Req() req: AuthRequest) {
     return this.users.remove(id, req.user.userId);
+  }
+
+  @Post('bulk-delete')
+  removeMany(@Body() body: { ids?: string[] }, @Req() req: AuthRequest) {
+    if (!Array.isArray(body.ids) || !body.ids.length) {
+      throw new BadRequestException('Informe ao menos um usuário.');
+    }
+    return this.users.removeMany(body.ids, req.user.userId);
   }
 }

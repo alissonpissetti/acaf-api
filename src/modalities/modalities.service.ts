@@ -95,8 +95,9 @@ export class ModalitiesService implements OnModuleInit {
     }
     await this.assertUniqueName(normalized);
 
-    const last = await this.repo.findOne({
+    const [last] = await this.repo.find({
       order: { sortOrder: 'DESC' },
+      take: 1,
     });
     const sortOrder = (last?.sortOrder ?? -1) + 1;
 

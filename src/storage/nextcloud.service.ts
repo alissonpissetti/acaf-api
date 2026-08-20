@@ -192,4 +192,146 @@ export class NextcloudService {
     const publicUrl = await this.createPublicShareUrl(relativePath);
     return { path: relativePath, publicUrl };
   }
+
+  async uploadUserAvatar(
+    userId: string,
+    file: Express.Multer.File,
+  ): Promise<{ path: string; publicUrl: string }> {
+    const ext = IMAGE_EXT[file.mimetype];
+    if (!ext) {
+      throw new BadRequestException('Envie uma imagem PNG, JPG, WEBP ou SVG.');
+    }
+
+    const folder = `${this.rootFolder}/user-avatars`;
+    const relativePath = `${folder}/${userId}${ext}`;
+
+    await this.ensureFolder(folder);
+
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'PUT',
+      headers: {
+        Authorization: this.authHeader(),
+        'Content-Type': file.mimetype,
+      },
+      body: new Uint8Array(file.buffer),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao enviar avatar (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+
+    const publicUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl };
+  }
+
+  private safeFileName(name: string) {
+    const trimmed = name.trim().replace(/[^a-zA-Z0-9._-]+/g, '_');
+    return trimmed.slice(0, 120) || 'arquivo';
+  }
+
+  private payableMimeAllowed(mime: string) {
+    const allowed = new Set([
+      'application/pdf',
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'image/webp',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/csv',
+      'text/plain',
+      'application/zip',
+      'application/x-zip-compressed',
+    ]);
+    return allowed.has(mime);
+  }
+
+  async uploadPayableAttachment(
+    payableId: string,
+    file: Express.Multer.File,
+  ): Promise<{ path: string; publicUrl: string }> {
+    if (!this.payableMimeAllowed(file.mimetype)) {
+      throw new BadRequestException(
+        'Formato não suportado. Envie PDF, imagem, Word, Excel, CSV, TXT ou ZIP.',
+      );
+    }
+
+    const folder = `${this.rootFolder}/payables/${payableId}`;
+    const relativePath = `${folder}/${Date.now()}-${this.safeFileName(file.originalname)}`;
+
+    await this.ensureFolder(folder);
+
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'PUT',
+      headers: {
+        Authorization: this.authHeader(),
+        'Content-Type': file.mimetype || 'application/octet-stream',
+      },
+      body: new Uint8Array(file.buffer),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao enviar anexo (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+
+    const publicUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl };
+  }
+
+  async uploadReceivableAttachment(
+    receivableId: string,
+    file: Express.Multer.File,
+  ): Promise<{ path: string; publicUrl: string }> {
+    if (!this.payableMimeAllowed(file.mimetype)) {
+      throw new BadRequestException(
+        'Formato não suportado. Envie PDF, imagem, Word, Excel, CSV, TXT ou ZIP.',
+      );
+    }
+
+    const folder = `${this.rootFolder}/receivables/${receivableId}`;
+    const relativePath = `${folder}/${Date.now()}-${this.safeFileName(file.originalname)}`;
+
+    await this.ensureFolder(folder);
+
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'PUT',
+      headers: {
+        Authorization: this.authHeader(),
+        'Content-Type': file.mimetype || 'application/octet-stream',
+      },
+      body: new Uint8Array(file.buffer),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao enviar anexo (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+
+    const publicUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl };
+  }
+
+  async deleteFile(relativePath: string): Promise<void> {
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'DELETE',
+      headers: { Authorization: this.authHeader() },
+    });
+
+    if (response.status !== 204 && response.status !== 404) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao remover arquivo (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+  }
 }

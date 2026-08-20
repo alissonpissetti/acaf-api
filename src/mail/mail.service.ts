@@ -50,14 +50,14 @@ export class MailService {
     const code = input.enrollmentCode.trim();
     const appUrl = this.getConnectAppUrl();
     const appSteps = appUrl
-      ? `Baixe o app ACAF Connect (${appUrl}) e abra Minha conta.`
-      : 'Abra o app ACAF Connect e vá em Minha conta.';
+      ? `Baixe o app ACAF (${appUrl}) e abra Minha conta.`
+      : 'Abra o app ACAF e vá em Minha conta.';
 
-    const subject = `Código ACAF Connect — ${input.companyName}`;
+    const subject = `Código ACAF — ${input.companyName}`;
     const body = [
       `Olá${input.employeeName ? `, ${input.employeeName}` : ''}!`,
       '',
-      `${input.companyName} liberou o benefício ACAF Connect para colaboradores.`,
+      `${input.companyName} liberou o benefício ACAF para colaboradores.`,
       '',
       'Código de adesão da empresa:',
       code,
@@ -86,8 +86,8 @@ export class MailService {
       'noreply@acaf.com.br';
 
     const htmlAppLine = appUrl
-      ? `<p>Baixe o app ACAF Connect e abra <strong>Minha conta</strong> (<a href="${appUrl}">${appUrl}</a>).</p>`
-      : '<p>Abra o app ACAF Connect e vá em <strong>Minha conta</strong>.</p>';
+      ? `<p>Baixe o app ACAF e abra <strong>Minha conta</strong> (<a href="${appUrl}">${appUrl}</a>).</p>`
+      : '<p>Abra o app ACAF e vá em <strong>Minha conta</strong>.</p>';
 
     try {
       await transporter.sendMail({
@@ -97,7 +97,7 @@ export class MailService {
         text: body,
         html: [
           `<p>Olá${input.employeeName ? `, <strong>${input.employeeName}</strong>` : ''}!</p>`,
-          `<p><strong>${input.companyName}</strong> liberou o benefício ACAF Connect para colaboradores.</p>`,
+          `<p><strong>${input.companyName}</strong> liberou o benefício ACAF para colaboradores.</p>`,
           '<p>Código de adesão da empresa:</p>',
           `<p style="font-size:20px;font-weight:700;font-family:monospace">${code}</p>`,
           htmlAppLine,

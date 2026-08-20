@@ -251,6 +251,16 @@ export class CorporateEmployeesService {
     return this.sendInviteEmail(company, employeeId);
   }
 
+  async removeEmployee(companyId: string, employeeId: string): Promise<void> {
+    const row = await this.getEmployeeOrThrow(companyId, employeeId);
+    await this.employees.remove(row);
+  }
+
+  async removeAllForCompany(companyId: string): Promise<void> {
+    await this.invites.delete({ companyId });
+    await this.employees.delete({ companyId });
+  }
+
   /** Legado — ativação por link individual foi substituída pelo código no app. */
   async getInvitePreview(token: string) {
     const invite = await this.invites.findOne({
@@ -273,7 +283,7 @@ export class CorporateEmployeesService {
       enrollmentCode,
       useApp: true,
       message:
-        'A ativação agora é feita no app ACAF Connect: abra Minha conta e informe o código de adesão da empresa.',
+        'A ativação agora é feita no app ACAF: abra Minha conta e informe o código de adesão da empresa.',
       suggestions: {
         name: invite.employee.user?.name?.trim() || undefined,
         cpf: invite.employee.user?.cpf ? formatCpf(invite.employee.user.cpf) : undefined,
@@ -300,7 +310,7 @@ export class CorporateEmployeesService {
     const enrollmentCode = await this.access.ensureEnrollmentCode(invite.company);
 
     throw new BadRequestException(
-      `Use o app ACAF Connect (Minha conta) com o código de adesão da empresa: ${enrollmentCode}`,
+      `Use o app ACAF (Minha conta) com o código de adesão da empresa: ${enrollmentCode}`,
     );
   }
 }

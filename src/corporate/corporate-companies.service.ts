@@ -86,10 +86,53 @@ export class CorporateCompaniesService {
       company: {
         id: company.id,
         tradeName: company.tradeName,
-        cnpj: formatCnpj(company.cnpj),
+        cnpj: company.cnpj ? formatCnpj(company.cnpj) : null,
         status: company.status,
       },
     };
+  }
+
+  async createByAdmin(input: {
+    legalName: string;
+    tradeName?: string;
+    cnpj?: string;
+    email?: string;
+    phone?: string;
+    commercialOwnerUserId?: string;
+  }) {
+    const legalName = String(input.legalName ?? '').trim();
+    if (!legalName) throw new BadRequestException('Informe o nome da empresa.');
+
+    const cnpjRaw = input.cnpj ? normalizeCnpj(input.cnpj) : '';
+    let cnpj: string | null = null;
+    if (cnpjRaw) {
+      if (!isValidCnpj(cnpjRaw)) throw new BadRequestException('CNPJ inválido.');
+      const existingCnpj = await this.companies.findOne({ where: { cnpj: cnpjRaw } });
+      if (existingCnpj) throw new ConflictException('CNPJ já cadastrado.');
+      cnpj = cnpjRaw;
+    }
+
+    const emailRaw = input.email != null ? String(input.email).trim() : '';
+    const email = emailRaw ? emailRaw.toLowerCase() : null;
+
+    const phoneRaw = input.phone ? normalizeMobilePhone(input.phone) : '';
+    if (phoneRaw && !isValidMobilePhone(phoneRaw)) {
+      throw new BadRequestException('Informe um telefone válido com DDD (11 dígitos).');
+    }
+
+    const company = await this.companies.save(
+      this.companies.create({
+        legalName,
+        tradeName: input.tradeName?.trim() || legalName,
+        cnpj,
+        email,
+        phone: phoneRaw || null,
+        status: 'pending',
+        commercialOwnerUserId: input.commercialOwnerUserId ?? null,
+      }),
+    );
+
+    return this.toCompanyDto(company, { managers: 0, employees: 0 });
   }
 
   toCompanyDto(company: Company, extras?: { managers?: number; employees?: number }) {
@@ -97,11 +140,12 @@ export class CorporateCompaniesService {
       id: company.id,
       legalName: company.legalName,
       tradeName: company.tradeName,
-      cnpj: formatCnpj(company.cnpj),
+      cnpj: company.cnpj ? formatCnpj(company.cnpj) : null,
       email: company.email,
       phone: company.phone,
       status: company.status,
       enrollmentCode: company.enrollmentCode ?? null,
+      commercialOwnerUserId: company.commercialOwnerUserId ?? null,
       createdAt: company.createdAt.toISOString(),
       updatedAt: company.updatedAt.toISOString(),
       ...extras,

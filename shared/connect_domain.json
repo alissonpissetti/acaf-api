@@ -4,7 +4,7 @@
   "acafDailyFeePercent": 20,
   "corporateBenefitPerMonth": 44.9,
   "feeModel": {
-    "gymPortalVisible": "20% sobre o valor de cada diária e sobre o total mensal dos planos Connect (colaborador + benefício corporativo).",
+    "gymPortalVisible": "20% sobre o valor de cada diária e sobre o total mensal dos planos de assinatura (colaborador + benefício corporativo).",
     "corporateNotShownToGym": "Legado: o benefício corporativo integra o total visível ao parceiro; a taxa de 20% incide sobre a soma."
   },
   "connectPlans": [
@@ -13,7 +13,7 @@
       "name": "ACAF Start",
       "pricePerMonth": 39.8,
       "tierIndex": 0,
-      "description": "Plano de entrada na rede ACAF Connect."
+      "description": "Plano de entrada na rede ACAF."
     },
     {
       "id": "connect-plus",
@@ -41,7 +41,7 @@
       "name": "ACAF Total",
       "pricePerMonth": 299.9,
       "tierIndex": 4,
-      "description": "Máximo nível de benefícios ACAF Connect."
+      "description": "Máximo nível de benefícios ACAF."
     }
   ],
   "modalityCatalog": [
@@ -70,6 +70,6 @@
     "maxPerPersonPerDay": 1,
     "connectScope": "network",
     "dailyPassScope": "unit",
-    "help": "Cada pessoa pode fazer apenas 1 check-in por dia (Connect: em qualquer unidade da rede; diária: na unidade da compra)."
+    "help": "Cada pessoa pode fazer apenas 1 check-in por dia (plano: em qualquer unidade da rede; diária: na unidade da compra)."
   }
 }

@@ -101,7 +101,7 @@ export class AddressesService {
 
     try {
       const response = await fetch(url.toString(), {
-        headers: { 'User-Agent': 'ACAF-Connect/1.0 (acaf-api)' },
+        headers: { 'User-Agent': 'ACAF/1.0 (acaf-api)' },
       });
       if (!response.ok) return null;
       const data = (await response.json()) as Array<{ lat?: string; lon?: string }>;
@@ -124,7 +124,7 @@ export class AddressesService {
 
     try {
       const response = await fetch(url.toString(), {
-        headers: { 'User-Agent': 'ACAF-Connect/1.0 (acaf-api)' },
+        headers: { 'User-Agent': 'ACAF/1.0 (acaf-api)' },
       });
       if (!response.ok) return null;
       const data = (await response.json()) as Array<{ lat?: string; lon?: string }>;

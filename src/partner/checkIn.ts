@@ -226,7 +226,7 @@ export function validateCheckInCode(
     const unitToken = parts[1];
     const dayPart = parseInt(parts[2], 10);
     if (!unitIdsMatch(unitToken, unitId)) {
-      return { ok: false, message: 'Check-in Connect emitido para outra unidade.' };
+      return { ok: false, message: 'Check-in de plano emitido para outra unidade.' };
     }
     if (dayPart !== now.getDate()) {
       return {
@@ -237,14 +237,14 @@ export function validateCheckInCode(
     return {
       ok: true,
       type: 'connect_member',
-      holderName: 'Associado ACAF Connect',
-      message: 'Check-in Connect do dia autorizado.',
+      holderName: 'Associado ACAF',
+      message: 'Check-in de plano do dia autorizado.',
     };
   }
 
   return {
     ok: false,
-    message: 'Código não reconhecido. Peça ao aluno para abrir o ACAF Connect e mostrar o código na tela.',
+    message: 'Código não reconhecido. Peça ao aluno para abrir o ACAF e mostrar o código na tela.',
   };
 }
 

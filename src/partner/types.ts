@@ -211,6 +211,8 @@ export type AdminNetwork = {
   name: string;
   logoUrl?: string | null;
   social?: NetworkSocialContacts;
+  /** Usuário admin/comercial que cadastrou a rede parceira. */
+  commercialOwnerUserId?: string | null;
 };
 
 export type ApiStore = {

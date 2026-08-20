@@ -11,6 +11,29 @@ export class SmsService {
 
   constructor(private readonly config: ConfigService) {}
 
+  async sendAdminAuthCode(input: {
+    to: string;
+    code: string;
+    purpose: 'login' | 'password_reset';
+  }): Promise<SendSmsResult> {
+    const action =
+      input.purpose === 'password_reset'
+        ? 'redefinir sua senha no ACAF Admin'
+        : 'acessar o ACAF Admin';
+    const message = `ACAF Admin — use o código ${input.code} para ${action}. Válido por 10 minutos.`;
+
+    const provider = this.config.get<string>('SMS_PROVIDER');
+    if (!provider) {
+      this.logger.log(`[dev] SMS para ${input.to}: ${message}`);
+      return { sent: false };
+    }
+
+    this.logger.warn(
+      `SMS_PROVIDER configurado mas integração não implementada. Mensagem dev: ${message}`,
+    );
+    return { sent: false };
+  }
+
   async sendEmployeeEnrollmentCode(input: {
     to: string;
     employeeName: string;
@@ -19,7 +42,7 @@ export class SmsService {
   }): Promise<SendSmsResult> {
     const message = [
       `Olá${input.employeeName ? `, ${input.employeeName}` : ''}!`,
-      `${input.companyName} — ACAF Connect.`,
+      `${input.companyName} — ACAF.`,
       `Código: ${input.enrollmentCode}.`,
       'Abra o app, vá em Minha conta e informe o código.',
     ].join(' ');

@@ -10,6 +10,12 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Brackets, Repository } from 'typeorm';
+import { NextcloudService } from '../storage/nextcloud.service';
+import { isAvatarColorId, pickAvatarColor } from './avatar-colors';
+import { JobPosition } from '../access-control/job-position.entity';
+import { UserGroup } from '../access-control/user-group.entity';
+import { UnitPartnerAccess } from '../platform-users/unit-partner-access.entity';
+import { purgeHolderFromPartnerStore } from '../partner/purgeHolderFromStore';
 import { User, UserRole, userHasRole } from './user.entity';
 import {
   formatCpf,
@@ -28,6 +34,12 @@ export type SafeUser = {
   mobilePhone: string | null;
   roles: UserRole[];
   roleLabels: string[];
+  userGroupId: string | null;
+  userGroupName: string | null;
+  jobPositionId: string | null;
+  jobPositionName: string | null;
+  avatarUrl: string | null;
+  avatarColor: string;
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -64,7 +76,14 @@ export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly users: Repository<User>,
+    @InjectRepository(UserGroup)
+    private readonly userGroups: Repository<UserGroup>,
+    @InjectRepository(JobPosition)
+    private readonly jobPositions: Repository<JobPosition>,
+    @InjectRepository(UnitPartnerAccess)
+    private readonly partnerAccess: Repository<UnitPartnerAccess>,
     private readonly config: ConfigService,
+    private readonly storage: NextcloudService,
   ) {}
 
   async onModuleInit() {
@@ -96,33 +115,86 @@ export class UsersService implements OnModuleInit {
       mobilePhone: user.mobilePhone ? formatMobilePhone(user.mobilePhone) : null,
       roles,
       roleLabels: roleLabelsFor(roles),
+      userGroupId: user.userGroupId ?? null,
+      userGroupName: null,
+      jobPositionId: user.jobPositionId ?? null,
+      jobPositionName: null,
+      avatarUrl: user.avatarUrl ?? null,
+      avatarColor: user.avatarColor ?? pickAvatarColor(user.id),
       active: user.active,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
   }
 
+  async toSafeUserDetailed(user: User): Promise<SafeUser> {
+    const base = this.toSafeUser(user);
+    if (user.userGroupId) {
+      const group = await this.userGroups.findOne({ where: { id: user.userGroupId } });
+      base.userGroupName = group?.name ?? null;
+    }
+    if (user.jobPositionId) {
+      const position = await this.jobPositions.findOne({ where: { id: user.jobPositionId } });
+      base.jobPositionName = position?.name ?? null;
+    }
+    return base;
+  }
+
   async findAll(): Promise<SafeUser[]> {
     const rows = await this.users.find({ order: { name: 'ASC' } });
-    return rows.map((user) => this.toSafeUser(user));
+    return Promise.all(rows.map((user) => this.toSafeUserDetailed(user)));
   }
 
   async findByEmail(email: string): Promise<User | null> {
     return this.users.findOne({
       where: { email: email.toLowerCase().trim() },
-      select: [
-        'id',
-        'name',
-        'email',
-        'cpf',
-        'mobilePhone',
-        'passwordHash',
-        'roles',
-        'active',
-        'createdAt',
-        'updatedAt',
-      ],
+      select: this.authSelectFields(),
     });
+  }
+
+  async findByMobilePhone(mobilePhone: string): Promise<User | null> {
+    const digits = normalizeMobilePhone(mobilePhone);
+    if (!isValidMobilePhone(digits)) return null;
+    return this.users.findOne({
+      where: { mobilePhone: digits },
+      select: this.authSelectFields(),
+    });
+  }
+
+  async resetPasswordById(userId: string, newPassword: string): Promise<void> {
+    if (newPassword.length < 6) {
+      throw new BadRequestException('Informe uma senha com ao menos 6 caracteres.');
+    }
+
+    const user = await this.users.findOne({
+      where: { id: userId },
+      select: ['id', 'passwordHash'],
+    });
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.users.save(user);
+  }
+
+  private authSelectFields(): (keyof User)[] {
+    return [
+      'id',
+      'name',
+      'email',
+      'cpf',
+      'mobilePhone',
+      'passwordHash',
+      'roles',
+      'userGroupId',
+      'jobPositionId',
+      'avatarUrl',
+      'avatarColor',
+      'active',
+      'createdAt',
+      'updatedAt',
+    ];
   }
 
   async findById(id: string): Promise<User | null> {
@@ -142,6 +214,8 @@ export class UsersService implements OnModuleInit {
         'mobilePhone',
         'passwordHash',
         'roles',
+        'userGroupId',
+        'jobPositionId',
         'active',
         'createdAt',
         'updatedAt',
@@ -226,7 +300,7 @@ export class UsersService implements OnModuleInit {
     );
 
     const rows = await qb.getMany();
-    return rows.map((user) => this.toSafeUser(user));
+    return Promise.all(rows.map((user) => this.toSafeUserDetailed(user)));
   }
 
   async create(input: {
@@ -236,6 +310,8 @@ export class UsersService implements OnModuleInit {
     cpf?: string;
     mobilePhone?: string;
     roles?: UserRole[];
+    userGroupId?: string | null;
+    jobPositionId?: string | null;
   }): Promise<SafeUser> {
     const email = input.email.toLowerCase().trim();
     const existing = await this.users.findOne({ where: { email } });
@@ -272,11 +348,39 @@ export class UsersService implements OnModuleInit {
       mobilePhone,
       passwordHash,
       roles: input.roles?.length ? input.roles : [UserRole.ADMIN],
+      userGroupId: input.userGroupId ?? null,
+      jobPositionId: input.jobPositionId ?? null,
       active: true,
     });
 
     const saved = await this.users.save(user);
-    return this.toSafeUser(saved);
+    saved.avatarColor = pickAvatarColor(saved.id);
+    await this.users.save(saved);
+    return this.toSafeUserDetailed(saved);
+  }
+
+  async ensureAvatarColor(user: User): Promise<User> {
+    if (user.avatarColor && isAvatarColorId(user.avatarColor)) {
+      return user;
+    }
+
+    user.avatarColor = pickAvatarColor(user.id);
+    return this.users.save(user);
+  }
+
+  async updateMyProfile(userId: string, patch: { avatarColor?: string }) {
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+
+    if (patch.avatarColor !== undefined) {
+      if (!isAvatarColorId(patch.avatarColor)) {
+        throw new BadRequestException('Cor de avatar inválida.');
+      }
+      user.avatarColor = patch.avatarColor;
+    }
+
+    const saved = await this.users.save(user);
+    return this.toSafeUserDetailed(saved);
   }
 
   async ensureMemberUser(input: {
@@ -306,6 +410,7 @@ export class UsersService implements OnModuleInit {
           passwordHash: null,
           roles: [UserRole.MEMBER],
           active: true,
+          avatarColor: pickAvatarColor(email),
         }),
       );
       return saved.id;
@@ -343,6 +448,8 @@ export class UsersService implements OnModuleInit {
       active?: boolean;
       password?: string;
       roles?: UserRole[];
+      userGroupId?: string | null;
+      jobPositionId?: string | null;
     },
   ): Promise<SafeUser> {
     const user = await this.users.findOne({ where: { id } });
@@ -353,6 +460,8 @@ export class UsersService implements OnModuleInit {
     if (patch.name !== undefined) user.name = patch.name.trim();
     if (patch.active !== undefined) user.active = patch.active;
     if (patch.roles !== undefined) user.roles = patch.roles;
+    if (patch.userGroupId !== undefined) user.userGroupId = patch.userGroupId;
+    if (patch.jobPositionId !== undefined) user.jobPositionId = patch.jobPositionId;
     if (patch.password) {
       user.passwordHash = await bcrypt.hash(patch.password, 10);
     }
@@ -376,7 +485,7 @@ export class UsersService implements OnModuleInit {
     await this.assertUniquePersonFields(user.cpf ?? undefined, user.mobilePhone ?? undefined, id);
 
     const saved = await this.users.save(user);
-    return this.toSafeUser(saved);
+    return this.toSafeUserDetailed(saved);
   }
 
   async validatePassword(user: User, password: string): Promise<boolean> {
@@ -390,6 +499,33 @@ export class UsersService implements OnModuleInit {
     }
   }
 
+  async uploadAvatar(userId: string, file: Express.Multer.File, actingUserId: string) {
+    if (userId !== actingUserId) {
+      throw new BadRequestException('Você só pode alterar o avatar do seu próprio usuário.');
+    }
+
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+
+    const { publicUrl } = await this.storage.uploadUserAvatar(userId, file);
+    user.avatarUrl = publicUrl;
+    await this.users.save(user);
+    return this.toSafeUserDetailed(user);
+  }
+
+  async removeAvatar(userId: string, actingUserId: string) {
+    if (userId !== actingUserId) {
+      throw new BadRequestException('Você só pode alterar o avatar do seu próprio usuário.');
+    }
+
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+
+    user.avatarUrl = null;
+    await this.users.save(user);
+    return this.toSafeUserDetailed(user);
+  }
+
   async remove(id: string, currentUserId?: string): Promise<{ ok: true }> {
     if (currentUserId && currentUserId === id) {
       throw new BadRequestException('Você não pode remover seu próprio usuário.');
@@ -400,7 +536,36 @@ export class UsersService implements OnModuleInit {
       throw new NotFoundException('Usuário não encontrado.');
     }
 
+    purgeHolderFromPartnerStore(user.name);
+    await this.partnerAccess.delete({ userId: id });
     await this.users.remove(user);
     return { ok: true };
+  }
+
+  async removeMany(
+    ids: string[],
+    currentUserId?: string,
+  ): Promise<{
+    ok: true;
+    removed: number;
+    skipped: Array<{ id: string; reason: string }>;
+  }> {
+    const uniqueIds = [...new Set(ids.filter(Boolean))];
+    let removed = 0;
+    const skipped: Array<{ id: string; reason: string }> = [];
+
+    for (const id of uniqueIds) {
+      try {
+        await this.remove(id, currentUserId);
+        removed += 1;
+      } catch (err) {
+        skipped.push({
+          id,
+          reason: err instanceof Error ? err.message : 'Não foi possível remover o usuário.',
+        });
+      }
+    }
+
+    return { ok: true, removed, skipped };
   }
 }

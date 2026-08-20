@@ -2,7 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 const API_DESCRIPTION = [
-  'API do ecossistema **ACAF Connect** (NestJS).',
+  'API do ecossistema **ACAF** (NestJS).',
   '',
   '## Autenticação',
   '',
@@ -21,11 +21,11 @@ const API_DESCRIPTION = [
   '- GET /test — ping de disponibilidade',
   '- GET /docs — esta documentação (Swagger UI)',
   '- GET /docs/openapi.json — especificação OpenAPI',
-  '- GET /shared/connect_domain.json — domínio Connect (planos, taxas)',
+  '- GET /shared/connect_domain.json — configuração compartilhada (planos, taxas)',
   '',
   '## Consumidores',
   '',
-  '- acaf-app (Flutter) — catálogo, Connect, check-in, diárias, reservas',
+  '- acaf-app (Flutter) — catálogo, planos, check-in, diárias, reservas',
   '- acaf-partner — portal da academia (unidades, recepção, clientes, financeiro)',
   '- acaf-adm — admin interno (redes, unidades, empresas, modalidades)',
   '- acaf-corporate — empresas (colaboradores, faturas, convites)',
@@ -63,10 +63,10 @@ export function setupSwagger(app: INestApplication): void {
       },
       'corporate-jwt',
     )
-    .addTag('Público', 'Health, test, domínio Connect e assets compartilhados')
+    .addTag('Público', 'Health, test, configuração compartilhada e assets')
     .addTag(
       'App & Parceiro',
-      'Catálogo, Connect, check-in, reservas, portal da academia e clientes (app + acaf-partner)',
+      'Catálogo, planos, check-in, reservas, portal da academia e clientes (app + acaf-partner)',
     )
     .addTag('Admin · Auth', 'Login e sessão do painel administrativo')
     .addTag('Admin · API', 'Redes, unidades, empresas, modalidades e usuários (JWT admin)')

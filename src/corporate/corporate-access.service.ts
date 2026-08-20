@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { UsersService } from '../users/users.service';
 import { CompanyAccess } from './company-access.entity';
 import { Company, type CompanyStatus } from './company.entity';
-import { generateEnrollmentCode, normalizeEnrollmentCode } from './enrollment-code';
+import { generateEnrollmentCode, enrollmentCodeLookupKeys } from './enrollment-code';
 
 export type LinkedCorporateUser = {
   id: string;
@@ -109,18 +109,34 @@ export class CorporateAccessService {
     return this.companies.findOne({ where: { id } });
   }
 
+  async deleteCompany(id: string): Promise<void> {
+    const company = await this.companies.findOne({ where: { id } });
+    if (!company) throw new NotFoundException('Empresa não encontrada.');
+    await this.access.delete({ companyId: id });
+    await this.companies.remove(company);
+  }
+
   async listCompanies(status?: CompanyStatus): Promise<Company[]> {
     if (status) return this.companies.find({ where: { status }, order: { createdAt: 'DESC' } });
     return this.companies.find({ order: { createdAt: 'DESC' } });
   }
 
-  async updateCompanyStatus(id: string, status: CompanyStatus): Promise<Company> {
+  async updateCompanyStatus(
+    id: string,
+    status: CompanyStatus,
+    actingUserId?: string,
+  ): Promise<Company> {
     const company = await this.companies.findOne({ where: { id } });
     if (!company) throw new NotFoundException('Empresa não encontrada.');
     company.status = status;
-    const saved = await this.companies.save(company);
+    let saved = await this.companies.save(company);
     if (saved.status === 'active') {
       await this.ensureEnrollmentCode(saved);
+      saved = (await this.companies.findOne({ where: { id } })) ?? saved;
+      if (!saved.commercialOwnerUserId && actingUserId) {
+        saved.commercialOwnerUserId = actingUserId;
+        saved = await this.companies.save(saved);
+      }
     }
     return saved;
   }
@@ -128,8 +144,12 @@ export class CorporateAccessService {
   async ensureEnrollmentCode(company: Company): Promise<string> {
     if (company.enrollmentCode) return company.enrollmentCode;
 
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const candidate = generateEnrollmentCode();
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const candidate = generateEnrollmentCode(
+        company.tradeName,
+        attempt,
+        company.legalName,
+      );
       const clash = await this.companies.findOne({ where: { enrollmentCode: candidate } });
       if (clash) continue;
       company.enrollmentCode = candidate;
@@ -141,10 +161,16 @@ export class CorporateAccessService {
   }
 
   async findActiveByEnrollmentCode(code: string): Promise<Company | null> {
-    const normalized = normalizeEnrollmentCode(code);
-    if (!normalized) return null;
-    return this.companies.findOne({
-      where: { enrollmentCode: normalized, status: 'active' },
-    });
+    const keys = enrollmentCodeLookupKeys(code);
+    if (!keys.length) return null;
+
+    for (const key of keys) {
+      const company = await this.companies.findOne({
+        where: { enrollmentCode: key, status: 'active' },
+      });
+      if (company) return company;
+    }
+
+    return null;
   }
 }

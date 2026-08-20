@@ -96,4 +96,21 @@ export class PartnerAccessService {
   async removeAccessForUnit(unitId: string): Promise<void> {
     await this.access.delete({ unitId });
   }
+
+  async countLinkedUsersForUnits(unitIds: string[]): Promise<number> {
+    if (!unitIds.length) return 0;
+
+    const row = await this.access
+      .createQueryBuilder('access')
+      .select('COUNT(DISTINCT access.userId)', 'count')
+      .where('access.unitId IN (:...unitIds)', { unitIds })
+      .andWhere('access.userId IS NOT NULL')
+      .getRawOne<{ count: string }>();
+
+    return Number(row?.count ?? 0);
+  }
+
+  async countLinkedUsersForUnit(unitId: string): Promise<number> {
+    return this.countLinkedUsersForUnits([unitId]);
+  }
 }

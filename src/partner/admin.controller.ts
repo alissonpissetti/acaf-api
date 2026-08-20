@@ -9,11 +9,13 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -21,6 +23,8 @@ import type { GymUnit, NetworkSocialContacts } from './types';
 import type { CompanyStatus } from '../corporate/company.entity';
 import type { UnitWeeklySchedule } from './weeklySchedule';
 import { AdminService } from './admin.service';
+
+type AuthRequest = Request & { user: { userId: string } };
 
 @ApiTags('Admin · API')
 @ApiBearerAuth('admin-jwt')
@@ -40,8 +44,11 @@ export class AdminController {
   }
 
   @Post('networks')
-  createNetwork(@Body() body: { name: string; social?: Partial<NetworkSocialContacts> }) {
-    return this.admin.createNetwork(body.name, body.social);
+  createNetwork(
+    @Req() req: AuthRequest,
+    @Body() body: { name: string; social?: Partial<NetworkSocialContacts> },
+  ) {
+    return this.admin.createNetwork(body.name, body.social, req.user.userId);
   }
 
   @Patch('networks/:id')
@@ -55,6 +62,11 @@ export class AdminController {
     },
   ) {
     return this.admin.updateNetwork(id, body);
+  }
+
+  @Delete('networks/:id')
+  deleteNetwork(@Param('id') id: string) {
+    return this.admin.deleteNetwork(id);
   }
 
   @Post('networks/:id/logo')
@@ -230,6 +242,21 @@ export class AdminController {
     return this.admin.listCompanies(status);
   }
 
+  @Post('companies')
+  createCompany(
+    @Req() req: AuthRequest,
+    @Body()
+    body: {
+      legalName: string;
+      tradeName?: string;
+      cnpj?: string;
+      email?: string;
+      phone?: string;
+    },
+  ) {
+    return this.admin.createCompany(body, req.user.userId);
+  }
+
   @Get('companies/:id')
   getCompany(@Param('id') id: string) {
     return this.admin.getCompany(id);
@@ -237,13 +264,14 @@ export class AdminController {
 
   @Patch('companies/:id')
   updateCompany(
+    @Req() req: AuthRequest,
     @Param('id') id: string,
     @Body() body: { status?: CompanyStatus },
   ) {
     if (!body.status) {
       throw new BadRequestException('Informe o status.');
     }
-    return this.admin.updateCompanyStatus(id, body.status);
+    return this.admin.updateCompanyStatus(id, body.status, req.user.userId);
   }
 
   @Post('companies/:id/access')
@@ -258,6 +286,27 @@ export class AdminController {
   @Delete('companies/:id/access/:userId')
   removeCompanyManager(@Param('id') id: string, @Param('userId') userId: string) {
     return this.admin.removeCompanyManager(id, userId);
+  }
+
+  @Delete('companies/:id')
+  deleteCompany(@Param('id') id: string) {
+    return this.admin.deleteCompany(id);
+  }
+
+  @Delete('companies/:companyId/employees/:employeeId')
+  removeCompanyEmployee(
+    @Param('companyId') companyId: string,
+    @Param('employeeId') employeeId: string,
+  ) {
+    return this.admin.removeCompanyEmployee(companyId, employeeId);
+  }
+
+  @Get('companies/:companyId/employees/:employeeId/profile')
+  getCompanyEmployeeProfile(
+    @Param('companyId') companyId: string,
+    @Param('employeeId') employeeId: string,
+  ) {
+    return this.admin.getCompanyEmployeeProfile(companyId, employeeId);
   }
 
   @Get('connect-domain')

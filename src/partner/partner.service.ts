@@ -50,7 +50,6 @@ import {
 } from './types';
 import { buildNewUnit, emptyMonthlyPayout, type CreateUnitInput } from './unitFactory';
 import { CorporateAccessService } from '../corporate/corporate-access.service';
-import { normalizeEnrollmentCode } from '../corporate/enrollment-code';
 import { registerDailyPassPurchase } from './dailyPassSales';
 import { isRemotePhotoUrl, resolveCatalogPhotoUrl, sanitizeUnitPhotosForApi } from './photoUrls';
 import { UnitScheduleService } from './unit-schedule.service';
@@ -697,17 +696,17 @@ export class PartnerService {
   }
 
   async validateConnectEnrollmentCode(rawCode: string) {
-    const normalized = normalizeEnrollmentCode(rawCode);
-    if (!normalized) {
+    const trimmed = rawCode.trim();
+    if (!trimmed) {
       throw new BadRequestException('Informe o código de adesão.');
     }
-    const company = await this.corporateAccess.findActiveByEnrollmentCode(normalized);
+    const company = await this.corporateAccess.findActiveByEnrollmentCode(trimmed);
     if (!company) {
       throw new BadRequestException('Código inválido ou expirado. Verifique com o RH da sua empresa.');
     }
     return {
       companyName: company.tradeName,
-      code: normalized,
+      code: company.enrollmentCode!,
       hint: 'Código validado pela empresa parceira.',
     };
   }

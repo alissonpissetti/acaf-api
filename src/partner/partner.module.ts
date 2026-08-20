@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AddressesModule } from '../addresses/addresses.module';
+import { CommercialLead } from '../commercial/commercial-lead.entity';
+import { AccountPayable } from '../finance/account-payable.entity';
+import { AccountReceivable } from '../finance/account-receivable.entity';
+import { Supplier } from '../finance/supplier.entity';
 import { PlatformUsersModule } from '../platform-users/platform-users.module';
 import { UsersModule } from '../users/users.module';
 import { StorageModule } from '../storage/storage.module';
@@ -18,7 +22,14 @@ import { PartnerStorePersistenceService } from './partner-store-persistence.serv
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UnitSchedule, PartnerStore]),
+    TypeOrmModule.forFeature([
+      UnitSchedule,
+      PartnerStore,
+      CommercialLead,
+      AccountPayable,
+      AccountReceivable,
+      Supplier,
+    ]),
     AddressesModule,
     StorageModule,
     PlatformUsersModule,
@@ -34,6 +45,6 @@ import { PartnerStorePersistenceService } from './partner-store-persistence.serv
     UnitScheduleService,
     UnitCoordinatesService,
   ],
-  exports: [UnitScheduleService, PartnerStorePersistenceService],
+  exports: [UnitScheduleService, PartnerStorePersistenceService, AdminService],
 })
 export class PartnerModule {}

@@ -122,7 +122,7 @@ export function upsertConnectSubscription(input: {
   });
 
   const member = findConnectMember(store, holderName);
-  if (!member) throw new Error('Falha ao registrar assinatura Connect.');
+  if (!member) throw new Error('Falha ao registrar assinatura de plano.');
   return toConnectMemberProfile(member);
 }
 
@@ -140,7 +140,7 @@ export function primaryGymBlockReason(
   unitId: string,
 ): string | null {
   if (!member || !member.active) {
-    return 'Ative um plano ACAF Connect antes de escolher sua academia principal.';
+    return 'Ative um plano ACAF antes de escolher sua academia principal.';
   }
   if (member.primaryUnitId === unitId) {
     return 'Esta unidade já é sua academia principal.';
@@ -166,7 +166,7 @@ export function setConnectPrimaryGym(holderName: string, unitId: string): Connec
     const members = ensureConnectMembersArray(s);
     const idx = members.findIndex((m) => m.holderKey === holderKey);
     if (idx < 0) {
-      throw new Error('Ative um plano ACAF Connect antes de escolher sua academia principal.');
+      throw new Error('Ative um plano ACAF antes de escolher sua academia principal.');
     }
 
     const current = members[idx];
@@ -212,7 +212,7 @@ export function validateConnectCheckInAtUnit(
 ): string | null {
   const member = findConnectMember(store, holderName);
   if (!member?.active) {
-    return 'Plano ACAF Connect não encontrado ou inativo. Ative sua assinatura no app.';
+    return 'Plano ACAF não encontrado ou inativo. Ative sua assinatura no app.';
   }
   if (!member.primaryUnitId) {
     return 'Escolha sua academia principal no app antes do check-in com plano mensal.';

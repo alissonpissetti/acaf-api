@@ -3,6 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Not, Repository } from 'typeorm';
+import { CommercialLead } from '../commercial/commercial-lead.entity';
+import { AccountPayable } from '../finance/account-payable.entity';
+import { AccountReceivable } from '../finance/account-receivable.entity';
+import { CashEntryStatus } from '../finance/cash-entry.types';
+import { Supplier } from '../finance/supplier.entity';
 import { NextcloudService } from '../storage/nextcloud.service';
 import { PartnerAccessService } from '../platform-users/partner-access.service';
 import { UsersService } from '../users/users.service';
@@ -10,9 +17,9 @@ import { ModalitiesService } from '../modalities/modalities.service';
 import { CorporateAccessService } from '../corporate/corporate-access.service';
 import { CorporateCompaniesService } from '../corporate/corporate-companies.service';
 import { CorporateEmployeesService } from '../corporate/corporate-employees.service';
-import type { CompanyStatus } from '../corporate/company.entity';
+import type { Company, CompanyStatus } from '../corporate/company.entity';
 import { getDomain, loadStore, saveDomain, updateStore } from './store';
-import type { AdminNetwork, GymUnit, NetworkSocialContacts } from './types';
+import type { AdminNetwork, ApiStore, GymUnit, NetworkSocialContacts } from './types';
 import { emptyNetworkSocialContacts } from './types';
 import {
   formatOpenHoursSummary,
@@ -22,7 +29,11 @@ import {
 import { buildNewUnit, emptyMonthlyPayout } from './unitFactory';
 import { isRemotePhotoUrl } from './photoUrls';
 import { UnitCoordinatesService } from './unit-coordinates.service';
-import { cancelCheckInEntry, listCheckInsForUnit } from './checkIn';
+import { cancelCheckInEntry, listCheckInsForUnit, normalizeHolderKey } from './checkIn';
+import {
+  getPartnerClientDetail,
+  type PartnerClientDetail,
+} from './partnerClients';
 
 type ConnectPlan = {
   id: string;
@@ -77,6 +88,14 @@ export class AdminService {
     private readonly corporateCompanies: CorporateCompaniesService,
     private readonly corporateEmployees: CorporateEmployeesService,
     private readonly unitCoordinates: UnitCoordinatesService,
+    @InjectRepository(CommercialLead)
+    private readonly commercialLeads: Repository<CommercialLead>,
+    @InjectRepository(AccountReceivable)
+    private readonly receivables: Repository<AccountReceivable>,
+    @InjectRepository(AccountPayable)
+    private readonly payables: Repository<AccountPayable>,
+    @InjectRepository(Supplier)
+    private readonly suppliers: Repository<Supplier>,
   ) {}
 
   private withUnitCount(network: AdminNetwork): AdminNetwork & { unitCount: number } {
@@ -84,6 +103,129 @@ export class AdminService {
     return {
       ...network,
       unitCount: store.units.filter((u) => u.networkId === network.id).length,
+    };
+  }
+
+  private networkUnitIds(store: ApiStore, networkId: string): string[] {
+    return store.units.filter((unit) => unit.networkId === networkId).map((unit) => unit.id);
+  }
+
+  private countPrimaryMembersForUnits(store: ApiStore, unitIds: string[]): number {
+    if (!unitIds.length) return 0;
+    const unitIdSet = new Set(unitIds);
+    return (store.connectMembers ?? []).filter(
+      (member) => member.primaryUnitId && unitIdSet.has(member.primaryUnitId),
+    ).length;
+  }
+
+  private countPrimaryMembersForUnit(store: ApiStore, unitId: string): number {
+    return (store.connectMembers ?? []).filter((member) => member.primaryUnitId === unitId).length;
+  }
+
+  private purgeUnitData(store: ApiStore, unitId: string) {
+    store.units = store.units.filter((unit) => unit.id !== unitId);
+    delete store.payoutsByUnit[unitId];
+    delete store.payoutHistoryByUnit[unitId];
+    store.students = store.students.filter((student) => student.unitId !== unitId);
+    store.checkInLog = store.checkInLog.filter((entry) => entry.unitId !== unitId);
+    store.pendingCheckIns = store.pendingCheckIns.filter((entry) => entry.unitId !== unitId);
+    store.issuedCodes = store.issuedCodes.filter((entry) => entry.unitId !== unitId);
+    store.modalityReservations = (store.modalityReservations ?? []).filter(
+      (entry) => entry.unitId !== unitId,
+    );
+    store.primaryGymChanges = (store.primaryGymChanges ?? []).filter(
+      (entry) => entry.toUnitId !== unitId && entry.fromUnitId !== unitId,
+    );
+
+    for (const member of store.connectMembers ?? []) {
+      if (member.primaryUnitId !== unitId) continue;
+      member.primaryUnitId = null;
+      member.primaryUnitName = null;
+      member.primaryChosenAt = null;
+      member.primaryFirstCheckInAt = null;
+      member.primaryCheckInsSinceFirst = 0;
+    }
+  }
+
+  private resetActiveNetworkIfNeeded(store: ApiStore, removedNetworkId: string) {
+    if (store.networkId !== removedNetworkId) return;
+
+    const fallbackNetwork = store.networks[0] ?? null;
+    if (!fallbackNetwork) {
+      store.networkId = '';
+      store.networkName = '';
+      store.activeUnitId = store.units[0]?.id ?? '';
+      return;
+    }
+
+    store.networkId = fallbackNetwork.id;
+    store.networkName = fallbackNetwork.name;
+    store.activeUnitId =
+      store.units.find((unit) => unit.networkId === fallbackNetwork.id)?.id ??
+      store.units[0]?.id ??
+      '';
+  }
+
+  private async assertNetworkCanBeRemoved(unitIds: string[]) {
+    const store = loadStore();
+    const linkedUsers = await this.partnerAccess.countLinkedUsersForUnits(unitIds);
+    if (linkedUsers > 0) {
+      throw new BadRequestException(
+        `Não é possível remover o parceiro: há ${linkedUsers} usuário(s) vinculado(s) às unidades. Remova os vínculos antes de excluir.`,
+      );
+    }
+
+    const primaryMembers = this.countPrimaryMembersForUnits(store, unitIds);
+    if (primaryMembers > 0) {
+      throw new BadRequestException(
+        `Não é possível remover o parceiro: há ${primaryMembers} usuário(s) com academia principal nesta rede.`,
+      );
+    }
+  }
+
+  private async assertUnitCanBeRemoved(unitId: string) {
+    const store = loadStore();
+    const linkedUsers = await this.partnerAccess.countLinkedUsersForUnit(unitId);
+    if (linkedUsers > 0) {
+      throw new BadRequestException(
+        `Não é possível remover a unidade: há ${linkedUsers} usuário(s) vinculado(s). Remova os vínculos antes de excluir.`,
+      );
+    }
+
+    const primaryMembers = this.countPrimaryMembersForUnit(store, unitId);
+    if (primaryMembers > 0) {
+      throw new BadRequestException(
+        `Não é possível remover a unidade: há ${primaryMembers} usuário(s) com esta unidade como academia principal.`,
+      );
+    }
+  }
+
+  private async commercialOwnerName(userId?: string | null): Promise<string | null> {
+    if (!userId) return null;
+    const user = await this.users.findById(userId);
+    return user?.name ?? null;
+  }
+
+  private async commercialOwnerNamesByIds(ids: Array<string | null | undefined>): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    const unique = [...new Set(ids.filter((id): id is string => Boolean(id)))];
+    await Promise.all(
+      unique.map(async (id) => {
+        const name = await this.commercialOwnerName(id);
+        if (name) map.set(id, name);
+      }),
+    );
+    return map;
+  }
+
+  private async companyDtoWithOwner(
+    company: Company,
+    extras?: { managers?: number; employees?: number },
+  ) {
+    const dto = this.corporateCompanies.toCompanyDto(company, extras);
+    return {
+      ...dto,
+      commercialOwnerName: await this.commercialOwnerName(company.commercialOwnerUserId),
     };
   }
 
@@ -107,12 +249,33 @@ export class AdminService {
     };
   }
 
-  listNetworks(): (AdminNetwork & { unitCount: number })[] {
+  async listNetworks() {
     const store = loadStore();
-    return store.networks.map((network) => this.withUnitCount(network));
+    const owners = await this.commercialOwnerNamesByIds(
+      store.networks.map((network) => network.commercialOwnerUserId),
+    );
+
+    return Promise.all(
+      store.networks.map(async (network) => {
+        const unitIds = this.networkUnitIds(store, network.id);
+        const withCount = this.withUnitCount(network);
+        return {
+          ...withCount,
+          primaryMemberCount: this.countPrimaryMembersForUnits(store, unitIds),
+          partnerUserCount: await this.partnerAccess.countLinkedUsersForUnits(unitIds),
+          commercialOwnerName: network.commercialOwnerUserId
+            ? owners.get(network.commercialOwnerUserId) ?? null
+            : null,
+        };
+      }),
+    );
   }
 
-  createNetwork(name: string, social?: Partial<NetworkSocialContacts>) {
+  async createNetwork(
+    name: string,
+    social?: Partial<NetworkSocialContacts>,
+    commercialOwnerUserId?: string,
+  ) {
     const trimmed = name.trim();
     if (!trimmed) {
       throw new BadRequestException('Informe o nome da rede.');
@@ -128,10 +291,15 @@ export class AdminService {
         name: trimmed,
         logoUrl: null,
         social: normalizeSocial(social),
+        commercialOwnerUserId: commercialOwnerUserId ?? null,
       };
       s.networks.push(created);
     });
-    return this.withUnitCount(created!);
+    const network = this.withUnitCount(created!);
+    return {
+      ...network,
+      commercialOwnerName: await this.commercialOwnerName(network.commercialOwnerUserId),
+    };
   }
 
   updateNetwork(
@@ -173,6 +341,31 @@ export class AdminService {
     });
 
     return this.withUnitCount(updated!);
+  }
+
+  async deleteNetwork(id: string) {
+    const current = loadStore();
+    const network = current.networks.find((item) => item.id === id);
+    if (!network) {
+      throw new NotFoundException('Rede não encontrada.');
+    }
+
+    const unitIds = this.networkUnitIds(current, id);
+    await this.assertNetworkCanBeRemoved(unitIds);
+
+    updateStore((store) => {
+      for (const unitId of unitIds) {
+        this.purgeUnitData(store, unitId);
+      }
+      store.networks = store.networks.filter((item) => item.id !== id);
+      this.resetActiveNetworkIfNeeded(store, id);
+    });
+
+    for (const unitId of unitIds) {
+      await this.partnerAccess.removeAccessForUnit(unitId);
+    }
+
+    return { ok: true };
   }
 
   async uploadNetworkLogo(id: string, file: Express.Multer.File) {
@@ -284,6 +477,7 @@ export class AdminService {
     return units.map((unit) => ({
       ...unit,
       networkName: networkMap.get(unit.networkId) ?? unit.networkId,
+      primaryMemberCount: this.countPrimaryMembersForUnit(store, unit.id),
     }));
   }
 
@@ -410,24 +604,19 @@ export class AdminService {
     return { ok: true, removed };
   }
 
-  deleteUnit(unitId: string) {
+  async deleteUnit(unitId: string) {
     const current = loadStore();
     const unit = current.units.find((u) => u.id === unitId);
     if (!unit) {
       throw new NotFoundException('Unidade não encontrada.');
     }
 
+    await this.assertUnitCanBeRemoved(unitId);
+
     const networkId = unit.networkId;
 
     updateStore((s) => {
-      s.units = s.units.filter((u) => u.id !== unitId);
-      delete s.payoutsByUnit[unitId];
-      delete s.payoutHistoryByUnit[unitId];
-      s.students = s.students.filter((student) => student.unitId !== unitId);
-      s.checkInLog = s.checkInLog.filter((entry) => entry.unitId !== unitId);
-      s.pendingCheckIns = s.pendingCheckIns.filter((entry) => entry.unitId !== unitId);
-      s.issuedCodes = s.issuedCodes.filter((entry) => entry.unitId !== unitId);
-
+      this.purgeUnitData(s, unitId);
       if (s.activeUnitId === unitId) {
         const fallback =
           s.units.find((u) => u.networkId === networkId) ?? s.units[0] ?? null;
@@ -436,11 +625,13 @@ export class AdminService {
           s.networkId = fallback.networkId;
           const network = s.networks.find((n) => n.id === fallback.networkId);
           if (network) s.networkName = network.name;
+        } else {
+          s.activeUnitId = '';
         }
       }
     });
 
-    void this.partnerAccess.removeAccessForUnit(unitId);
+    await this.partnerAccess.removeAccessForUnit(unitId);
 
     return { ok: true, networkId };
   }
@@ -560,7 +751,7 @@ export class AdminService {
       const managers = await this.corporateAccess.listCompanyManagers(company.id);
       const employees = await this.corporateEmployees.listEmployees(company.id);
       result.push(
-        this.corporateCompanies.toCompanyDto(company, {
+        await this.companyDtoWithOwner(company, {
           managers: managers.length,
           employees: employees.length,
         }),
@@ -575,18 +766,37 @@ export class AdminService {
     const managers = await this.corporateAccess.listCompanyManagers(id);
     const employees = await this.corporateEmployees.listEmployees(id);
     return {
-      ...this.corporateCompanies.toCompanyDto(company, {
+      ...(await this.companyDtoWithOwner(company, {
         managers: managers.length,
         employees: employees.length,
-      }),
+      })),
       managers,
       employees,
     };
   }
 
-  async updateCompanyStatus(id: string, status: CompanyStatus) {
-    const company = await this.corporateAccess.updateCompanyStatus(id, status);
-    return this.corporateCompanies.toCompanyDto(company);
+  async updateCompanyStatus(id: string, status: CompanyStatus, actingUserId?: string) {
+    const company = await this.corporateAccess.updateCompanyStatus(id, status, actingUserId);
+    return this.companyDtoWithOwner(company);
+  }
+
+  async createCompany(
+    body: {
+      legalName: string;
+      tradeName?: string;
+      cnpj?: string;
+      email?: string;
+      phone?: string;
+    },
+    commercialOwnerUserId?: string,
+  ) {
+    const created = await this.corporateCompanies.createByAdmin({
+      ...body,
+      commercialOwnerUserId,
+    });
+    const company = await this.corporateAccess.findCompanyById(created.id);
+    if (!company) throw new NotFoundException('Empresa não encontrada após cadastro.');
+    return this.companyDtoWithOwner(company, { managers: 0, employees: 0 });
   }
 
   addCompanyManager(companyId: string, userId: string) {
@@ -596,11 +806,183 @@ export class AdminService {
   removeCompanyManager(companyId: string, userId: string) {
     return this.corporateAccess.unlinkUserFromCompany(companyId, userId);
   }
+
+  async deleteCompany(id: string) {
+    const company = await this.corporateAccess.findCompanyById(id);
+    if (!company) {
+      throw new NotFoundException('Empresa não encontrada.');
+    }
+
+    const employees = await this.corporateEmployees.listEmployees(id);
+
+    await this.assertCompanyHasNoFinanceEntries(company);
+
+    await this.commercialLeads.update({ convertedCompanyId: id }, { convertedCompanyId: null });
+    await this.corporateEmployees.removeAllForCompany(id);
+    await this.corporateAccess.deleteCompany(id);
+    return { ok: true, removedEmployees: employees.length };
+  }
+
+  async removeCompanyEmployee(companyId: string, employeeId: string) {
+    const company = await this.corporateAccess.findCompanyById(companyId);
+    if (!company) {
+      throw new NotFoundException('Empresa não encontrada.');
+    }
+
+    const employees = await this.corporateEmployees.listEmployees(companyId);
+    const employee = employees.find((item) => item.id === employeeId);
+    if (!employee) {
+      throw new NotFoundException('Colaborador não encontrado nesta empresa.');
+    }
+
+    this.assertEmployeesHaveNoCheckIns([employee]);
+    await this.corporateEmployees.removeEmployee(companyId, employeeId);
+    return { ok: true };
+  }
+
+  async getCompanyEmployeeProfile(companyId: string, employeeId: string) {
+    const company = await this.corporateAccess.findCompanyById(companyId);
+    if (!company) {
+      throw new NotFoundException('Empresa não encontrada.');
+    }
+
+    const employees = await this.corporateEmployees.listEmployees(companyId);
+    const employee = employees.find((item) => item.id === employeeId);
+    if (!employee) {
+      throw new NotFoundException('Colaborador não encontrado nesta empresa.');
+    }
+
+    const store = loadStore();
+    const holderKey = normalizeHolderKey(employee.name);
+    const unitIds = store.units.map((unit) => unit.id);
+    const client =
+      getPartnerClientDetail(store, unitIds, holderKey, 'all') ??
+      this.emptyClientProfile(employee.name, holderKey);
+
+    if (!client.email && employee.email) client.email = employee.email;
+    if (!client.cpf && employee.cpf) client.cpf = employee.cpf;
+    if (!client.companyName) {
+      client.companyName = company.tradeName || company.legalName;
+    }
+
+    const studentRecords = client.studentRecords.map((student) => ({
+      ...student,
+      unitName:
+        store.units.find((unit) => unit.id === student.unitId)?.unitName?.trim() ||
+        student.unitId,
+    }));
+
+    return {
+      employee,
+      company: {
+        id: company.id,
+        tradeName: company.tradeName,
+        legalName: company.legalName,
+      },
+      client: {
+        ...client,
+        studentRecords,
+      },
+    };
+  }
+
+  private emptyClientProfile(name: string, holderKey: string): PartnerClientDetail {
+    return {
+      holderKey,
+      name: name.trim(),
+      isPrimaryMember: false,
+      totalCheckIns: 0,
+      checkInsThisMonth: 0,
+      dailyPassesTotal: 0,
+      dailyPassesThisMonth: 0,
+      relationship: 'visitor',
+      checkIns: [],
+      primaryHistory: { changes: [] },
+      studentRecords: [],
+    };
+  }
+
+  private async assertCompanyHasNoFinanceEntries(company: Company): Promise<void> {
+    const activeEntries = { status: Not(CashEntryStatus.CANCELLED) };
+
+    const receivableCount = await this.receivables.count({
+      where: {
+        payerKind: 'company',
+        payerRefId: company.id,
+        ...activeEntries,
+      },
+    });
+
+    let payableCount = 0;
+    const companyDocument = company.cnpj?.replace(/\D/g, '') ?? '';
+    if (companyDocument) {
+      const supplierRows = await this.suppliers.find({
+        where: { document: companyDocument },
+        select: ['id'],
+      });
+      const supplierIds = supplierRows.map((row) => row.id);
+      if (supplierIds.length) {
+        payableCount = await this.payables.count({
+          where: {
+            supplierId: In(supplierIds),
+            ...activeEntries,
+          },
+        });
+      }
+    }
+
+    if (receivableCount === 0 && payableCount === 0) return;
+
+    const parts: string[] = [];
+    if (receivableCount > 0) {
+      parts.push(`${receivableCount} conta(s) a receber`);
+    }
+    if (payableCount > 0) {
+      parts.push(`${payableCount} conta(s) a pagar`);
+    }
+
+    throw new BadRequestException(
+      `Não é possível excluir a empresa: existem ${parts.join(' e ')} vinculadas. Remova ou cancele os lançamentos no financeiro antes de excluir.`,
+    );
+  }
+
+  private assertEmployeesHaveNoCheckIns(
+    employees: { name: string }[],
+  ): void {
+    const holderKeys = new Map<string, string>();
+    for (const employee of employees) {
+      const name = employee.name?.trim();
+      if (!name) continue;
+      holderKeys.set(normalizeHolderKey(name), name);
+    }
+    if (!holderKeys.size) return;
+
+    const store = loadStore();
+
+    for (const member of store.connectMembers ?? []) {
+      if (!holderKeys.has(member.holderKey)) continue;
+      if (member.primaryFirstCheckInAt || member.primaryCheckInsSinceFirst > 0) {
+        const employeeName = holderKeys.get(member.holderKey) ?? member.holderName;
+        throw new BadRequestException(
+          `Não é possível remover a empresa: o colaborador ${employeeName} possui check-in cadastrado.`,
+        );
+      }
+    }
+
+    for (const entry of store.checkInLog ?? []) {
+      const key = normalizeHolderKey(entry.holderName);
+      if (!holderKeys.has(key)) continue;
+      const employeeName = holderKeys.get(key) ?? entry.holderName;
+      throw new BadRequestException(
+        `Não é possível remover a empresa: o colaborador ${employeeName} possui check-in cadastrado.`,
+      );
+    }
+  }
 }
 
 function normalizeConnectPlans(plans: ConnectPlan[]): ConnectPlan[] {
   if (!plans.length) {
-    throw new BadRequestException('Informe ao menos um plano Connect.');
+    throw new BadRequestException('Informe ao menos um plano.');
   }
 
   const seen = new Set<string>();

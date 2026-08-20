@@ -1,7 +1,7 @@
 {
   "name": "acaf-api",
   "version": "0.0.1",
-  "description": "API NestJS do ecossistema ACAF (app Flutter, portal academia e Connect).",
+  "description": "API NestJS do ecossistema ACAF (app Flutter, portal academia e admin).",
   "author": "",
   "private": true,
   "license": "UNLICENSED",

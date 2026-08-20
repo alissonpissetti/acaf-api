@@ -77,7 +77,7 @@ export function buildNewUnit(store: ApiStore, input: CreateUnitInput & { network
     openHours: formatOpenHoursSummary(weeklySchedule),
     description:
       input.description?.trim() ||
-      `${unitName} · configure fotos, modalidades e planos no portal ACAF Connect.`,
+      `${unitName} · configure fotos, modalidades e planos no portal ACAF.`,
     modalities,
     dailyPassPrice: 44.9,
     dailyPassActive: false,
