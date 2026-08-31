@@ -9,6 +9,7 @@ import {
   ADMIN_GROUP_NAME,
   COMMERCIAL_GROUP_NAME,
   FINANCE_GROUP_NAME,
+  MARKETING_GROUP_NAME,
 } from './access-control.seed';
 import { Department } from './department.entity';
 import { GroupPermission } from './group-permission.entity';
@@ -63,6 +64,25 @@ export class PermissionsService {
   async userHasAnyPermission(userId: string, keys: string[]): Promise<boolean> {
     const userKeys = await this.getUserPermissionKeys(userId);
     return keys.some((key) => userKeys.includes(key));
+  }
+
+  /** Usuários admin ativos cujo grupo possui a permissão informada. */
+  async listUserIdsWithPermission(key: string): Promise<string[]> {
+    const permission = await this.permissions.findOne({ where: { key } });
+    if (!permission) return [];
+
+    const groupLinks = await this.groupPermissions.find({
+      where: { permissionId: permission.id },
+    });
+    const groupIds = [...new Set(groupLinks.map((row) => row.groupId))];
+    if (!groupIds.length) return [];
+
+    const users = await this.users.find({
+      where: { userGroupId: In(groupIds), active: true },
+      select: ['id', 'roles'],
+    });
+
+    return users.filter((user) => userHasRole(user, UserRole.ADMIN)).map((user) => user.id);
   }
 
   async listAll() {
@@ -218,6 +238,15 @@ export class AccessControlSeedService implements OnModuleInit {
       'Acesso ao módulo comercial e pipeline de leads',
     );
     await this.syncGroupPermissions(commercialGroup.id, commercialKeys);
+
+    const marketingKeys = allPermissions
+      .filter((p) => p.key.startsWith('marketing.'))
+      .map((p) => p.id);
+    const marketingGroup = await this.ensureGroup(
+      MARKETING_GROUP_NAME,
+      'Acesso ao módulo de marketing, campanhas e formulários',
+    );
+    await this.syncGroupPermissions(marketingGroup.id, marketingKeys);
   }
 
   private async ensureGroup(name: string, description: string) {

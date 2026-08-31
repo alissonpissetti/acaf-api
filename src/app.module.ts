@@ -44,6 +44,17 @@ import { CommercialLeadContact } from './commercial/commercial-lead-contact.enti
 import { CommercialLeadOwner } from './commercial/commercial-lead-owner.entity';
 import { CommercialFunnel } from './commercial/commercial-funnel.entity';
 import { CommercialFunnelStage } from './commercial/commercial-funnel-stage.entity';
+import { MarketingModule } from './marketing/marketing.module';
+import { MarketingCampaign } from './marketing/marketing-campaign.entity';
+import { MarketingCreative } from './marketing/marketing-creative.entity';
+import { MarketingLandingPage } from './marketing/marketing-landing-page.entity';
+import { MarketingFormSubmission } from './marketing/marketing-form-submission.entity';
+import { Notification } from './notifications/notification.entity';
+import { NotificationsModule } from './notifications/notifications.module';
+import { SupportTicketMessage } from './support/support-ticket-message.entity';
+import { SupportTicket } from './support/support-ticket.entity';
+import { SupportQueue } from './support/support-queue.entity';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -93,6 +104,14 @@ import { CommercialFunnelStage } from './commercial/commercial-funnel-stage.enti
             CommercialLeadContact,
             CommercialFunnel,
             CommercialFunnelStage,
+            MarketingCampaign,
+            MarketingCreative,
+            MarketingLandingPage,
+            MarketingFormSubmission,
+            Notification,
+            SupportTicket,
+            SupportTicketMessage,
+            SupportQueue,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,
@@ -103,10 +122,13 @@ import { CommercialFunnelStage } from './commercial/commercial-funnel-stage.enti
               : undefined,
           extra: {
             connectionLimit: 10,
+            maxIdle: 5,
+            idleTimeout: 60_000,
             waitForConnections: true,
             connectTimeout: 30_000,
             enableKeepAlive: true,
             keepAliveInitialDelay: 10_000,
+            resetOnRelease: true,
           },
         };
       },
@@ -122,6 +144,9 @@ import { CommercialFunnelStage } from './commercial/commercial-funnel-stage.enti
     AccessControlModule,
     FinanceModule,
     CommercialModule,
+    MarketingModule,
+    NotificationsModule,
+    SupportModule,
   ],
 })
 export class AppModule {}

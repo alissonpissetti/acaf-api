@@ -29,7 +29,7 @@ describe('Partner API (e2e)', () => {
       .expect(200)
       .expect((res) => {
         expect(res.body.ok).toBe(true);
-        expect(res.body.service).toBe('acaf-api');
+        expect(res.body.service).toBe('connect-api');
       });
   });
 
@@ -37,7 +37,7 @@ describe('Partner API (e2e)', () => {
     return request(app.getHttpServer())
       .get('/api/health')
       .expect(200)
-      .expect({ status: 'ok', service: 'acaf-api' });
+      .expect({ status: 'ok', service: 'connect-api' });
   });
 
   it('/api/bootstrap (GET)', () => {

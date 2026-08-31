@@ -61,6 +61,36 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
     ],
   },
   {
+    slug: 'marketing',
+    name: 'Marketing',
+    description: 'Campanhas, criativos e formulários de captação de leads',
+    icon: 'Megaphone',
+    sortOrder: 2,
+    items: [
+      {
+        slug: 'painel',
+        label: 'Painel',
+        route: '/m/marketing/painel',
+        sortOrder: 1,
+        permissionKey: 'marketing.painel',
+      },
+      {
+        slug: 'campanhas',
+        label: 'Campanhas',
+        route: '/m/marketing/campanhas',
+        sortOrder: 2,
+        permissionKey: 'marketing.campanhas',
+      },
+      {
+        slug: 'formularios',
+        label: 'Formulários',
+        route: '/m/marketing/formularios',
+        sortOrder: 3,
+        permissionKey: 'marketing.formularios',
+      },
+    ],
+  },
+  {
     slug: 'corporativo',
     name: 'Corporativo',
     description: 'Empresas e gestão corporativa',
@@ -151,11 +181,34 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
     ],
   },
   {
+    slug: 'atendimento',
+    name: 'Atendimento',
+    description: 'Chamados de suporte e acompanhamento de solicitações',
+    icon: 'Headphones',
+    sortOrder: 6,
+    items: [
+      {
+        slug: 'filas',
+        label: 'Filas de chamados',
+        route: '/m/atendimento/filas',
+        sortOrder: 1,
+        permissionKey: 'atendimento.filas',
+      },
+      {
+        slug: 'chamados',
+        label: 'Chamados',
+        route: '/m/atendimento/chamados',
+        sortOrder: 2,
+        permissionKey: 'atendimento.chamados',
+      },
+    ],
+  },
+  {
     slug: 'sistema',
     name: 'Sistema',
     description: 'Módulos, permissões e estrutura organizacional',
     icon: 'Settings',
-    sortOrder: 6,
+    sortOrder: 7,
     items: [
       {
         slug: 'modulos',
@@ -199,3 +252,4 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
 export const ADMIN_GROUP_NAME = 'Administradores';
 export const COMMERCIAL_GROUP_NAME = 'Comercial';
 export const FINANCE_GROUP_NAME = 'Financeiro';
+export const MARKETING_GROUP_NAME = 'Marketing';

@@ -4,8 +4,8 @@ import { getDomain } from './store';
 const FEE_PERCENT_FALLBACK = 20;
 
 function feePercent(): number {
-  const domain = getDomain() as { acafConnectFeePercent?: number };
-  return domain.acafConnectFeePercent ?? FEE_PERCENT_FALLBACK;
+  const domain = getDomain() as { connectFeePercent?: number };
+  return domain.connectFeePercent ?? FEE_PERCENT_FALLBACK;
 }
 
 function netFromGross(gross: number): number {

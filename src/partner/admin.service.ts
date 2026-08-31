@@ -45,8 +45,8 @@ type ConnectPlan = {
 
 type ConnectDomain = {
   schemaVersion: number;
-  acafConnectFeePercent: number;
-  acafDailyFeePercent: number;
+  connectFeePercent: number;
+  dailyFeePercent: number;
   connectPlans: ConnectPlan[];
   modalityCatalog: string[];
   [key: string]: unknown;
@@ -244,8 +244,8 @@ export class AdminService {
       networks: store.networks,
       unitCount: store.units.length,
       planCount: domain.connectPlans?.length ?? 0,
-      connectFeePercent: domain.acafConnectFeePercent,
-      dailyFeePercent: domain.acafDailyFeePercent,
+      connectFeePercent: domain.connectFeePercent,
+      dailyFeePercent: domain.dailyFeePercent,
     };
   }
 
@@ -703,16 +703,16 @@ export class AdminService {
   }
 
   updateConnectDomain(body: {
-    acafConnectFeePercent?: number;
-    acafDailyFeePercent?: number;
+    connectFeePercent?: number;
+    dailyFeePercent?: number;
     connectPlans?: ConnectPlan[];
   }) {
     const domain = { ...(getDomain() as ConnectDomain) };
-    if (body.acafConnectFeePercent != null) {
-      domain.acafConnectFeePercent = body.acafConnectFeePercent;
+    if (body.connectFeePercent != null) {
+      domain.connectFeePercent = body.connectFeePercent;
     }
-    if (body.acafDailyFeePercent != null) {
-      domain.acafDailyFeePercent = body.acafDailyFeePercent;
+    if (body.dailyFeePercent != null) {
+      domain.dailyFeePercent = body.dailyFeePercent;
     }
     if (body.connectPlans) {
       domain.connectPlans = normalizeConnectPlans(body.connectPlans);

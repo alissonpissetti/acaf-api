@@ -49,7 +49,7 @@ export class CorporateAuthService {
       const pending = await this.access.listCompanyIdsForUser(user.id);
       if (pending.length) {
         throw new UnauthorizedException(
-          'Empresa aguardando aprovação. Entre em contato com a ACAF.',
+          'Empresa aguardando aprovação. Entre em contato conosco.',
         );
       }
       throw new UnauthorizedException('Usuário sem acesso a nenhuma empresa.');

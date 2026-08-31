@@ -318,8 +318,8 @@ export class AdminController {
   updateConnectDomain(
     @Body()
     body: {
-      acafConnectFeePercent?: number;
-      acafDailyFeePercent?: number;
+      connectFeePercent?: number;
+      dailyFeePercent?: number;
       connectPlans?: Array<{
         id: string;
         name: string;

@@ -48,7 +48,7 @@ describe('PartnerService', () => {
   });
 
   it('returns health payload', () => {
-    expect(service.getHealth()).toEqual({ status: 'ok', service: 'acaf-api' });
+    expect(service.getHealth()).toEqual({ status: 'ok', service: 'connect-api' });
   });
 
   it('returns bootstrap from persisted store', () => {

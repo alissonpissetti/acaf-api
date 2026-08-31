@@ -26,8 +26,8 @@ export class UsersController {
       name: string;
       email: string;
       password: string;
-      cpf: string;
-      mobilePhone: string;
+      cpf?: string;
+      mobilePhone?: string;
       roles?: UserRole[];
     },
   ) {

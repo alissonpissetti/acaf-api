@@ -82,7 +82,7 @@ export class CorporateCompaniesService {
     return {
       ok: true,
       message:
-        'Cadastro recebido. Sua empresa será analisada pela equipe ACAF antes da liberação do acesso.',
+        'Cadastro recebido. Sua empresa será analisada pela nossa equipe antes da liberação do acesso.',
       company: {
         id: company.id,
         tradeName: company.tradeName,

@@ -283,7 +283,7 @@ export class CorporateEmployeesService {
       enrollmentCode,
       useApp: true,
       message:
-        'A ativação agora é feita no app ACAF: abra Minha conta e informe o código de adesão da empresa.',
+        'A ativação agora é feita no aplicativo: abra Minha conta e informe o código de adesão da empresa.',
       suggestions: {
         name: invite.employee.user?.name?.trim() || undefined,
         cpf: invite.employee.user?.cpf ? formatCpf(invite.employee.user.cpf) : undefined,
@@ -310,7 +310,7 @@ export class CorporateEmployeesService {
     const enrollmentCode = await this.access.ensureEnrollmentCode(invite.company);
 
     throw new BadRequestException(
-      `Use o app ACAF (Minha conta) com o código de adesão da empresa: ${enrollmentCode}`,
+      `Use o aplicativo (Minha conta) com o código de adesão da empresa: ${enrollmentCode}`,
     );
   }
 }

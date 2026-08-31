@@ -50,14 +50,14 @@ export class MailService {
     const code = input.enrollmentCode.trim();
     const appUrl = this.getConnectAppUrl();
     const appSteps = appUrl
-      ? `Baixe o app ACAF (${appUrl}) e abra Minha conta.`
-      : 'Abra o app ACAF e vá em Minha conta.';
+      ? `Baixe o aplicativo (${appUrl}) e abra Minha conta.`
+      : 'Abra o aplicativo e vá em Minha conta.';
 
-    const subject = `Código ACAF — ${input.companyName}`;
+    const subject = `Código de adesão — ${input.companyName}`;
     const body = [
       `Olá${input.employeeName ? `, ${input.employeeName}` : ''}!`,
       '',
-      `${input.companyName} liberou o benefício ACAF para colaboradores.`,
+      `${input.companyName} liberou o benefício para colaboradores.`,
       '',
       'Código de adesão da empresa:',
       code,
@@ -83,11 +83,11 @@ export class MailService {
     const from =
       this.config.get<string>('SMTP_FROM')?.trim() ||
       this.config.get<string>('SMTP_USER')?.trim() ||
-      'noreply@acaf.com.br';
+      'noreply@exemplo.com.br';
 
     const htmlAppLine = appUrl
-      ? `<p>Baixe o app ACAF e abra <strong>Minha conta</strong> (<a href="${appUrl}">${appUrl}</a>).</p>`
-      : '<p>Abra o app ACAF e vá em <strong>Minha conta</strong>.</p>';
+      ? `<p>Baixe o aplicativo e abra <strong>Minha conta</strong> (<a href="${appUrl}">${appUrl}</a>).</p>`
+      : '<p>Abra o aplicativo e vá em <strong>Minha conta</strong>.</p>';
 
     try {
       await transporter.sendMail({
@@ -97,7 +97,7 @@ export class MailService {
         text: body,
         html: [
           `<p>Olá${input.employeeName ? `, <strong>${input.employeeName}</strong>` : ''}!</p>`,
-          `<p><strong>${input.companyName}</strong> liberou o benefício ACAF para colaboradores.</p>`,
+          `<p><strong>${input.companyName}</strong> liberou o benefício para colaboradores.</p>`,
           '<p>Código de adesão da empresa:</p>',
           `<p style="font-size:20px;font-weight:700;font-family:monospace">${code}</p>`,
           htmlAppLine,

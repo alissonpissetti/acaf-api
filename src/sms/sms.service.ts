@@ -18,9 +18,9 @@ export class SmsService {
   }): Promise<SendSmsResult> {
     const action =
       input.purpose === 'password_reset'
-        ? 'redefinir sua senha no ACAF Admin'
-        : 'acessar o ACAF Admin';
-    const message = `ACAF Admin — use o código ${input.code} para ${action}. Válido por 10 minutos.`;
+        ? 'redefinir sua senha no Painel Admin'
+        : 'acessar o Painel Admin';
+    const message = `Painel Admin — use o código ${input.code} para ${action}. Válido por 10 minutos.`;
 
     const provider = this.config.get<string>('SMS_PROVIDER');
     if (!provider) {
@@ -42,7 +42,7 @@ export class SmsService {
   }): Promise<SendSmsResult> {
     const message = [
       `Olá${input.employeeName ? `, ${input.employeeName}` : ''}!`,
-      `${input.companyName} — ACAF.`,
+      `${input.companyName} — Connect.`,
       `Código: ${input.enrollmentCode}.`,
       'Abra o app, vá em Minha conta e informe o código.',
     ].join(' ');

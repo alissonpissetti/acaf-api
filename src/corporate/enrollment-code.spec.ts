@@ -24,16 +24,16 @@ describe('enrollment-code', () => {
   });
 
   it('normalizeEnrollmentCode preserva códigos legados com hífen', () => {
-    expect(normalizeEnrollmentCode('  acaf-67d5a1 ')).toBe('ACAF-67D5A1');
+    expect(normalizeEnrollmentCode('  tagsa-67d5a1 ')).toBe('TAGSA-67D5A1');
   });
 
   it('canonicalEnrollmentCode remove pontuação', () => {
     expect(canonicalEnrollmentCode('carpe-diem')).toBe('CARPEDIEM');
-    expect(canonicalEnrollmentCode('ACAF-67D5A1')).toBe('ACAF67D5A1');
+    expect(canonicalEnrollmentCode('TAGSA-67D5A1')).toBe('TAGSA67D5A1');
   });
 
   it('enrollmentCodeLookupKeys aceita digitação flexível', () => {
     expect(enrollmentCodeLookupKeys('carpe diem')).toEqual(['CARPEDIEM']);
-    expect(enrollmentCodeLookupKeys('ACAF-67D5A1')).toEqual(['ACAF-67D5A1', 'ACAF67D5A1']);
+    expect(enrollmentCodeLookupKeys('TAGSA-67D5A1')).toEqual(['TAGSA-67D5A1', 'TAGSA67D5A1']);
   });
 });

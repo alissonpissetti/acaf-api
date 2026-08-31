@@ -4,7 +4,7 @@ import { normalizeHolderKey } from './checkIn';
 import { applyStudentStatsFromLog } from './student-stats';
 import { brDateKeyToday } from './gymLocalTime';
 
-const ACAF_FEE_PERCENT = 20;
+const PLATFORM_FEE_PERCENT = 20;
 
 function roundPrice(price: number): number {
   if (!Number.isFinite(price) || price < 0) return 0;
@@ -12,7 +12,7 @@ function roundPrice(price: number): number {
 }
 
 function netFromGross(gross: number): number {
-  return Math.round(gross * 100 * (1 - ACAF_FEE_PERCENT / 100)) / 100;
+  return Math.round(gross * 100 * (1 - PLATFORM_FEE_PERCENT / 100)) / 100;
 }
 
 /**
@@ -68,7 +68,7 @@ export function registerDailyPassPurchase(
       id: `s-app-${randomUUID()}`,
       unitId: input.unitId,
       name: holderName,
-      email: `app+${Date.now()}@acaf.local`,
+      email: `app+${Date.now()}@local.test`,
       channel: 'daily_pass',
       checkInsThisMonth: 0,
       lastVisit: saleDate,
@@ -97,7 +97,7 @@ export function registerDailyPassPurchase(
     date: saleDate,
     studentName: holderName,
     gross,
-    feePercent: ACAF_FEE_PERCENT,
+    feePercent: PLATFORM_FEE_PERCENT,
     net: netFromGross(gross),
   };
 

@@ -83,13 +83,13 @@ export class PartnerService {
   ) {}
 
   getHealth() {
-    return { status: 'ok', service: 'acaf-api' };
+    return { status: 'ok', service: 'connect-api' };
   }
 
   getTest() {
     return {
       ok: true,
-      service: 'acaf-api',
+      service: 'connect-api',
       message: 'API no ar',
       docs: '/docs',
       openapi: '/docs/openapi.json',

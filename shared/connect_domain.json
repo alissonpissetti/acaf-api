@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "acafConnectFeePercent": 20,
-  "acafDailyFeePercent": 20,
+  "connectFeePercent": 20,
+  "dailyFeePercent": 20,
   "corporateBenefitPerMonth": 44.9,
   "feeModel": {
     "gymPortalVisible": "20% sobre o valor de cada diária e sobre o total mensal dos planos de assinatura (colaborador + benefício corporativo).",
@@ -10,38 +10,38 @@
   "connectPlans": [
     {
       "id": "connect-start",
-      "name": "ACAF Start",
+      "name": "Connect Start",
       "pricePerMonth": 39.8,
       "tierIndex": 0,
-      "description": "Plano de entrada na rede ACAF."
+      "description": "Plano de entrada na rede Connect."
     },
     {
       "id": "connect-plus",
-      "name": "ACAF Plus",
+      "name": "Connect Plus",
       "pricePerMonth": 69.9,
       "tierIndex": 1,
       "description": "Mais flexibilidade dentro da rede."
     },
     {
       "id": "connect-multi",
-      "name": "ACAF Multi",
+      "name": "Connect Multi",
       "pricePerMonth": 129.9,
       "tierIndex": 2,
       "description": "Para quem treina com frequência em várias unidades."
     },
     {
       "id": "connect-pro",
-      "name": "ACAF Pro",
+      "name": "Connect Pro",
       "pricePerMonth": 189.9,
       "tierIndex": 3,
       "description": "Tier avançado para uso intenso da rede."
     },
     {
       "id": "connect-total",
-      "name": "ACAF Total",
+      "name": "Connect Total",
       "pricePerMonth": 299.9,
       "tierIndex": 4,
-      "description": "Máximo nível de benefícios ACAF."
+      "description": "Máximo nível de benefícios Connect."
     }
   ],
   "modalityCatalog": [
@@ -58,9 +58,9 @@
   ],
   "checkInCodePatterns": {
     "connectMemberPrefix": "CHK-",
-    "dailyPassPrefix": "ACAF-",
+    "dailyPassPrefix": "PASS-",
     "memberCodeHelp": "CHK-{UNIT_ID}-{DAY_OF_MONTH} — gerado no app associado",
-    "dailyPassCodeHelp": "ACAF-{TOKEN}-{UNIT_ID} — QR da diária na carteira"
+    "dailyPassCodeHelp": "PASS-{TOKEN}-{UNIT_ID} — QR da diária na carteira"
   },
   "checkInGeo": {
     "maxRadiusKm": 1,

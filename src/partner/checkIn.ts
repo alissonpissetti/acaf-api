@@ -168,7 +168,7 @@ export function validateCheckInCode(
 
   const now = new Date();
 
-  if (code.startsWith('ACAF-')) {
+  if (code.startsWith('PASS-') || code.startsWith('ACAF-')) {
     const issued = store.issuedCodes.find((c) => c.code.toUpperCase() === code);
     if (issued) {
       if (issued.unitId !== unitId) {
@@ -237,14 +237,14 @@ export function validateCheckInCode(
     return {
       ok: true,
       type: 'connect_member',
-      holderName: 'Associado ACAF',
+      holderName: 'Associado',
       message: 'Check-in de plano do dia autorizado.',
     };
   }
 
   return {
     ok: false,
-    message: 'Código não reconhecido. Peça ao aluno para abrir o ACAF e mostrar o código na tela.',
+    message: 'Código não reconhecido. Peça ao aluno para abrir o aplicativo e mostrar o código na tela.',
   };
 }
 

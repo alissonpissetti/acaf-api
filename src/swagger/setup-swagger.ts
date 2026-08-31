@@ -2,15 +2,15 @@ import type { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 const API_DESCRIPTION = [
-  'API do ecossistema **ACAF** (NestJS).',
+  'API do ecossistema Connect (NestJS).',
   '',
   '## Autenticação',
   '',
   '| Esquema | Uso |',
   '|---------|-----|',
-  '| **Admin JWT** (Authorization: Bearer) | Painel acaf-adm — login em POST /api/auth/login |',
-  '| **Partner JWT** | Portal acaf-partner — login em POST /api/partner/auth/login |',
-  '| **Corporate JWT** | Portal acaf-corporate — login em POST /api/corporate/auth/login |',
+  '| **Admin JWT** (Authorization: Bearer) | Painel connect-adm — login em POST /api/auth/login |',
+  '| **Partner JWT** | Portal connect-partner — login em POST /api/partner/auth/login |',
+  '| **Corporate JWT** | Portal connect-corporate — login em POST /api/corporate/auth/login |',
   '',
   'Rotas públicas (catálogo, check-in do app, validação de código de empresa) não exigem token.',
   '',
@@ -25,15 +25,15 @@ const API_DESCRIPTION = [
   '',
   '## Consumidores',
   '',
-  '- acaf-app (Flutter) — catálogo, planos, check-in, diárias, reservas',
-  '- acaf-partner — portal da academia (unidades, recepção, clientes, financeiro)',
-  '- acaf-adm — admin interno (redes, unidades, empresas, modalidades)',
-  '- acaf-corporate — empresas (colaboradores, faturas, convites)',
+  '- connect-app (Flutter) — catálogo, planos, check-in, diárias, reservas',
+  '- connect-partner — portal da academia (unidades, recepção, clientes, financeiro)',
+  '- connect-adm — admin interno (redes, unidades, empresas, modalidades)',
+  '- connect-corporate — empresas (colaboradores, faturas, convites)',
 ].join('\n');
 
 export function setupSwagger(app: INestApplication): void {
   const config = new DocumentBuilder()
-    .setTitle('ACAF API')
+    .setTitle('Connect API')
     .setDescription(API_DESCRIPTION)
     .setVersion(process.env.npm_package_version ?? '1.0.0')
     .addBearerAuth(
@@ -66,7 +66,7 @@ export function setupSwagger(app: INestApplication): void {
     .addTag('Público', 'Health, test, configuração compartilhada e assets')
     .addTag(
       'App & Parceiro',
-      'Catálogo, planos, check-in, reservas, portal da academia e clientes (app + acaf-partner)',
+      'Catálogo, planos, check-in, reservas, portal da academia e clientes (app + connect-partner)',
     )
     .addTag('Admin · Auth', 'Login e sessão do painel administrativo')
     .addTag('Admin · API', 'Redes, unidades, empresas, modalidades e usuários (JWT admin)')
@@ -79,7 +79,7 @@ export function setupSwagger(app: INestApplication): void {
 
   SwaggerModule.setup('docs', app, document, {
     useGlobalPrefix: false,
-    customSiteTitle: 'ACAF API — Documentação',
+    customSiteTitle: 'Connect API — Documentação',
     jsonDocumentUrl: 'docs/openapi.json',
     swaggerOptions: {
       persistAuthorization: true,

@@ -237,19 +237,23 @@ export class UsersService implements OnModuleInit {
     const phoneRaw =
       input.mobilePhone !== undefined ? normalizeMobilePhone(input.mobilePhone) : undefined;
 
-    if (required || cpfRaw !== undefined) {
+    if (required) {
       if (!cpfRaw) throw new BadRequestException('Informe o CPF.');
-      if (!isValidCpf(cpfRaw)) throw new BadRequestException('CPF inválido.');
-    }
-
-    if (required || phoneRaw !== undefined) {
       if (!phoneRaw) throw new BadRequestException('Informe o celular.');
-      if (!isValidMobilePhone(phoneRaw)) {
-        throw new BadRequestException('Informe um celular válido com DDD (11 dígitos).');
-      }
     }
 
-    return { cpf: cpfRaw, mobilePhone: phoneRaw };
+    if (cpfRaw && !isValidCpf(cpfRaw)) {
+      throw new BadRequestException('CPF inválido.');
+    }
+
+    if (phoneRaw && !isValidMobilePhone(phoneRaw)) {
+      throw new BadRequestException('Informe um celular válido com DDD (11 dígitos).');
+    }
+
+    return {
+      cpf: cpfRaw || null,
+      mobilePhone: phoneRaw || null,
+    };
   }
 
   private async assertUniquePersonFields(
@@ -322,10 +326,10 @@ export class UsersService implements OnModuleInit {
     let cpf: string | null = null;
     let mobilePhone: string | null = null;
     if (input.cpf !== undefined || input.mobilePhone !== undefined) {
-      const person = this.resolvePersonFields(
-        { cpf: input.cpf ?? '', mobilePhone: input.mobilePhone ?? '' },
-        Boolean(input.roles?.includes(UserRole.ADMIN)),
-      );
+      const person = this.resolvePersonFields({
+        cpf: input.cpf ?? '',
+        mobilePhone: input.mobilePhone ?? '',
+      });
       cpf = person.cpf ?? null;
       mobilePhone = person.mobilePhone ?? null;
       await this.assertUniquePersonFields(cpf ?? undefined, mobilePhone ?? undefined);
@@ -468,18 +472,24 @@ export class UsersService implements OnModuleInit {
 
     if (patch.cpf !== undefined) {
       const cpf = normalizeCpf(patch.cpf);
-      if (!cpf) throw new BadRequestException('Informe o CPF.');
-      if (!isValidCpf(cpf)) throw new BadRequestException('CPF inválido.');
-      user.cpf = cpf;
+      if (!cpf) {
+        user.cpf = null;
+      } else if (!isValidCpf(cpf)) {
+        throw new BadRequestException('CPF inválido.');
+      } else {
+        user.cpf = cpf;
+      }
     }
 
     if (patch.mobilePhone !== undefined) {
       const mobilePhone = normalizeMobilePhone(patch.mobilePhone);
-      if (!mobilePhone) throw new BadRequestException('Informe o celular.');
-      if (!isValidMobilePhone(mobilePhone)) {
+      if (!mobilePhone) {
+        user.mobilePhone = null;
+      } else if (!isValidMobilePhone(mobilePhone)) {
         throw new BadRequestException('Informe um celular válido com DDD (11 dígitos).');
+      } else {
+        user.mobilePhone = mobilePhone;
       }
-      user.mobilePhone = mobilePhone;
     }
 
     await this.assertUniquePersonFields(user.cpf ?? undefined, user.mobilePhone ?? undefined, id);
