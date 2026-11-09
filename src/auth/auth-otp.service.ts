@@ -84,7 +84,7 @@ export class AuthOtpService {
     const mobilePhone = this.normalizePhone(input.mobilePhone);
     const trimmedCode = String(input.code ?? '').trim();
     if (!/^\d{6}$/.test(trimmedCode)) {
-      throw new BadRequestException('Informe o código de 6 dígitos recebido por SMS.');
+      throw new BadRequestException('Informe o código de 6 dígitos recebido no celular.');
     }
 
     const row = await this.otps.findOne({

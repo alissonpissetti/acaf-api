@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,14 +19,36 @@ import { CorporateAccessService } from '../corporate/corporate-access.service';
 import { CorporateCompaniesService } from '../corporate/corporate-companies.service';
 import { CorporateEmployeesService } from '../corporate/corporate-employees.service';
 import type { Company, CompanyStatus } from '../corporate/company.entity';
-import { getDomain, loadStore, saveDomain, updateStore } from './store';
-import type { AdminNetwork, ApiStore, GymUnit, NetworkSocialContacts } from './types';
+import { getDomain, loadStore, saveDomain, updateStore, updateStoreIf } from './store';
+import type {
+  AcafAssociateMeta,
+  AdminNetwork,
+  ApiStore,
+  GymUnit,
+  NetworkSocialContacts,
+} from './types';
 import { emptyNetworkSocialContacts } from './types';
 import {
   formatOpenHoursSummary,
   normalizeWeeklySchedule,
   type UnitWeeklySchedule,
 } from './weeklySchedule';
+import { clampPlatformFeePercent } from './platformFeePolicy';
+import { recomputeConnectPayouts } from './connectPayout';
+import { recalcDailyPassNetForOpenPayout } from './dailyPassSales';
+import {
+  ACAF_REPASSE_TIERS,
+  formatAcafLivesBand,
+  resolveAcafRepasseTier,
+} from './acafRepassePolicy';
+import {
+  DAYS_TO_IMPROVE_REPASSE,
+  DAYS_TO_REDUCE_REPASSE,
+  MAX_NET_CHURN_PERCENT_MONTHLY,
+  getAssociateRepasseOverview,
+  syncAssociateRepasseState,
+} from './associateRepasseHysteresis';
+import { currentMonthLabelBr } from './payoutMonth';
 import { buildNewUnit, emptyMonthlyPayout } from './unitFactory';
 import { isRemotePhotoUrl } from './photoUrls';
 import { UnitCoordinatesService } from './unit-coordinates.service';
@@ -168,13 +191,6 @@ export class AdminService {
 
   private async assertNetworkCanBeRemoved(unitIds: string[]) {
     const store = loadStore();
-    const linkedUsers = await this.partnerAccess.countLinkedUsersForUnits(unitIds);
-    if (linkedUsers > 0) {
-      throw new BadRequestException(
-        `Não é possível remover o parceiro: há ${linkedUsers} usuário(s) vinculado(s) às unidades. Remova os vínculos antes de excluir.`,
-      );
-    }
-
     const primaryMembers = this.countPrimaryMembersForUnits(store, unitIds);
     if (primaryMembers > 0) {
       throw new BadRequestException(
@@ -185,13 +201,6 @@ export class AdminService {
 
   private async assertUnitCanBeRemoved(unitId: string) {
     const store = loadStore();
-    const linkedUsers = await this.partnerAccess.countLinkedUsersForUnit(unitId);
-    if (linkedUsers > 0) {
-      throw new BadRequestException(
-        `Não é possível remover a unidade: há ${linkedUsers} usuário(s) vinculado(s). Remova os vínculos antes de excluir.`,
-      );
-    }
-
     const primaryMembers = this.countPrimaryMembersForUnit(store, unitId);
     if (primaryMembers > 0) {
       throw new BadRequestException(
@@ -237,15 +246,124 @@ export class AdminService {
     }
     return network;
   }
+
+  /** Parceiro: só pode editar rede se tiver ao menos uma unidade nela no JWT. */
+  assertPartnerCanAccessNetwork(networkId: string, allowedUnitIds: string[]) {
+    if (!allowedUnitIds.length) {
+      throw new ForbiddenException('Sem acesso.');
+    }
+    const store = loadStore();
+    const allowed = new Set(allowedUnitIds);
+    const ok = store.units.some((u) => allowed.has(u.id) && u.networkId === networkId);
+    if (!ok) {
+      throw new ForbiddenException('Sem permissão para gerir esta rede.');
+    }
+  }
+
+  getNetworkForPartner(networkId: string, unitIds: string[]) {
+    this.assertPartnerCanAccessNetwork(networkId, unitIds);
+    const network = this.getNetworkOrThrow(networkId);
+    const domain = getDomain() as ConnectDomain;
+    return {
+      id: network.id,
+      name: network.name,
+      logoUrl: network.logoUrl ?? null,
+      social: network.social ?? emptyNetworkSocialContacts(),
+      defaultConnectFeePercent: domain.connectFeePercent,
+      defaultDailyFeePercent: domain.dailyFeePercent,
+      connectFeePercentOverride: network.connectFeePercentOverride ?? null,
+      dailyFeePercentOverride: network.dailyFeePercentOverride ?? null,
+    };
+  }
+
+  updateNetworkForPartner(
+    networkId: string,
+    patch: {
+      name?: string;
+      social?: Partial<NetworkSocialContacts>;
+    },
+    unitIds: string[],
+  ) {
+    this.assertPartnerCanAccessNetwork(networkId, unitIds);
+    return this.updateNetwork(networkId, patch);
+  }
+
+  async uploadNetworkLogoForPartner(networkId: string, file: Express.Multer.File, unitIds: string[]) {
+    this.assertPartnerCanAccessNetwork(networkId, unitIds);
+    await this.uploadNetworkLogo(networkId, file);
+    return this.getNetworkForPartner(networkId, unitIds);
+  }
   getOverview() {
+    const now = new Date();
+    updateStoreIf((draft) => syncAssociateRepasseState(draft, now));
     const store = loadStore();
     const domain = getDomain() as ConnectDomain;
+    const ar = getAssociateRepasseOverview(store, now);
+    const instantaneousTier = resolveAcafRepasseTier(ar.payingLivesCount);
     return {
       networks: store.networks,
       unitCount: store.units.length,
       planCount: domain.connectPlans?.length ?? 0,
       connectFeePercent: domain.connectFeePercent,
       dailyFeePercent: domain.dailyFeePercent,
+      acafPayingLivesCount: ar.payingLivesCount,
+      acafRepassePercent: ar.effectiveRepassePercent,
+      acafRepasseTierId: ar.effectiveTierId,
+      acafInstantaneousRepassePercent: ar.instantaneousRepassePercent,
+      acafInstantaneousTierId: ar.instantaneousTierId,
+      acafEffectiveRepasseSinceDate: ar.effectiveSinceDate,
+      acafEffectiveRepasseUpdatedAt: ar.effectiveUpdatedAt,
+      acafLastSnapshotDate: ar.lastSnapshotDate,
+      acafNetChurnRolling: {
+        maxNetChurnPercentAllowed: MAX_NET_CHURN_PERCENT_MONTHLY,
+        percent: ar.netChurnRolling.netChurnPercent,
+        referenceMonthKey: ar.netChurnRolling.referenceMonthKey || null,
+        startDate: ar.netChurnRolling.startDate,
+        endDate: ar.netChurnRolling.endDate,
+        startCount: ar.netChurnRolling.startCount,
+        endCount: ar.netChurnRolling.endCount,
+        insufficientData: ar.netChurnRolling.insufficientData,
+      },
+      acafRepassePersistence: {
+        daysRequiredToIncreaseRepasse: DAYS_TO_IMPROVE_REPASSE,
+        daysRequiredToDecreaseRepasse: DAYS_TO_REDUCE_REPASSE,
+        maxNetChurnPercentMonthly: MAX_NET_CHURN_PERCENT_MONTHLY,
+        upgradeToBetterTier: ar.upgradeProgress
+          ? {
+              targetTierId: ar.upgradeProgress.targetTierId,
+              targetRepassePercent: ar.upgradeProgress.targetRepassePercent,
+              consecutiveDays: ar.upgradeProgress.consecutiveDays,
+              requiredConsecutiveDays: ar.upgradeProgress.requiredConsecutiveDays,
+              daysRemaining: ar.upgradeProgress.daysRemaining,
+              blockedByNetChurn: ar.upgradeProgress.blockedByNetChurn,
+              netChurnPercent: ar.upgradeProgress.netChurnPercent,
+              churnReferenceMonthKey: ar.upgradeProgress.churnReferenceMonthKey,
+            }
+          : null,
+        downgradeToWorseTier: ar.downgradeProgress
+          ? {
+              targetTierId: ar.downgradeProgress.targetTierId,
+              targetRepassePercent: ar.downgradeProgress.targetRepassePercent,
+              consecutiveDays: ar.downgradeProgress.consecutiveDays,
+              requiredConsecutiveDays: ar.downgradeProgress.requiredConsecutiveDays,
+              daysRemaining: ar.downgradeProgress.daysRemaining,
+              blockedByNetChurn: ar.downgradeProgress.blockedByNetChurn,
+              netChurnPercent: ar.downgradeProgress.netChurnPercent,
+              churnReferenceMonthKey: ar.downgradeProgress.churnReferenceMonthKey,
+            }
+          : null,
+      },
+      acafRepasseTierMismatch: instantaneousTier.id !== ar.effectiveTierId,
+      acafRepasseTiers: ACAF_REPASSE_TIERS.map((t) => ({
+        id: t.id,
+        min: t.min,
+        max: t.max,
+        repassePercent: t.repassePercent,
+        bandLabel: formatAcafLivesBand(t),
+        isEffectiveTier: t.id === ar.effectiveTierId,
+        isInstantaneousTier: t.id === instantaneousTier.id,
+      })),
+      acafOverviewComputedAt: now.toISOString(),
     };
   }
 
@@ -271,6 +389,32 @@ export class AdminService {
     );
   }
 
+  /**
+   * Nova rede com um único parceiro — copia logo e links da rede de origem (mantém aparência no app).
+   */
+  private createStandaloneNetworkFromTemplate(
+    store: ApiStore,
+    unitDisplayName: string,
+    template: AdminNetwork,
+  ): AdminNetwork {
+    let trimmed = unitDisplayName.trim();
+    if (!trimmed) trimmed = 'Parceiro';
+    let id = slugifyNetworkId(trimmed);
+    if (store.networks.some((n) => n.id === id)) {
+      id = `${id}_${Date.now().toString(36).slice(-4)}`;
+    }
+    const network: AdminNetwork = {
+      id,
+      name: trimmed,
+      logoUrl: template.logoUrl ?? null,
+      social: template.social ? normalizeSocial(template.social) : emptyNetworkSocialContacts(),
+      commercialOwnerUserId: template.commercialOwnerUserId ?? null,
+      createdFromAdmin: true,
+    };
+    store.networks.push(network);
+    return network;
+  }
+
   async createNetwork(
     name: string,
     social?: Partial<NetworkSocialContacts>,
@@ -292,6 +436,7 @@ export class AdminService {
         logoUrl: null,
         social: normalizeSocial(social),
         commercialOwnerUserId: commercialOwnerUserId ?? null,
+        createdFromAdmin: true,
       };
       s.networks.push(created);
     });
@@ -308,6 +453,8 @@ export class AdminService {
       name?: string;
       logoUrl?: string | null;
       social?: Partial<NetworkSocialContacts>;
+      connectFeePercentOverride?: number | null;
+      dailyFeePercentOverride?: number | null;
     },
   ) {
     const current = loadStore();
@@ -337,7 +484,26 @@ export class AdminService {
       if (patch.social !== undefined) {
         network.social = normalizeSocial(patch.social);
       }
+      if (patch.connectFeePercentOverride !== undefined) {
+        network.connectFeePercentOverride =
+          patch.connectFeePercentOverride === null
+            ? undefined
+            : clampPlatformFeePercent(patch.connectFeePercentOverride);
+      }
+      if (patch.dailyFeePercentOverride !== undefined) {
+        network.dailyFeePercentOverride =
+          patch.dailyFeePercentOverride === null
+            ? undefined
+            : clampPlatformFeePercent(patch.dailyFeePercentOverride);
+      }
       updated = { ...network };
+
+      recomputeConnectPayouts(s);
+      for (const u of s.units) {
+        if (u.networkId === id) {
+          recalcDailyPassNetForOpenPayout(s, u.id);
+        }
+      }
     });
 
     return this.withUnitCount(updated!);
@@ -351,6 +517,9 @@ export class AdminService {
     }
 
     const unitIds = this.networkUnitIds(current, id);
+    for (const unitId of unitIds) {
+      await this.partnerAccess.removeAccessForUnit(unitId);
+    }
     await this.assertNetworkCanBeRemoved(unitIds);
 
     updateStore((store) => {
@@ -361,11 +530,166 @@ export class AdminService {
       this.resetActiveNetworkIfNeeded(store, id);
     });
 
-    for (const unitId of unitIds) {
-      await this.partnerAccess.removeAccessForUnit(unitId);
+    return { ok: true };
+  }
+
+  /**
+   * Une várias redes numa só: todas as unidades passam para a rede `keeperNetworkId`;
+   * as demais entradas de rede são removidas. Mantém nome, logo e redes sociais da rede mantida.
+   */
+  async mergeNetworks(keeperNetworkId: string, mergeNetworkIds: string[]): Promise<AdminNetwork & { unitCount: number }> {
+    const unique = [...new Set(mergeNetworkIds.map((id) => id.trim()).filter(Boolean))];
+    if (unique.length < 2) {
+      throw new BadRequestException('Selecione pelo menos duas redes para agrupar.');
+    }
+    const keeperId = keeperNetworkId.trim();
+    if (!unique.includes(keeperId)) {
+      throw new BadRequestException('A rede a manter precisa estar entre as selecionadas.');
     }
 
-    return { ok: true };
+    const snapshot = loadStore();
+    const keeper = snapshot.networks.find((n) => n.id === keeperId);
+    if (!keeper) {
+      throw new NotFoundException('Rede a manter não encontrada.');
+    }
+    for (const id of unique) {
+      if (!snapshot.networks.some((n) => n.id === id)) {
+        throw new NotFoundException(`Rede não encontrada: ${id}.`);
+      }
+    }
+
+    const others = unique.filter((id) => id !== keeperId);
+
+    updateStore((store) => {
+      const k = store.networks.find((n) => n.id === keeperId)!;
+      for (const id of others) {
+        const unitIds = this.networkUnitIds(store, id);
+        for (const unitId of unitIds) {
+          const unit = store.units.find((u) => u.id === unitId);
+          if (unit) unit.networkId = keeperId;
+        }
+      }
+
+      const removedSet = new Set(others);
+      store.networks = store.networks.filter((n) => !removedSet.has(n.id));
+
+      if (removedSet.has(store.networkId) || !store.networks.some((n) => n.id === store.networkId)) {
+        store.networkId = k.id;
+        store.networkName = k.name;
+        const firstUnit = store.units.find((u) => u.networkId === k.id);
+        if (firstUnit) store.activeUnitId = firstUnit.id;
+      }
+    });
+
+    const after = loadStore();
+    const merged = after.networks.find((n) => n.id === keeperId)!;
+    return this.withUnitCount({ ...merged });
+  }
+
+  /**
+   * Para cada unidade selecionada, cria uma nova rede (nome = nome da unidade) e move a unidade para ela.
+   * Copia logo e redes sociais da rede de origem. Remove a rede de origem se ficar sem unidades.
+   */
+  async detachUnitsToOwnNetworks(
+    sourceNetworkId: string,
+    unitIds: string[],
+  ): Promise<{
+    created: { networkId: string; networkName: string; unitId: string }[];
+    removedSourceNetwork: boolean;
+  }> {
+    const srcId = sourceNetworkId.trim();
+    const uniqueUnitIds = [...new Set(unitIds.map((id) => id.trim()).filter(Boolean))];
+    if (!srcId) {
+      throw new BadRequestException('Informe a rede de origem.');
+    }
+    if (!uniqueUnitIds.length) {
+      throw new BadRequestException('Selecione ao menos uma unidade.');
+    }
+
+    const snapshot = loadStore();
+    const template = snapshot.networks.find((n) => n.id === srcId);
+    if (!template) {
+      throw new NotFoundException('Rede de origem não encontrada.');
+    }
+
+    for (const uid of uniqueUnitIds) {
+      const u = snapshot.units.find((unit) => unit.id === uid);
+      if (!u) {
+        throw new NotFoundException(`Unidade não encontrada: ${uid}.`);
+      }
+      if (u.networkId !== srcId) {
+        throw new BadRequestException(
+          `A unidade "${u.unitName}" não pertence à rede atual (origem: ${srcId}).`,
+        );
+      }
+    }
+
+    const created: { networkId: string; networkName: string; unitId: string }[] = [];
+    let removedSourceNetwork = false;
+
+    updateStore((store) => {
+      const tpl = store.networks.find((n) => n.id === srcId);
+      if (!tpl) return;
+
+      for (const uid of uniqueUnitIds) {
+        const unit = store.units.find((u) => u.id === uid);
+        if (!unit) continue;
+        const displayName = unit.unitName.trim() || tpl.name.trim() || 'Parceiro';
+        const newNet = this.createStandaloneNetworkFromTemplate(store, displayName, tpl);
+        unit.networkId = newNet.id;
+        created.push({
+          networkId: newNet.id,
+          networkName: newNet.name,
+          unitId: unit.id,
+        });
+      }
+
+      const stillInSource = store.units.some((u) => u.networkId === srcId);
+      if (!stillInSource) {
+        store.networks = store.networks.filter((n) => n.id !== srcId);
+        removedSourceNetwork = true;
+        this.resetActiveNetworkIfNeeded(store, srcId);
+      }
+    });
+
+    return { created, removedSourceNetwork };
+  }
+
+  /**
+   * Remove em lote redes criadas pela importação ACAF (`net_acaf_*`, inclusive `net_acaf_grp_*`).
+   * Mesma regra de `deleteNetwork` para academia principal (app); vínculos de equipe parceira
+   * são removidos automaticamente ao excluir.
+   */
+  async deleteAllAcafImportedNetworks(): Promise<{
+    candidates: number;
+    removed: number;
+    skipped: { id: string; name: string; reason: string }[];
+  }> {
+    const store = loadStore();
+    const targets = store.networks.filter((n) => n.id.startsWith('net_acaf_'));
+    const skipped: { id: string; name: string; reason: string }[] = [];
+    let removed = 0;
+
+    for (const network of targets) {
+      try {
+        await this.deleteNetwork(network.id);
+        removed += 1;
+      } catch (err) {
+        const reason =
+          err instanceof BadRequestException || err instanceof NotFoundException
+            ? String(err.message)
+            : err instanceof Error
+              ? err.message
+              : 'Falha ao remover.';
+        skipped.push({ id: network.id, name: network.name, reason });
+      }
+    }
+
+    return {
+      candidates: targets.length,
+      removed,
+      skipped,
+    };
   }
 
   async uploadNetworkLogo(id: string, file: Express.Multer.File) {
@@ -529,7 +853,7 @@ export class AdminService {
 
     updateStore((s) => {
       s.units.push(unit);
-      const monthLabel = Object.values(s.payoutsByUnit)[0]?.monthLabel ?? 'Julho 2026';
+      const monthLabel = Object.values(s.payoutsByUnit)[0]?.monthLabel ?? currentMonthLabelBr();
       s.payoutsByUnit[unit.id] = emptyMonthlyPayout(monthLabel);
       s.payoutHistoryByUnit[unit.id] = [s.payoutsByUnit[unit.id]];
     });
@@ -547,8 +871,51 @@ export class AdminService {
     }
 
     const before = current.units[idx];
-    const { heroPhotoDataUrl, galleryPhotoDataUrls, ...rest } = patch;
+    const {
+      heroPhotoDataUrl,
+      galleryPhotoDataUrls,
+      acafAssociate: acafPatch,
+      connectFeePercentOverride,
+      dailyFeePercentOverride,
+      ...rest
+    } = patch;
     let next: GymUnit = { ...before, ...rest, id: unitId };
+
+    if (connectFeePercentOverride !== undefined) {
+      next.connectFeePercentOverride =
+        connectFeePercentOverride === null ? undefined : clampPlatformFeePercent(connectFeePercentOverride);
+    }
+    if (dailyFeePercentOverride !== undefined) {
+      next.dailyFeePercentOverride =
+        dailyFeePercentOverride === null ? undefined : clampPlatformFeePercent(dailyFeePercentOverride);
+    }
+
+    if (acafPatch !== undefined) {
+      const prev = before.acafAssociate;
+      if (!prev || prev.importSource !== 'acaf_associates_xlsx') {
+        throw new BadRequestException('Esta unidade não possui dados de importação movly. para editar.');
+      }
+      const cnpjLocked = prev.cnpj;
+      const {
+        cnpj: _ignoredCnpj,
+        importSource: _ignoredSource,
+        importedAt: patchImportedAt,
+        ...acafRest
+      } = acafPatch as Partial<AcafAssociateMeta> & { cnpj?: string };
+      const listed =
+        acafRest.listed !== undefined ? acafRest.listed : (prev.listed ?? true);
+      next.acafAssociate = {
+        ...prev,
+        ...acafRest,
+        cnpj: cnpjLocked,
+        importSource: 'acaf_associates_xlsx',
+        importedAt:
+          patchImportedAt !== undefined && patchImportedAt !== null
+            ? String(patchImportedAt)
+            : prev.importedAt,
+        listed,
+      };
+    }
     if (heroPhotoDataUrl !== undefined && isRemotePhotoUrl(heroPhotoDataUrl)) {
       next.heroPhotoDataUrl = heroPhotoDataUrl;
     }
@@ -568,7 +935,10 @@ export class AdminService {
       const i = s.units.findIndex((u) => u.id === unitId);
       if (i < 0) return;
       s.units[i] = next;
+      recomputeConnectPayouts(s);
+      recalcDailyPassNetForOpenPayout(s, unitId);
     });
+
     return this.listUnits();
   }
 
@@ -611,6 +981,7 @@ export class AdminService {
       throw new NotFoundException('Unidade não encontrada.');
     }
 
+    await this.partnerAccess.removeAccessForUnit(unitId);
     await this.assertUnitCanBeRemoved(unitId);
 
     const networkId = unit.networkId;
@@ -630,8 +1001,6 @@ export class AdminService {
         }
       }
     });
-
-    await this.partnerAccess.removeAccessForUnit(unitId);
 
     return { ok: true, networkId };
   }

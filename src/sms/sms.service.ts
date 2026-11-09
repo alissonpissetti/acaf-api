@@ -34,6 +34,48 @@ export class SmsService {
     return { sent: false };
   }
 
+  async sendPartnerAuthCode(input: {
+    to: string;
+    code: string;
+    purpose: 'login';
+  }): Promise<SendSmsResult> {
+    const message = `Portal Parceiro — use o código ${input.code} para acessar sua conta. Válido por 10 minutos.`;
+
+    const provider = this.config.get<string>('SMS_PROVIDER');
+    if (!provider) {
+      this.logger.log(`[dev] SMS para ${input.to}: ${message}`);
+      return { sent: false };
+    }
+
+    this.logger.warn(
+      `SMS_PROVIDER configurado mas integração não implementada. Mensagem dev: ${message}`,
+    );
+    return { sent: false };
+  }
+
+  async sendCorporateAuthCode(input: {
+    to: string;
+    code: string;
+    purpose: 'login' | 'password_reset';
+  }): Promise<SendSmsResult> {
+    const action =
+      input.purpose === 'password_reset'
+        ? 'redefinir sua senha no Portal Corporativo'
+        : 'acessar o Portal Corporativo';
+    const message = `Portal Corporativo — use o código ${input.code} para ${action}. Válido por 10 minutos.`;
+
+    const provider = this.config.get<string>('SMS_PROVIDER');
+    if (!provider) {
+      this.logger.log(`[dev] SMS para ${input.to}: ${message}`);
+      return { sent: false };
+    }
+
+    this.logger.warn(
+      `SMS_PROVIDER configurado mas integração não implementada. Mensagem dev: ${message}`,
+    );
+    return { sent: false };
+  }
+
   async sendEmployeeEnrollmentCode(input: {
     to: string;
     employeeName: string;

@@ -1,15 +1,9 @@
 import type { ApiStore, ConnectPlanId, MonthlyPayout } from './types';
 import { getDomain } from './store';
+import { resolveConnectFeePercentForUnit } from './platformFeePolicy';
 
-const FEE_PERCENT_FALLBACK = 20;
-
-function feePercent(): number {
-  const domain = getDomain() as { connectFeePercent?: number };
-  return domain.connectFeePercent ?? FEE_PERCENT_FALLBACK;
-}
-
-function netFromGross(gross: number): number {
-  const fee = feePercent() / 100;
+function netFromGross(store: ApiStore, unitId: string, gross: number): number {
+  const fee = resolveConnectFeePercentForUnit(store, unitId) / 100;
   return Math.round(gross * 100 * (1 - fee)) / 100;
 }
 
@@ -27,7 +21,7 @@ function planPrice(planId: ConnectPlanId): number {
   return fallback[planId];
 }
 
-/** Recalcula linhas de repasse Connect a partir dos membros com academia principal definida. */
+/** Recalcula linhas de repasse de assinaturas a partir dos membros com academia principal definida. */
 export function recomputeConnectPayouts(store: ApiStore): void {
   const members = store.connectMembers ?? [];
   const activePrimary = members.filter((m) => m.active && m.primaryUnitId);
@@ -56,7 +50,7 @@ export function recomputeConnectPayouts(store: ApiStore): void {
           connectPlanId: planId,
           activeMembers,
           checkIns: Math.max(activeMembers, checkIns),
-          repasseAmount: netFromGross(gross),
+          repasseAmount: netFromGross(store, unit.id, gross),
         };
       })
       .filter((line): line is MonthlyPayout['connectLines'][number] => line != null);
@@ -65,7 +59,7 @@ export function recomputeConnectPayouts(store: ApiStore): void {
       (sum, line) => sum + line.activeMembers * planPrice(line.connectPlanId),
       0,
     );
-    const connectRepasseTotal = netFromGross(connectGross);
+    const connectRepasseTotal = netFromGross(store, unit.id, connectGross);
 
     const updated: MonthlyPayout = {
       ...payout,
@@ -80,7 +74,7 @@ export function recomputeConnectPayouts(store: ApiStore): void {
     if (history?.length) {
       const lastIdx = history.length - 1;
       const last = history[lastIdx];
-      // Só atualiza Connect no mês em aberto; meses fechados preservam o extrato histórico.
+      // Só atualiza repasse de planos no mês em aberto; meses fechados preservam o extrato histórico.
       if (last.status !== 'paid') {
         history[lastIdx] = {
           ...last,

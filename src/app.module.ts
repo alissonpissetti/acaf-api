@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { AuthOtp } from './auth/auth-otp.entity';
 import { parseDatabaseUrl } from './database/parse-database-url';
 import { PartnerAuthModule } from './partner-auth/partner-auth.module';
+import { PartnerOnboardingInvite } from './partner-auth/partner-onboarding-invite.entity';
 import { PartnerModule } from './partner/partner.module';
 import { PlatformUser } from './platform-users/platform-user.entity';
 import { PlatformUsersModule } from './platform-users/platform-users.module';
@@ -55,6 +56,7 @@ import { SupportTicketMessage } from './support/support-ticket-message.entity';
 import { SupportTicket } from './support/support-ticket.entity';
 import { SupportQueue } from './support/support-queue.entity';
 import { SupportModule } from './support/support.module';
+import { AcafAssociationModule } from './acaf-association/acaf-association.module';
 
 @Module({
   imports: [
@@ -112,6 +114,7 @@ import { SupportModule } from './support/support.module';
             SupportTicket,
             SupportTicketMessage,
             SupportQueue,
+            PartnerOnboardingInvite,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,
@@ -147,6 +150,7 @@ import { SupportModule } from './support/support.module';
     MarketingModule,
     NotificationsModule,
     SupportModule,
+    AcafAssociationModule,
   ],
 })
 export class AppModule {}

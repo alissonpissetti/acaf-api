@@ -65,3 +65,12 @@ export function updateStore(mutator: (draft: ApiStore) => void): ApiStore {
   saveStore(store);
   return store;
 }
+
+/** Só persiste se `mutator` retornar true (evita writes redundantes no MariaDB). */
+export function updateStoreIf(mutator: (draft: ApiStore) => boolean): ApiStore | null {
+  const store = structuredClone(loadStore());
+  const changed = mutator(store);
+  if (!changed) return null;
+  saveStore(store);
+  return store;
+}

@@ -1,5 +1,29 @@
+import { aggregatePayouts, type UnitScope } from './aggregatePayout';
+import { recentCheckInsForPortal } from './checkInLog';
+import type { PendingCheckInRequest } from './pendingCheckIn';
+import { clampPlatformFeePercent } from './platformFeePolicy';
+import { createEmptyStore } from './store-normalize';
+import { getDomain } from './store';
 import type { DayOfWeek, UnitWeeklySchedule } from './weeklySchedule';
 import { sanitizeUnitPhotosForApi } from './photoUrls';
+
+/** Uma linha do histórico diário de vidas pagantes (associados) para faixas de repasse. */
+export type AssociateRepasseDailySnapshot = {
+  /** Data civil YYYY-MM-DD (America/Sao_Paulo) */
+  date: string;
+  payingLivesCount: number;
+  instantaneousTierId: string;
+  instantaneousRepassePercent: number;
+};
+
+/** Repasse vigente após regras de permanência no histórico. */
+export type AssociateRepasseEffectiveState = {
+  tierId: string;
+  repassePercent: number;
+  /** Primeiro dia civil em que vale este repasse (após regra de permanência). */
+  sinceDate: string;
+  updatedAt: string;
+};
 
 export type ModalitySlotTemplate = {
   id: string;
@@ -112,6 +136,43 @@ export type GymUnit = {
   modalitySlotOverrides?: ModalitySlotOverride[];
   /** Professores cadastrados na unidade (combo da programação). */
   instructors?: string[];
+  /** Metadados da planilha de associados ACAF (importação admin). */
+  acafAssociate?: AcafAssociateMeta;
+  /**
+   * Override opcional (%): taxa sobre planos de assinatura para esta unidade.
+   * Tem precedência sobre a rede e sobre o padrão global.
+   */
+  connectFeePercentOverride?: number | null;
+  /**
+   * Override opcional (%): taxa sobre diárias para esta unidade.
+   * Tem precedência sobre a rede e sobre o padrão global.
+   */
+  dailyFeePercentOverride?: number | null;
+};
+
+/** Cadastro de academia associada ACAF (planilha NOVA ASSINATURA). */
+export type AcafAssociateMeta = {
+  /** CNPJ só dígitos — chave de upsert na reimportação. */
+  cnpj: string;
+  legalName: string;
+  association: string;
+  /** ISO date (YYYY-MM-DD). */
+  signedAt: string;
+  contactEmail: string;
+  importSource: 'acaf_associates_xlsx';
+  importedAt: string;
+  /** false = removido da planilha na última sincronização (some do catálogo app). */
+  listed?: boolean;
+  /** Valor bruto da coluna de status na planilha, quando existir. */
+  spreadsheetStatusRaw?: string;
+  /**
+   * Normalizado a partir da planilha: linha marcada como remoção / cancelamento
+   * → unidade permanece cadastrada, só inativa no catálogo (`listed: false`).
+   */
+  spreadsheetStatus?: 'active' | 'remocao';
+  /** Demais colunas da planilha “NOVA ASSINATURA” para cobrança e cadastro. */
+  contactPhone?: string;
+  complement?: string;
 };
 
 export type StudentChannel = 'daily_pass' | 'connect_primary';
@@ -181,6 +242,7 @@ export type MonthlyPayout = {
     gross: number;
     feePercent: number;
     net: number;
+    unitId?: string;
   }[];
 };
 
@@ -211,8 +273,25 @@ export type AdminNetwork = {
   name: string;
   logoUrl?: string | null;
   social?: NetworkSocialContacts;
+  /**
+   * Override opcional (%): taxa sobre planos de assinatura para todas as unidades desta rede.
+   * Se ausente, usa o padrão global (`connectFeePercent` em Configurações).
+   */
+  connectFeePercentOverride?: number | null;
+  /**
+   * Override opcional (%): taxa sobre diárias para todas as unidades desta rede.
+   * Se ausente, usa o padrão global (`dailyFeePercent` em Configurações).
+   */
+  dailyFeePercentOverride?: number | null;
   /** Usuário admin/comercial que cadastrou a rede parceira. */
   commercialOwnerUserId?: string | null;
+  /**
+   * Campo legado; CNPJ pertence à unidade (`acafAssociate.cnpj`), não à rede.
+   * Mantido opcional para dados antigos — novas importações ACAF não preenchem.
+   */
+  cnpj?: string | null;
+  /** Rede criada manualmente no admin (não pela importação ACAF). */
+  createdFromAdmin?: boolean;
 };
 
 export type ApiStore = {
@@ -229,10 +308,14 @@ export type ApiStore = {
   checkInLog: CheckInLogEntry[];
   pendingCheckIns: PendingCheckInRequest[];
   modalityReservations?: ModalityReservation[];
-  /** Assinantes Connect registrados pelo app (titular → academia principal). */
+  /** Assinantes com plano registrados pelo app (titular → academia principal). */
   connectMembers?: ConnectMemberRecord[];
   /** Histórico de trocas de academia principal. */
   primaryGymChanges?: PrimaryGymChangeRecord[];
+  /** Snapshots diários de vidas pagantes (associados) para faixas de repasse — auditável. */
+  associateRepasseSnapshots?: AssociateRepasseDailySnapshot[];
+  /** Repasse vigente após regras de permanência (90d para melhorar, 30d para reduzir). */
+  associateRepasseEffective?: AssociateRepasseEffectiveState | null;
 };
 
 export type ConnectMemberRecord = {
@@ -259,17 +342,16 @@ export type PrimaryGymChangeRecord = {
   changedAt: string;
 };
 
-import { aggregatePayouts, type UnitScope } from './aggregatePayout';
-import { recentCheckInsForPortal } from './checkInLog';
-import type { PendingCheckInRequest } from './pendingCheckIn';
-import { createEmptyStore } from './store-normalize';
-
 export type { UnitScope };
 
 export type PortalPayload = {
   loggedIn: boolean;
   networkId: string;
   networkName: string;
+  defaultConnectFeePercent: number;
+  defaultDailyFeePercent: number;
+  networkConnectFeePercentOverride: number | null;
+  networkDailyFeePercentOverride: number | null;
   activeUnitId: string;
   unitScope: UnitScope;
   units: GymUnit[];
@@ -280,6 +362,34 @@ export type PortalPayload = {
   checkInLog: CheckInLogEntry[];
 };
 
+export function portalFeeFieldsFromStore(store: ApiStore): Pick<
+  PortalPayload,
+  | 'defaultConnectFeePercent'
+  | 'defaultDailyFeePercent'
+  | 'networkConnectFeePercentOverride'
+  | 'networkDailyFeePercentOverride'
+> {
+  const domain = getDomain() as { connectFeePercent?: number; dailyFeePercent?: number };
+  const connect = clampPlatformFeePercent(domain.connectFeePercent ?? 20);
+  const daily =
+    domain.dailyFeePercent != null && Number.isFinite(domain.dailyFeePercent)
+      ? clampPlatformFeePercent(domain.dailyFeePercent)
+      : connect;
+  const net = store.networks.find((n) => n.id === store.networkId);
+  return {
+    defaultConnectFeePercent: connect,
+    defaultDailyFeePercent: daily,
+    networkConnectFeePercentOverride:
+      net?.connectFeePercentOverride != null && Number.isFinite(net.connectFeePercentOverride)
+        ? clampPlatformFeePercent(net.connectFeePercentOverride)
+        : null,
+    networkDailyFeePercentOverride:
+      net?.dailyFeePercentOverride != null && Number.isFinite(net.dailyFeePercentOverride)
+        ? clampPlatformFeePercent(net.dailyFeePercentOverride)
+        : null,
+  };
+}
+
 export function portalPayloadFromStore(
   store: ApiStore,
   loggedIn: boolean,
@@ -288,11 +398,14 @@ export function portalPayloadFromStore(
   const payoutsByUnit = store.payoutsByUnit;
   const payoutHistoryByUnit = store.payoutHistoryByUnit ?? {};
 
+  const feeFields = portalFeeFieldsFromStore(store);
+
   if (unitScope === 'all') {
     return {
       loggedIn,
       networkId: store.networkId,
       networkName: store.networkName,
+      ...feeFields,
       activeUnitId: store.activeUnitId,
       unitScope: 'all',
       units: store.units.map(sanitizeUnitPhotosForApi),
@@ -315,6 +428,7 @@ export function portalPayloadFromStore(
     loggedIn,
     networkId: store.networkId,
     networkName: store.networkName,
+    ...feeFields,
     activeUnitId: store.activeUnitId,
     unitScope: 'single',
     units: store.units.map(sanitizeUnitPhotosForApi),

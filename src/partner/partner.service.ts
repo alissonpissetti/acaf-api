@@ -41,13 +41,17 @@ import {
 } from './weeklySchedule';
 import {
   portalPayloadFromStore,
+  portalFeeFieldsFromStore,
   type ApiStore,
   type ConnectPlanId,
   type GymUnit,
   type ModalityReservation,
   type ModalitySlotOverride,
   type ModalitySlotTemplate,
+  type NetworkSocialContacts,
 } from './types';
+import { AdminService } from './admin.service';
+import { currentMonthLabelBr } from './payoutMonth';
 import { buildNewUnit, emptyMonthlyPayout, type CreateUnitInput } from './unitFactory';
 import { CorporateAccessService } from '../corporate/corporate-access.service';
 import { registerDailyPassPurchase } from './dailyPassSales';
@@ -80,7 +84,47 @@ export class PartnerService {
     private readonly unitSchedule: UnitScheduleService,
     private readonly unitCoordinates: UnitCoordinatesService,
     private readonly corporateAccess: CorporateAccessService,
+    private readonly admin: AdminService,
   ) {}
+
+  private resolvePartnerNetworkId(unitIds?: string[]): string {
+    if (!unitIds?.length) {
+      throw new ForbiddenException('Sem acesso.');
+    }
+    const store = loadStore();
+    const units = store.units.filter((u) => unitIds.includes(u.id));
+    if (!units.length) {
+      throw new ForbiddenException('Sem unidades vinculadas.');
+    }
+    const netIds = [...new Set(units.map((u) => u.networkId))];
+    if (netIds.length !== 1) {
+      throw new BadRequestException(
+        netIds.length === 0
+          ? 'Não foi possível identificar a rede das suas unidades.'
+          : 'Sua conta tem acesso a mais de uma rede. Para alterar os dados de outra rede, peça suporte no painel administrativo.',
+      );
+    }
+    return netIds[0]!;
+  }
+
+  getPartnerNetwork(unitIds?: string[]) {
+    const networkId = this.resolvePartnerNetworkId(unitIds);
+    return this.admin.getNetworkForPartner(networkId, unitIds!);
+  }
+
+  patchPartnerNetwork(
+    patch: { name?: string; social?: Partial<NetworkSocialContacts> },
+    unitIds?: string[],
+  ) {
+    const networkId = this.resolvePartnerNetworkId(unitIds);
+    this.admin.updateNetworkForPartner(networkId, patch, unitIds!);
+    return this.admin.getNetworkForPartner(networkId, unitIds!);
+  }
+
+  uploadPartnerNetworkLogo(file: Express.Multer.File, unitIds?: string[]) {
+    const networkId = this.resolvePartnerNetworkId(unitIds);
+    return this.admin.uploadNetworkLogoForPartner(networkId, file, unitIds!);
+  }
 
   getHealth() {
     return { status: 'ok', service: 'connect-api' };
@@ -109,6 +153,7 @@ export class PartnerService {
   getBootstrap(unitIds?: string[]) {
     const store = scopedStore(unitIds);
     return {
+      ...portalFeeFieldsFromStore(store),
       networkId: store.networkId,
       networkName: store.networkName,
       activeUnitId: store.activeUnitId,
@@ -159,7 +204,13 @@ export class PartnerService {
     const current = loadStore().units.find((u) => u.id === unitId);
     if (!current) throw new NotFoundException('Unidade não encontrada.');
 
-    const { heroPhotoDataUrl, galleryPhotoDataUrls, ...rest } = patch;
+    const {
+      heroPhotoDataUrl,
+      galleryPhotoDataUrls,
+      connectFeePercentOverride: _cfo,
+      dailyFeePercentOverride: _dfo,
+      ...rest
+    } = patch;
     let merged: GymUnit = { ...current, ...rest, id: unitId };
     if (heroPhotoDataUrl !== undefined && isRemotePhotoUrl(heroPhotoDataUrl)) {
       merged.heroPhotoDataUrl = heroPhotoDataUrl;
@@ -219,7 +270,7 @@ export class PartnerService {
     const store = updateStore((s) => {
       s.units.push(unit);
       s.activeUnitId = unit.id;
-      const monthLabel = Object.values(s.payoutsByUnit)[0]?.monthLabel ?? 'Julho 2026';
+      const monthLabel = Object.values(s.payoutsByUnit)[0]?.monthLabel ?? currentMonthLabelBr();
       s.payoutsByUnit[unit.id] = emptyMonthlyPayout(monthLabel);
       s.payoutHistoryByUnit[unit.id] = [s.payoutsByUnit[unit.id]];
     });
@@ -797,7 +848,11 @@ export class PartnerService {
   /** Unidades de redes cadastradas no admin (sem órfãs de teste). */
   private unitsForCatalog(store: { networks: { id: string }[]; units: GymUnit[] }): GymUnit[] {
     const networkIds = new Set(store.networks.map((n) => n.id));
-    return store.units.filter((u) => networkIds.has(u.networkId));
+    return store.units.filter((u) => {
+      if (!networkIds.has(u.networkId)) return false;
+      if (u.acafAssociate?.listed === false) return false;
+      return true;
+    });
   }
 
   private toCatalogUnitDto(

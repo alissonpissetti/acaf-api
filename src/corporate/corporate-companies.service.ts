@@ -18,6 +18,7 @@ import { UserRole } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import { CompanyAccess } from './company-access.entity';
 import { Company } from './company.entity';
+import { CorporateEmployeesService } from './corporate-employees.service';
 
 @Injectable()
 export class CorporateCompaniesService {
@@ -27,6 +28,7 @@ export class CorporateCompaniesService {
     @InjectRepository(CompanyAccess)
     private readonly access: Repository<CompanyAccess>,
     private readonly users: UsersService,
+    private readonly corporateEmployees: CorporateEmployeesService,
   ) {}
 
   async signup(input: {
@@ -78,6 +80,8 @@ export class CorporateCompaniesService {
     await this.access.save(
       this.access.create({ companyId: company.id, userId: manager.id }),
     );
+
+    await this.corporateEmployees.linkManagerUserAsEmployee(company.id, manager.id);
 
     return {
       ok: true,

@@ -72,6 +72,41 @@ export class PartnerController {
     return this.partner.patchActiveUnit(body.unitId, body.scope, req.user.unitIds);
   }
 
+  @Get('partner/network')
+  @UseGuards(PartnerJwtAuthGuard)
+  @ApiOperation({ summary: 'Dados da rede vinculada às unidades do parceiro' })
+  getPartnerNetwork(@Req() req: PartnerRequest) {
+    return this.partner.getPartnerNetwork(req.user.unitIds);
+  }
+
+  @Patch('partner/network')
+  @UseGuards(PartnerJwtAuthGuard)
+  @ApiOperation({ summary: 'Atualiza nome e contatos da rede' })
+  patchPartnerNetwork(
+    @Body() body: { name?: string; social?: Record<string, string> },
+    @Req() req: PartnerRequest,
+  ) {
+    return this.partner.patchPartnerNetwork(body ?? {}, req.user.unitIds);
+  }
+
+  @Post('partner/network/logo')
+  @UseGuards(PartnerJwtAuthGuard)
+  @UseInterceptors(
+    FileInterceptor('logo', {
+      limits: { fileSize: 2 * 1024 * 1024 },
+    }),
+  )
+  @ApiOperation({ summary: 'Envia logo da rede (PNG/JPG/WEBP até 2 MB)' })
+  uploadPartnerNetworkLogo(
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: PartnerRequest,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Envie o arquivo da logo.');
+    }
+    return this.partner.uploadPartnerNetworkLogo(file, req.user.unitIds);
+  }
+
   @Patch('units/:unitId')
   @UseGuards(PartnerJwtAuthGuard)
   patchUnit(

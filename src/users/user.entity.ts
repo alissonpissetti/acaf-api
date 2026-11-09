@@ -10,6 +10,8 @@ export enum UserRole {
   ADMIN = 'admin',
   MEMBER = 'member',
   CORPORATE = 'corporate',
+  /** Acesso ao portal do parceiro (sem console admin). */
+  PARTNER = 'partner',
 }
 
 @Entity('acaf_users')
@@ -67,6 +69,7 @@ export function roleLabels(roles: UserRole[] | undefined): string[] {
   if (roles.includes(UserRole.ADMIN)) labels.push('Console admin');
   if (roles.includes(UserRole.MEMBER)) labels.push('Cliente');
   if (roles.includes(UserRole.CORPORATE)) labels.push('Gestor corporativo');
+  if (roles.includes(UserRole.PARTNER)) labels.push('Portal parceiro');
   if (!labels.length) return ['Usuário'];
   return labels;
 }

@@ -11,7 +11,8 @@ import {
 import { normalizeDailyPassPricingRules } from './dailyPassPricing';
 import { clampCheckInsThisMonth, MAX_DAILY_PASSES_PER_MONTH } from './studentLimits';
 import { normalizeRealisticGymCheckInTimes } from './gymLocalTime';
-import type { ApiStore, GymUnit } from './types';
+import type { ApiStore, GymUnit, MonthlyPayout } from './types';
+import { currentMonthLabelBr } from './payoutMonth';
 
 const CORPORATE_BENEFIT_PER_MONTH = 44.9;
 
@@ -64,6 +65,8 @@ export function createEmptyStore(): ApiStore {
     modalityReservations: [],
     connectMembers: [],
     primaryGymChanges: [],
+    associateRepasseSnapshots: [],
+    associateRepasseEffective: undefined,
   };
 }
 
@@ -136,10 +139,30 @@ export function normalizeStoreSnapshot(store: ApiStore): ApiStore {
   if (!Array.isArray(store.primaryGymChanges)) {
     store.primaryGymChanges = [];
   }
+  if (!Array.isArray(store.associateRepasseSnapshots)) {
+    store.associateRepasseSnapshots = [];
+  }
 
   backfillStudentCompanies(store);
+  syncOpenPayoutMonthLabelsToCurrentMonth(store);
 
   return store;
+}
+
+/** Evita extrato preso em mês fixo de seed (ex.: julho/2026) quando o período ainda está em aberto. */
+function syncOpenPayoutMonthLabelsToCurrentMonth(store: ApiStore, now = new Date()): void {
+  const label = currentMonthLabelBr(now);
+
+  const sync = (p: MonthlyPayout | undefined) => {
+    if (!p || p.status === 'paid') return;
+    p.monthLabel = label;
+  };
+
+  for (const p of Object.values(store.payoutsByUnit)) sync(p);
+  for (const arr of Object.values(store.payoutHistoryByUnit)) {
+    if (!arr?.length) continue;
+    sync(arr[arr.length - 1]);
+  }
 }
 
 function backfillStudentCompanies(store: ApiStore): void {

@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { AuthOtpPurpose } from '../auth/auth-otp.entity';
 import { CorporateAuthService } from './corporate-auth.service';
 import { CorporateJwtAuthGuard } from './corporate-jwt-auth.guard';
 
@@ -38,6 +39,23 @@ export class CorporateAuthController {
   @Post('login')
   login(@Body() body: { login: string; password: string }) {
     return this.auth.login(body.login ?? '', body.password ?? '');
+  }
+
+  @Post('otp/request')
+  requestOtp(@Body() body: { mobilePhone: string; purpose: AuthOtpPurpose }) {
+    return this.auth.requestOtp(body.mobilePhone, body.purpose);
+  }
+
+  @Post('otp/login')
+  loginWithOtp(@Body() body: { mobilePhone: string; code: string }) {
+    return this.auth.loginWithOtp(body.mobilePhone, body.code);
+  }
+
+  @Post('password/reset')
+  resetPassword(
+    @Body() body: { mobilePhone: string; code: string; newPassword: string },
+  ) {
+    return this.auth.resetPasswordWithOtp(body.mobilePhone, body.code, body.newPassword);
   }
 
   @Get('me')

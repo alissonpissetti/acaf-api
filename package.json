@@ -1,7 +1,7 @@
 {
   "name": "connect-api",
   "version": "0.0.1",
-  "description": "API NestJS do ecossistema Connect (app Flutter, portal academia e admin).",
+  "description": "API NestJS (app Flutter, portais e admin).",
   "author": "",
   "private": true,
   "license": "UNLICENSED",
@@ -37,7 +37,8 @@
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "typeorm": "^0.3.31"
+    "typeorm": "^0.3.31",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

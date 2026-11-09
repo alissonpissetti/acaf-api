@@ -18,10 +18,14 @@ import { UnitSchedule } from './unit-schedule.entity';
 import { PartnerStore } from './partner-store.entity';
 import { UnitScheduleService } from './unit-schedule.service';
 import { UnitCoordinatesService } from './unit-coordinates.service';
+import { AcafAssociatesImportService } from './acaf-associates-import.service';
 import { PartnerStorePersistenceService } from './partner-store-persistence.service';
+import { PartnerAuthModule } from '../partner-auth/partner-auth.module';
+import { AssociateRepasseDailyScheduler } from './associate-repasse-daily.scheduler';
 
 @Module({
   imports: [
+    PartnerAuthModule,
     TypeOrmModule.forFeature([
       UnitSchedule,
       PartnerStore,
@@ -44,6 +48,8 @@ import { PartnerStorePersistenceService } from './partner-store-persistence.serv
     AdminService,
     UnitScheduleService,
     UnitCoordinatesService,
+    AcafAssociatesImportService,
+    AssociateRepasseDailyScheduler,
   ],
   exports: [UnitScheduleService, PartnerStorePersistenceService, AdminService],
 })

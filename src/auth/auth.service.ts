@@ -13,7 +13,7 @@ import { AuthOtpPurpose } from './auth-otp.entity';
 import { AuthOtpService } from './auth-otp.service';
 
 const OTP_REQUEST_MESSAGE =
-  'Se o número estiver cadastrado, você receberá um SMS em instantes.';
+  'Se o número estiver cadastrado, você receberá um código no celular em instantes.';
 
 @Injectable()
 export class AuthService {

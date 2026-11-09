@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CorporateAccessService } from '../corporate/corporate-access.service';
 import { ModalitiesService } from '../modalities/modalities.service';
+import { AdminService } from './admin.service';
 import { PartnerService } from './partner.service';
 import { createEmptyStore } from './store-normalize';
 import { registerStoreBackend } from './store';
@@ -41,6 +42,14 @@ describe('PartnerService', () => {
             findActiveByEnrollmentCode: async () => null,
           },
         },
+        {
+          provide: AdminService,
+          useValue: {
+            getNetworkForPartner: () => ({}),
+            updateNetworkForPartner: () => ({}),
+            uploadNetworkLogoForPartner: async () => ({}),
+          },
+        },
       ],
     }).compile();
 
@@ -53,7 +62,8 @@ describe('PartnerService', () => {
 
   it('returns bootstrap from persisted store', () => {
     const boot = service.getBootstrap();
-    expect(boot.networkName).toBeTruthy();
-    expect(boot.units).toEqual([]);
+    expect(boot).toMatchObject({ units: [] });
+    expect(typeof boot.networkId).toBe('string');
+    expect(typeof boot.networkName).toBe('string');
   });
 });

@@ -37,8 +37,21 @@ export class PartnerAccessService {
     });
 
     return rows
-      .filter((row) => row.userId && row.user?.active)
+      .filter((row) => row.userId != null)
       .map((row) => {
+        if (!row.user) {
+          return {
+            id: row.userId as string,
+            name: '(Usuário não encontrado)',
+            email: '—',
+            cpf: null,
+            active: false,
+            roles: [],
+            roleLabels: [],
+            accessId: row.id,
+            linkedAt: row.createdAt,
+          };
+        }
         const safe = this.users.toSafeUser(row.user);
         return {
           id: safe.id,

@@ -248,7 +248,7 @@ export class CommercialLeadsService {
     createdAt?: Date,
   ) {
     const text = content.trim();
-    if (!text) throw new BadRequestException('Mensagem WhatsApp vazia.');
+    if (!text) throw new BadRequestException('Mensagem vazia.');
     if (!externalId.trim()) throw new BadRequestException('Identificador externo obrigatório.');
 
     const existing = await this.interactions.findOne({
@@ -290,7 +290,7 @@ export class CommercialLeadsService {
   ) {
     const labels: Record<'call' | 'whatsapp' | 'email', string> = {
       call: 'Ligação realizada',
-      whatsapp: 'Contato via WhatsApp',
+      whatsapp: 'Contato por mensagem no celular',
       email: 'E-mail enviado',
     };
 
@@ -827,7 +827,7 @@ export class CommercialLeadsService {
       userId: row.userId,
       userName:
         row.source === 'whatsapp'
-          ? user?.name ?? 'WhatsApp'
+          ? user?.name ?? 'Mensagem no celular'
           : user?.name ?? 'Sistema',
       userAvatarUrl: user?.avatarUrl ?? null,
       userAvatarColor: user?.avatarColor ?? null,

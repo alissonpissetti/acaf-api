@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { CorporateCompaniesService } from './corporate-companies.service';
 import { CorporateEmployeesService } from './corporate-employees.service';
 import { CorporateInvoicesService } from './corporate-invoices.service';
 import { CorporateJwtAuthGuard } from '../corporate-auth/corporate-jwt-auth.guard';
+import { currentMonthKey } from './corporate-domain';
 
 type CorpRequest = Request & {
   user: { userId: string; companyIds: string[]; companyId: string };
@@ -49,6 +51,32 @@ export class CorporateController {
     return this.employees.listEmployees(company.id);
   }
 
+  /** Relatório mensal: check-ins de assinantes e diárias por colaborador e visão agregada por plano. */
+  @Get('employees/usage-report')
+  @UseGuards(CorporateJwtAuthGuard)
+  async getEmployeesUsageReport(
+    @Req() req: CorpRequest,
+    @Query('monthKey') monthKey?: string,
+  ) {
+    const company = await this.companyFromReq(req);
+    const mk = (monthKey ?? '').trim() || currentMonthKey();
+    return this.employees.getEmployeesUsageReport(company.id, mk);
+  }
+
+  /** Importação em lote (até 500 linhas). Mesmas validações de POST employees; duplicatas são ignoradas. */
+  @Post('employees/bulk')
+  @UseGuards(CorporateJwtAuthGuard)
+  async addEmployeesBulk(
+    @Req() req: CorpRequest,
+    @Body()
+    body: {
+      employees: Array<{ name: string; email: string; cpf?: string; mobilePhone: string }>;
+    },
+  ) {
+    const company = await this.companyFromReq(req);
+    return this.employees.addEmployeesBulk(company, body?.employees ?? []);
+  }
+
   @Post('employees')
   @UseGuards(CorporateJwtAuthGuard)
   async addEmployee(
@@ -75,6 +103,14 @@ export class CorporateController {
   async getInviteLink(@Req() req: CorpRequest, @Param('id') id: string) {
     const company = await this.companyFromReq(req);
     return this.employees.getInviteLink(company, id);
+  }
+
+  /** Histórico de uso (check-ins de assinantes + diárias vinculadas à empresa) e situação de cobrança no mês. */
+  @Get('employees/:id/usage')
+  @UseGuards(CorporateJwtAuthGuard)
+  async getEmployeeUsage(@Req() req: CorpRequest, @Param('id') id: string) {
+    const company = await this.companyFromReq(req);
+    return this.employees.getEmployeeUsage(company.id, id);
   }
 
   @Post('employees/:id/send-invite-email')

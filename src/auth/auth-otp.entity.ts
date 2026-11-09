@@ -8,6 +8,8 @@ import {
 export enum AuthOtpPurpose {
   LOGIN = 'login',
   PASSWORD_RESET = 'password_reset',
+  /** Código enviado ao celular para o portal do parceiro (acaf-partner). */
+  PARTNER_LOGIN = 'partner_login',
 }
 
 @Entity('acaf_auth_otps')

@@ -3,16 +3,49 @@ import type { ApiStore } from './types';
 import { normalizeHolderKey } from './checkIn';
 import { applyStudentStatsFromLog } from './student-stats';
 import { brDateKeyToday } from './gymLocalTime';
-
-const PLATFORM_FEE_PERCENT = 20;
+import { resolveDailyFeePercentForUnit } from './platformFeePolicy';
 
 function roundPrice(price: number): number {
   if (!Number.isFinite(price) || price < 0) return 0;
   return Math.round(price * 100) / 100;
 }
 
-function netFromGross(gross: number): number {
-  return Math.round(gross * 100 * (1 - PLATFORM_FEE_PERCENT / 100)) / 100;
+function netFromGross(store: ApiStore, unitId: string, gross: number): number {
+  const pct = resolveDailyFeePercentForUnit(store, unitId);
+  return Math.round(gross * 100 * (1 - pct / 100)) / 100;
+}
+
+/**
+ * Atualiza totais de diária e lista recente quando a política de taxa muda (ex.: override no admin).
+ * Só altera o mês em aberto (mesma regra que `registerDailyPassPurchase`).
+ */
+export function recalcDailyPassNetForOpenPayout(store: ApiStore, unitId: string): void {
+  const payout = store.payoutsByUnit[unitId];
+  if (!payout) return;
+
+  const pct = resolveDailyFeePercentForUnit(store, unitId);
+
+  for (const sale of payout.recentDailySales) {
+    sale.feePercent = pct;
+    sale.net = netFromGross(store, unitId, sale.gross);
+  }
+
+  payout.dailyPassNet = netFromGross(store, unitId, payout.dailyPassGross);
+  payout.totalNet = Math.round((payout.dailyPassNet + payout.connectRepasseTotal) * 100) / 100;
+
+  const history = store.payoutHistoryByUnit[unitId];
+  if (history?.length) {
+    const lastIdx = history.length - 1;
+    const last = history[lastIdx];
+    if (last.status !== 'paid') {
+      history[lastIdx] = {
+        ...last,
+        recentDailySales: payout.recentDailySales,
+        dailyPassNet: payout.dailyPassNet,
+        totalNet: payout.totalNet,
+      };
+    }
+  }
 }
 
 /**
@@ -92,18 +125,20 @@ export function registerDailyPassPurchase(
   const payout = store.payoutsByUnit[input.unitId];
   if (!payout) return;
 
+  const feePercent = resolveDailyFeePercentForUnit(store, input.unitId);
   const sale = {
     id: `sale-${Date.now()}`,
     date: saleDate,
     studentName: holderName,
     gross,
-    feePercent: PLATFORM_FEE_PERCENT,
-    net: netFromGross(gross),
+    feePercent,
+    net: netFromGross(store, input.unitId, gross),
+    unitId: input.unitId,
   };
 
   payout.recentDailySales = [sale, ...payout.recentDailySales].slice(0, 40);
   payout.dailyPassGross = roundPrice(payout.dailyPassGross + gross);
-  payout.dailyPassNet = netFromGross(payout.dailyPassGross);
+  payout.dailyPassNet = netFromGross(store, input.unitId, payout.dailyPassGross);
   payout.totalNet = roundPrice(payout.dailyPassNet + payout.connectRepasseTotal);
 
   const history = store.payoutHistoryByUnit[input.unitId];

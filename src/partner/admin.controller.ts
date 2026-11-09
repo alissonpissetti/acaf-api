@@ -23,6 +23,8 @@ import type { GymUnit, NetworkSocialContacts } from './types';
 import type { CompanyStatus } from '../corporate/company.entity';
 import type { UnitWeeklySchedule } from './weeklySchedule';
 import { AdminService } from './admin.service';
+import { AcafAssociatesImportService } from './acaf-associates-import.service';
+import { PartnerOnboardingService } from '../partner-auth/partner-onboarding.service';
 
 type AuthRequest = Request & { user: { userId: string } };
 
@@ -31,7 +33,11 @@ type AuthRequest = Request & { user: { userId: string } };
 @Controller('admin')
 @UseGuards(JwtAuthGuard)
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly acafAssociatesImport: AcafAssociatesImportService,
+    private readonly partnerOnboarding: PartnerOnboardingService,
+  ) {}
 
   @Get('overview')
   overview() {
@@ -59,6 +65,8 @@ export class AdminController {
       name?: string;
       logoUrl?: string | null;
       social?: Partial<NetworkSocialContacts>;
+      connectFeePercentOverride?: number | null;
+      dailyFeePercentOverride?: number | null;
     },
   ) {
     return this.admin.updateNetwork(id, body);
@@ -67,6 +75,66 @@ export class AdminController {
   @Delete('networks/:id')
   deleteNetwork(@Param('id') id: string) {
     return this.admin.deleteNetwork(id);
+  }
+
+  @Post('networks/merge')
+  mergeNetworks(
+    @Body()
+    body: {
+      keeperNetworkId: string;
+      mergeNetworkIds: string[];
+    },
+  ) {
+    return this.admin.mergeNetworks(body.keeperNetworkId, body.mergeNetworkIds);
+  }
+
+  /** Cada unidade listada ganha uma rede própria (nome = unidade); copia logo/links da rede atual. */
+  @Post('networks/:id/detach-units')
+  detachUnits(
+    @Param('id') id: string,
+    @Body() body: { unitIds: string[] },
+  ) {
+    return this.admin.detachUnitsToOwnNetworks(id, body.unitIds ?? []);
+  }
+
+  /** Remove em lote redes `net_acaf_*` incl. agrupadores `net_acaf_grp_*` (importação ACAF). */
+  @Post('networks/purge-acaf-import')
+  purgeAcafImportedNetworks() {
+    return this.admin.deleteAllAcafImportedNetworks();
+  }
+
+  @Post('networks/:id/partner-onboarding-invite')
+  createPartnerOnboardingInvite(@Req() req: AuthRequest, @Param('id') networkId: string) {
+    return this.partnerOnboarding.createInvite(networkId, req.user.userId);
+  }
+
+  @Post('associates/import')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  importAcafAssociates(
+    @Req() req: AuthRequest,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('syncMissing') syncMissing?: string,
+    @Query('updateExisting') updateExisting?: string,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Envie o arquivo Excel (.xlsx).');
+    }
+    const name = file.originalname?.toLowerCase() ?? '';
+    if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
+      throw new BadRequestException('Use um arquivo Excel (.xlsx).');
+    }
+    return this.acafAssociatesImport.importSpreadsheet(
+      file,
+      {
+        syncMissing: syncMissing === '1' || syncMissing === 'true',
+        updateExisting: updateExisting === '1' || updateExisting === 'true',
+      },
+      req.user.userId,
+    );
   }
 
   @Post('networks/:id/logo')

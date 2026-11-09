@@ -67,6 +67,7 @@ function roleLabelsFor(roles: UserRole[]): string[] {
   if (roles.includes(UserRole.ADMIN)) labels.push('Console admin');
   if (roles.includes(UserRole.MEMBER)) labels.push('Cliente');
   if (roles.includes(UserRole.CORPORATE)) labels.push('Gestor corporativo');
+  if (roles.includes(UserRole.PARTNER)) labels.push('Portal parceiro');
   if (!labels.length) labels.push('Usuário');
   return labels;
 }
@@ -229,7 +230,38 @@ export class UsersService implements OnModuleInit {
     if (cpf.length === 11) {
       return this.findByCpf(cpf);
     }
+    const phone = normalizeMobilePhone(login);
+    if (isValidMobilePhone(phone)) {
+      return this.findByMobilePhone(phone);
+    }
     return this.findByEmail(trimmed);
+  }
+
+  /** Nome com pelo menos duas partes (ex.: nome e sobrenome). */
+  assertFullName(name: string): void {
+    const parts = name
+      .trim()
+      .split(/\s+/)
+      .filter((p) => p.length > 0);
+    if (parts.length < 2) {
+      throw new BadRequestException('Informe o nome completo (nome e sobrenome).');
+    }
+  }
+
+  private assertPartnerSignupEmail(email: string): void {
+    const e = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+      throw new BadRequestException('Informe um e-mail válido.');
+    }
+  }
+
+  private assertPartnerSignupPassword(password: string): void {
+    if (password.length < 8) {
+      throw new BadRequestException('A senha deve ter ao menos 8 caracteres.');
+    }
+    if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) {
+      throw new BadRequestException('A senha deve conter ao menos uma letra e um número.');
+    }
   }
 
   private resolvePersonFields(input: { cpf?: string; mobilePhone?: string }, required = false) {
@@ -432,14 +464,36 @@ export class UsersService implements OnModuleInit {
     email: string;
     cpf: string;
     password: string;
+    mobilePhone?: string;
     roles?: UserRole[];
+    /** Validações extras de cadastro self-service (onboarding parceiro). */
+    strictPartnerProfile?: boolean;
   }): Promise<SafeUser> {
     const cpf = normalizeCpf(input.cpf);
     if (!isValidCpf(cpf)) throw new BadRequestException('CPF inválido.');
+
+    if (input.strictPartnerProfile) {
+      this.assertFullName(input.name);
+      this.assertPartnerSignupEmail(input.email);
+      this.assertPartnerSignupPassword(input.password);
+      const person = this.resolvePersonFields(
+        { cpf: input.cpf, mobilePhone: input.mobilePhone ?? '' },
+        true,
+      );
+      return this.create({
+        name: input.name,
+        email: input.email,
+        password: input.password,
+        cpf: person.cpf ?? cpf,
+        mobilePhone: person.mobilePhone ?? undefined,
+        roles: input.roles?.length ? input.roles : [UserRole.ADMIN],
+      });
+    }
+
     return this.create({
       ...input,
       cpf,
-      roles: input.roles ?? [],
+      roles: input.roles?.length ? input.roles : [UserRole.ADMIN],
     });
   }
 

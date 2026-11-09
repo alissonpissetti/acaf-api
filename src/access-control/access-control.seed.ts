@@ -247,6 +247,22 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
       },
     ],
   },
+  {
+    slug: 'associacao',
+    name: 'Associação movly.',
+    description: 'Gestão de parceiros associados à movly. (somente cadastro de associados)',
+    icon: 'Users',
+    sortOrder: 8,
+    items: [
+      {
+        slug: 'parceiros-acaf',
+        label: 'Parceiros associados',
+        route: '/m/associacao/parceiros',
+        sortOrder: 1,
+        permissionKey: 'associacao.acaf.parceiros',
+      },
+    ],
+  },
 ];
 
 export const ADMIN_GROUP_NAME = 'Administradores';

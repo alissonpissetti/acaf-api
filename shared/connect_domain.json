@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "connectFeePercent": 20,
-  "dailyFeePercent": 20,
+  "connectFeePercent": 22.01,
+  "dailyFeePercent": 22.01,
   "corporateBenefitPerMonth": 44.9,
   "feeModel": {
     "gymPortalVisible": "20% sobre o valor de cada diária e sobre o total mensal dos planos de assinatura (colaborador + benefício corporativo).",
@@ -10,38 +10,38 @@
   "connectPlans": [
     {
       "id": "connect-start",
-      "name": "Connect Start",
+      "name": "Start",
       "pricePerMonth": 39.8,
       "tierIndex": 0,
-      "description": "Plano de entrada na rede Connect."
+      "description": "Plano de entrada na rede."
     },
     {
       "id": "connect-plus",
-      "name": "Connect Plus",
+      "name": "Plus",
       "pricePerMonth": 69.9,
       "tierIndex": 1,
       "description": "Mais flexibilidade dentro da rede."
     },
     {
       "id": "connect-multi",
-      "name": "Connect Multi",
+      "name": "Multi",
       "pricePerMonth": 129.9,
       "tierIndex": 2,
       "description": "Para quem treina com frequência em várias unidades."
     },
     {
       "id": "connect-pro",
-      "name": "Connect Pro",
+      "name": "Pro",
       "pricePerMonth": 189.9,
       "tierIndex": 3,
       "description": "Tier avançado para uso intenso da rede."
     },
     {
       "id": "connect-total",
-      "name": "Connect Total",
+      "name": "Total",
       "pricePerMonth": 299.9,
       "tierIndex": 4,
-      "description": "Máximo nível de benefícios Connect."
+      "description": "Máximo nível de benefícios."
     }
   ],
   "modalityCatalog": [
