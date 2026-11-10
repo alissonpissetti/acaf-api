@@ -13,6 +13,30 @@ const IMAGE_EXT: Record<string, string> = {
   'image/svg+xml': '.svg',
 };
 
+const WHATSAPP_MEDIA_EXT: Record<string, string> = {
+  ...IMAGE_EXT,
+  'image/gif': '.gif',
+  'video/mp4': '.mp4',
+  'video/3gpp': '.3gp',
+  'audio/ogg': '.ogg',
+  'audio/opus': '.opus',
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/aac': '.aac',
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/msword': '.doc',
+  'application/octet-stream': '.bin',
+};
+
+const WHATSAPP_KIND_EXT: Record<string, string> = {
+  image: '.jpg',
+  sticker: '.webp',
+  video: '.mp4',
+  audio: '.ogg',
+  document: '.pdf',
+};
+
 @Injectable()
 export class NextcloudService {
   private readonly baseUrl: string;
@@ -89,43 +113,64 @@ export class NextcloudService {
     return share?.url ? `${share.url}/download` : null;
   }
 
+  private async waitForStorageBackoff(attempt: number) {
+    const waitMs = Math.min(30_000, 750 * (attempt + 1) ** 2);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+
   private async createPublicShareUrl(relativePath: string): Promise<string> {
     const existing = await this.findPublicShareUrl(relativePath);
     if (existing) return existing;
 
-    const response = await fetch(
-      `${this.baseUrl}/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: this.authHeader(),
-          'OCS-APIRequest': 'true',
-          'Content-Type': 'application/x-www-form-urlencoded',
+    let lastStatus = 0;
+    let lastBody = '';
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await fetch(
+        `${this.baseUrl}/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: this.authHeader(),
+            'OCS-APIRequest': 'true',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            path: this.sharePath(relativePath),
+            shareType: '3',
+            permissions: '1',
+          }),
         },
-        body: new URLSearchParams({
-          path: this.sharePath(relativePath),
-          shareType: '3',
-          permissions: '1',
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new InternalServerErrorException(
-        `Falha ao publicar arquivo no storage (${response.status}): ${body.slice(0, 120)}`,
       );
+
+      if (response.status === 429 || response.status === 503) {
+        lastStatus = response.status;
+        lastBody = await response.text();
+        await this.waitForStorageBackoff(attempt);
+        continue;
+      }
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new InternalServerErrorException(
+          `Falha ao publicar arquivo no storage (${response.status}): ${body.slice(0, 120)}`,
+        );
+      }
+
+      const payload = (await response.json()) as {
+        ocs?: { data?: { url?: string } };
+      };
+      const shareUrl = payload.ocs?.data?.url;
+      if (!shareUrl) {
+        throw new InternalServerErrorException('Storage não retornou link público do arquivo.');
+      }
+
+      return `${shareUrl}/download`;
     }
 
-    const payload = (await response.json()) as {
-      ocs?: { data?: { url?: string } };
-    };
-    const shareUrl = payload.ocs?.data?.url;
-    if (!shareUrl) {
-      throw new InternalServerErrorException('Storage não retornou link público do arquivo.');
-    }
-
-    return `${shareUrl}/download`;
+    throw new InternalServerErrorException(
+      `Falha ao publicar arquivo no storage (${lastStatus || 429}): ${lastBody.slice(0, 120)}`,
+    );
   }
 
   async uploadNetworkLogo(
@@ -231,6 +276,111 @@ export class NextcloudService {
     const publicUrl = await this.createPublicShareUrl(relativePath);
     await this.deleteUserAvatarFiles(userId, relativePath);
     return { path: relativePath, publicUrl };
+  }
+
+  async uploadWhatsappContactAvatar(
+    instanceId: string,
+    contactKey: string,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<{ path: string; publicUrl: string | null }> {
+    const ext = IMAGE_EXT[mimeType] ?? '.jpg';
+    const safeKey = contactKey.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    const folder = `${this.rootFolder}/whatsapp-contacts/${instanceId}`;
+    const relativePath = `${folder}/${safeKey}${ext}`;
+
+    await this.ensureFolder(folder);
+
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'PUT',
+      headers: {
+        Authorization: this.authHeader(),
+        'Content-Type': mimeType || 'image/jpeg',
+      },
+      body: new Uint8Array(buffer),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao enviar foto WhatsApp (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+
+    // Inbox lê via DAV (avatarStoragePath + proxy da API) — não cria link público OCS (evita rate limit 429).
+    return { path: relativePath, publicUrl: null };
+  }
+
+  private resolveWhatsappMediaExtension(
+    mimeType: string,
+    mediaKind?: string | null,
+    fileName?: string | null,
+  ): string {
+    const mime = mimeType.split(';')[0]?.trim().toLowerCase() || '';
+    if (mime && WHATSAPP_MEDIA_EXT[mime]) return WHATSAPP_MEDIA_EXT[mime]!;
+
+    const fromName = String(fileName ?? '').trim();
+    if (fromName.includes('.')) {
+      const ext = fromName.slice(fromName.lastIndexOf('.')).toLowerCase();
+      if (/^\.[a-z0-9]{2,8}$/.test(ext)) return ext;
+    }
+
+    const kind = String(mediaKind ?? '').trim().toLowerCase();
+    if (kind && WHATSAPP_KIND_EXT[kind]) return WHATSAPP_KIND_EXT[kind]!;
+
+    return '.bin';
+  }
+
+  async uploadWhatsappMessageMedia(
+    instanceId: string,
+    messageId: string,
+    buffer: Buffer,
+    mimeType: string,
+    mediaKind?: string | null,
+    originalName?: string | null,
+  ): Promise<{ path: string }> {
+    const ext = this.resolveWhatsappMediaExtension(mimeType, mediaKind, originalName);
+    const folder = `${this.rootFolder}/whatsapp-messages/${instanceId}`;
+    const relativePath = `${folder}/${messageId}${ext}`;
+
+    await this.ensureFolder(folder);
+
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'PUT',
+      headers: {
+        Authorization: this.authHeader(),
+        'Content-Type': mimeType?.split(';')[0]?.trim() || 'application/octet-stream',
+      },
+      body: new Uint8Array(buffer),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao enviar mídia WhatsApp (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+
+    return { path: relativePath };
+  }
+
+  async readFileBuffer(relativePath: string): Promise<{ buffer: Buffer; mime: string }> {
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'GET',
+      headers: { Authorization: this.authHeader() },
+    });
+    if (!response.ok) {
+      throw new InternalServerErrorException(`Arquivo não encontrado no storage (${response.status}).`);
+    }
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream';
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return { buffer, mime };
+  }
+
+  isHostedPublicUrl(url: string | null | undefined): boolean {
+    const value = String(url ?? '').trim();
+    if (!value.startsWith('http')) return false;
+    return value.startsWith(this.baseUrl);
   }
 
   private async listDavEntryNames(folderRelativePath: string): Promise<string[]> {

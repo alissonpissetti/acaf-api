@@ -1159,6 +1159,18 @@ export class CommercialLeadsService {
     return map;
   }
 
+  async findOpenLeadByWhatsAppContactKey(contactKey: string): Promise<CommercialLead | null> {
+    const key = String(contactKey ?? '').trim();
+    if (!key) return null;
+    const marker = `whatsapp-contact:${key}`;
+
+    return this.leads
+      .createQueryBuilder('lead')
+      .where('lead.notes LIKE :marker', { marker: `%${marker}%` })
+      .orderBy('lead.createdAt', 'DESC')
+      .getOne();
+  }
+
   async findOpenLeadByPhone(phone: string): Promise<CommercialLead | null> {
     const digits = normalizeMobilePhone(phone);
     if (!digits) return null;
@@ -1178,57 +1190,110 @@ export class CommercialLeadsService {
 
   /** Mensagem inbound WhatsApp: reusa lead por telefone ou cria lead básico no funil padrão. */
   async ensureLeadFromWhatsAppInbox(input: {
-    phone: string;
+    contactKey: string;
+    phone?: string | null;
     pushName?: string | null;
     messageText: string;
     externalId: string;
     ownerUserId: string;
     createdByUserId: string;
     instanceLabel: string;
+    recordInteraction?: boolean;
   }): Promise<{ leadId: string; created: boolean }> {
-    const existing = await this.findOpenLeadByPhone(input.phone);
+    const contactKey = String(input.contactKey ?? '').trim();
+    const rawPhone = String(input.phone ?? contactKey).trim();
+    const digits =
+      input.phone && isValidMobilePhone(normalizeMobilePhone(input.phone))
+        ? normalizeMobilePhone(input.phone)
+        : isValidMobilePhone(normalizeMobilePhone(rawPhone))
+          ? normalizeMobilePhone(rawPhone)
+          : null;
+
+    let existing =
+      (digits ? await this.findOpenLeadByPhone(digits) : null) ??
+      (await this.findOpenLeadByWhatsAppContactKey(contactKey));
     const preview = input.messageText.trim().slice(0, 500);
+    const shouldRecord = input.recordInteraction !== false;
 
     if (existing) {
-      if (preview) {
+      await this.enrichLeadFromWhatsApp(existing.id, input.pushName);
+      if (preview && shouldRecord) {
         await this.ingestWhatsAppInteraction(existing.id, preview, input.externalId);
       }
       return { leadId: existing.id, created: false };
     }
 
-    const digits = normalizeMobilePhone(input.phone);
     const title =
       input.pushName?.trim() ||
       (digits && isValidMobilePhone(digits)
-        ? `WhatsApp ${formatMobilePhone(digits)}`
-        : `WhatsApp ${input.phone}`);
+        ? formatMobilePhone(digits)
+        : 'Contato WhatsApp');
 
+    const marker = `whatsapp-contact:${contactKey}`;
     const lead = await this.create(
       {
         title,
-        phone: digits && isValidMobilePhone(digits) ? digits : undefined,
+        phone: digits ?? undefined,
         contactName: input.pushName?.trim() || undefined,
-        contacts:
-          digits && isValidMobilePhone(digits)
-            ? [
-                {
-                  name: input.pushName?.trim() || title,
-                  phone: digits,
-                  isPrimary: true,
-                },
-              ]
-            : undefined,
-        notes: `Origem: instância WhatsApp «${input.instanceLabel}».`,
+        contacts: digits
+          ? [
+              {
+                name: input.pushName?.trim() || title,
+                phone: digits,
+                isPrimary: true,
+              },
+            ]
+          : undefined,
+        notes: `Origem: instância WhatsApp «${input.instanceLabel}». ${marker}`,
         ownerUserId: input.ownerUserId,
         temperature: 'warm',
       },
       input.createdByUserId,
     );
 
-    if (preview) {
+    if (preview && shouldRecord) {
       await this.ingestWhatsAppInteraction(lead.id, preview, input.externalId);
     }
 
     return { leadId: lead.id, created: true };
+  }
+
+  async enrichLeadPhoneFromWhatsAppInbox(leadId: string, phoneDigits: string): Promise<void> {
+    const digits = normalizeMobilePhone(phoneDigits);
+    if (!isValidMobilePhone(digits)) return;
+    const lead = await this.leads.findOne({
+      where: { id: leadId },
+      select: ['id', 'phone', 'title'],
+    });
+    if (!lead || lead.phone) return;
+
+    const patch: Partial<CommercialLead> = { phone: digits };
+    const title = lead.title?.trim() ?? '';
+    if (!title || title === 'Contato WhatsApp' || title.startsWith('WhatsApp ')) {
+      patch.title = formatMobilePhone(digits);
+    }
+    await this.leads.update({ id: leadId }, patch);
+  }
+
+  async enrichLeadFromWhatsAppInbox(leadId: string, pushName?: string | null): Promise<void> {
+    const name = pushName?.trim();
+    if (!name) return;
+    const lead = await this.leads.findOne({ where: { id: leadId }, select: ['id', 'contactName', 'title'] });
+    if (!lead) return;
+    const patch: Partial<CommercialLead> = {};
+    const title = lead.title?.trim() ?? '';
+    const titleLooksLikeId =
+      title.replace(/\D/g, '').length >= 8 && title.replace(/[\d\s().\-]/g, '').length === 0;
+    if (!lead.contactName?.trim()) patch.contactName = name;
+    if (!title || title.startsWith('WhatsApp ') || titleLooksLikeId || title === 'Contato WhatsApp') {
+      patch.title = name;
+    }
+    if (Object.keys(patch).length) {
+      await this.leads.update({ id: leadId }, patch);
+    }
+  }
+
+  private async enrichLeadFromWhatsApp(leadId: string, pushName?: string | null): Promise<void> {
+    await this.enrichLeadFromWhatsAppInbox(leadId, pushName);
   }
 }

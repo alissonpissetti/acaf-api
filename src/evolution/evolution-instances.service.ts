@@ -12,6 +12,9 @@ import { EvolutionInstance } from './evolution-instance.entity';
 import { SystemSettingsService } from '../system-settings/system-settings.service';
 import { normalizeEvolutionBaseUrl } from '../system-settings/system-settings.service';
 import { EVOLUTION_WEBHOOK_EVENTS } from './evolution-webhook.constants';
+import { EvolutionInboundService } from './evolution-inbound.service';
+import { EvolutionInboxService } from './evolution-inbox.service';
+import { collectEvolutionMessageRows } from './evolution-message.parser';
 
 export type EvolutionInstanceDto = {
   id: string;
@@ -74,6 +77,8 @@ export class EvolutionInstancesService {
     private readonly users: Repository<User>,
     private readonly systemSettings: SystemSettingsService,
     private readonly config: ConfigService,
+    private readonly inbound: EvolutionInboundService,
+    private readonly inbox: EvolutionInboxService,
   ) {}
 
   private evolutionHeaders(apiKey: string): Record<string, string> {
@@ -880,5 +885,201 @@ export class EvolutionInstancesService {
         message: err instanceof Error ? err.message : 'Falha ao solicitar conexão.',
       };
     }
+  }
+
+  async syncInbox(id: string): Promise<{
+    ok: boolean;
+    imported: number;
+    total: number;
+    webhookUrl: string | null;
+    avatarsSynced?: number;
+    avatarsStored?: number;
+    mediaStored?: { processed: number; stored: number; skipped: number; failed: number };
+    message?: string;
+  }> {
+    const row = await this.findWithSecret(id);
+    const remote = await this.resolveRemoteApi(row);
+    const webhookUrl = await this.systemSettings.resolveEvolutionWebhookUrl();
+
+    try {
+      await this.syncRemoteInstanceWebhook(remote, row.instanceKey);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, imported: 0, total: 0, webhookUrl, message };
+    }
+
+    const payload = await this.fetchRemoteChatMessages(remote, row.instanceKey);
+    const rowCount = collectEvolutionMessageRows(payload).length;
+    if (!rowCount) {
+      return {
+        ok: true,
+        imported: 0,
+        total: 0,
+        webhookUrl,
+        message: 'A Evolution não retornou mensagens. Envie um teste ou aguarde o webhook.',
+      };
+    }
+
+    const { imported, total } = await this.inbound.ingestMessagePayload(row.id, payload);
+    const mediaPatched = await this.inbox.backfillMessageMediaFromPayload(row.id, payload);
+    await this.inbox.applyPushNamesFromPayload(row.id, payload);
+    const { avatars, avatarsStored, updated: namesUpdated } =
+      await this.inbox.syncContactNamesFromEvolution(row.id);
+    const mediaStored = await this.inbox.syncMessageMediaToStorage(row.id, 500);
+    return {
+      ok: true,
+      imported,
+      total,
+      webhookUrl,
+      avatarsSynced: avatars,
+      avatarsStored,
+      mediaStored,
+      message: [
+        rowCount > 0 ? `${rowCount} mensagem(ns) analisada(s) na Evolution (inclui grupos e retroativo).` : null,
+        mediaPatched > 0 ? `${mediaPatched} mensagem(ns) com mídia atualizada.` : null,
+        mediaStored.stored > 0
+          ? `${mediaStored.stored} mídia(s) copiada(s) para o Nextcloud (exibição sem depender do WhatsApp).`
+          : mediaStored.processed > 0
+            ? `${mediaStored.processed} mídia(s) tentadas; nenhuma nova no storage (Evolution indisponível ou já salvas).`
+            : null,
+        namesUpdated ? `${namesUpdated} conversa(s) com nome atualizado.` : null,
+        avatarsStored > 0
+          ? `${avatarsStored} avatar(es) copiado(s) do WhatsApp e salvos no storage (independe da conexão).`
+          : avatars > 0
+            ? `${avatars} foto(s) na Evolution, mas não gravou no Nextcloud — confira NEXTCLOUD_* e permissões.`
+            : 'Avatares: WhatsApp não devolveu foto (privacidade/LID é comum).',
+      ]
+        .filter(Boolean)
+        .join(' '),
+    };
+  }
+
+  async syncMessageMedia(id: string): Promise<{
+    ok: boolean;
+    processed: number;
+    stored: number;
+    skipped: number;
+    failed: number;
+    message: string;
+  }> {
+    const row = await this.findWithSecret(id);
+    if (!row) throw new NotFoundException('Instância não encontrada.');
+
+    const outcome = await this.inbox.syncMessageMediaToStorage(row.id, 800);
+    const parts = [
+      `${outcome.processed} mídia(s) processada(s).`,
+      outcome.stored > 0
+        ? `${outcome.stored} gravada(s) no Nextcloud.`
+        : 'Nenhuma nova mídia gravada.',
+      outcome.failed > 0 ? `${outcome.failed} falha(s) — confira Evolution e NEXTCLOUD_*.` : null,
+      outcome.skipped > 0 ? `${outcome.skipped} sem payload para baixar.` : null,
+    ].filter(Boolean);
+
+    return {
+      ok: true,
+      ...outcome,
+      message: parts.join(' '),
+    };
+  }
+
+  async syncAvatars(id: string): Promise<{
+    ok: boolean;
+    checked: number;
+    updated: number;
+    unchanged: number;
+    missing: number;
+    message: string;
+  }> {
+    const row = await this.findWithSecret(id);
+    if (!row) throw new NotFoundException('Instância não encontrada.');
+
+    const outcome = await this.inbox.refreshContactAvatars(row.id);
+    const parts = [
+      `${outcome.checked} contato(s) verificado(s).`,
+      outcome.updated > 0
+        ? `${outcome.updated} foto(s) nova(s) ou alterada(s) gravada(s) no storage.`
+        : 'Nenhuma foto nova para gravar.',
+      outcome.unchanged > 0 ? `${outcome.unchanged} inalterada(s).` : null,
+      outcome.missing > 0 ? `${outcome.missing} sem foto no WhatsApp.` : null,
+    ].filter(Boolean);
+
+    return {
+      ok: true,
+      ...outcome,
+      message: parts.join(' '),
+    };
+  }
+
+  private async fetchRemoteChatMessages(
+    remote: { baseUrl: string; apiKey: string },
+    instanceKey: string,
+  ): Promise<unknown> {
+    const endpoint = `${remote.baseUrl}/chat/findMessages/${encodeURIComponent(instanceKey)}`;
+    const pageSize = 100;
+    const maxPages = 20;
+    const merged: unknown[] = [];
+    const seenIds = new Set<string>();
+    let lastError = '';
+
+    const mergeRows = (data: unknown) => {
+      for (const row of collectEvolutionMessageRows(data)) {
+        if (!row || typeof row !== 'object') continue;
+        const key = ((row as Record<string, unknown>).key ?? {}) as Record<string, unknown>;
+        const id = String(key.id ?? (row as Record<string, unknown>).id ?? '').trim();
+        const dedupeKey = id || JSON.stringify(row).slice(0, 120);
+        if (seenIds.has(dedupeKey)) continue;
+        seenIds.add(dedupeKey);
+        merged.push(row);
+      }
+    };
+
+    for (let page = 1; page <= maxPages; page += 1) {
+      const bodies: Record<string, unknown>[] = [
+        { where: {}, limit: pageSize, page, sort: { messageTimestamp: -1 } },
+        { where: {}, limit: pageSize, page, sort: -1 },
+        { where: {}, limit: pageSize, page },
+        { where: {}, take: pageSize, skip: (page - 1) * pageSize },
+        { where: {}, offset: (page - 1) * pageSize, limit: pageSize },
+      ];
+      let pageRows = 0;
+      for (const body of bodies) {
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: this.evolutionHeaders(remote.apiKey),
+            body: JSON.stringify(body),
+          });
+          const text = await response.text();
+          if (!response.ok) {
+            lastError = `${response.status}: ${text.slice(0, 200)}`;
+            continue;
+          }
+          let payload: unknown = {};
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            lastError = 'Resposta inválida da Evolution.';
+            continue;
+          }
+          const record =
+            payload && typeof payload === 'object'
+              ? ((payload as Record<string, unknown>).messages ?? payload)
+              : payload;
+          const before = merged.length;
+          mergeRows(record);
+          pageRows = merged.length - before;
+          if (pageRows > 0) break;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : String(err);
+        }
+      }
+      if (pageRows === 0) break;
+      if (pageRows < pageSize) break;
+    }
+
+    if (merged.length) return { messages: merged };
+    throw new BadRequestException(
+      `Não foi possível buscar mensagens na Evolution (${lastError || 'erro desconhecido'}).`,
+    );
   }
 }

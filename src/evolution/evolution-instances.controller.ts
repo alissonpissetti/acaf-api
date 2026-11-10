@@ -91,4 +91,22 @@ export class EvolutionInstancesController {
   connect(@Param('id') id: string) {
     return this.evolution.connect(id);
   }
+
+  @Post(':id/sync-inbox')
+  @RequirePermissions('sistema.evolution.manage', 'comercial.leads')
+  syncInbox(@Param('id') id: string) {
+    return this.evolution.syncInbox(id);
+  }
+
+  @Post(':id/sync-avatars')
+  @RequirePermissions('sistema.evolution.manage', 'comercial.leads')
+  syncAvatars(@Param('id') id: string) {
+    return this.evolution.syncAvatars(id);
+  }
+
+  @Post(':id/sync-media')
+  @RequirePermissions('sistema.evolution.manage', 'comercial.leads')
+  syncMessageMedia(@Param('id') id: string) {
+    return this.evolution.syncMessageMedia(id);
+  }
 }

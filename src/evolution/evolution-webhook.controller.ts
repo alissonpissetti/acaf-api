@@ -11,9 +11,8 @@ export class EvolutionWebhookController {
   receive(
     @Body() body: Record<string, unknown>,
     @Headers('x-evolution-webhook-secret') secret?: string,
-    @Headers('apikey') apiKeyHeader?: string,
   ) {
-    this.inbound.assertWebhookAuthorized(secret ?? apiKeyHeader);
+    this.inbound.assertWebhookAuthorized(secret);
     return this.inbound.handleWebhook(body);
   }
 }

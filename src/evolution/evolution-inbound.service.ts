@@ -1,12 +1,15 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User, UserRole, userHasRole } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
-import { isValidMobilePhone, normalizeMobilePhone } from '../users/person.utils';
 import { EvolutionInstance } from './evolution-instance.entity';
 import { EvolutionInboxService, type ParsedEvolutionMessage } from './evolution-inbox.service';
+import {
+  collectEvolutionMessageRows,
+  parseEvolutionMessagePayload,
+} from './evolution-message.parser';
 import { isEvolutionMessageWebhookEvent } from './evolution-webhook.constants';
 
 type EvolutionWebhookBody = {
@@ -14,6 +17,7 @@ type EvolutionWebhookBody = {
   instance?: string;
   instanceName?: string;
   data?: unknown;
+  [key: string]: unknown;
 };
 
 @Injectable()
@@ -28,17 +32,57 @@ export class EvolutionInboundService {
     private readonly inbox: EvolutionInboxService,
   ) {}
 
-  assertWebhookAuthorized(headerKey?: string) {
+  assertWebhookAuthorized(secretHeader?: string) {
     const secret = this.config.get<string>('EVOLUTION_WEBHOOK_SECRET')?.trim();
     if (!secret) return;
-    if (headerKey?.trim() !== secret) {
+    if (secretHeader?.trim() !== secret) {
       throw new ForbiddenException('Webhook não autorizado.');
     }
   }
 
+  async ingestMessagePayload(
+    instanceId: string,
+    data: unknown,
+  ): Promise<{ imported: number; total: number }> {
+    const instance = await this.instances.findOne({
+      where: { id: instanceId, active: true },
+      select: [
+        'id',
+        'name',
+        'instanceKey',
+        'baseUrl',
+        'apiKey',
+        'autoCreateLeads',
+        'defaultOwnerUserId',
+        'connectionState',
+      ],
+    });
+    if (!instance) throw new NotFoundException('Instância não encontrada.');
+
+    const parsed = parseEvolutionMessagePayload(data);
+    const ownerUserId = await this.resolveOwnerUserId(instance);
+    let imported = 0;
+    for (const message of parsed) {
+      const outcome = await this.inbox.ingestFromInstance(instance, {
+        ownerUserId,
+        parsed: message,
+      });
+      if (outcome.ingested) imported += 1;
+    }
+    return { imported, total: parsed.length };
+  }
+
   async handleWebhook(body: EvolutionWebhookBody) {
     const event = String(body.event ?? '').toLowerCase();
-    const instanceKey = String(body.instance ?? body.instanceName ?? '').trim();
+    const dataRecord =
+      body.data && typeof body.data === 'object' ? (body.data as Record<string, unknown>) : null;
+    const instanceKey = String(
+      body.instance ??
+        body.instanceName ??
+        dataRecord?.instance ??
+        dataRecord?.instanceName ??
+        '',
+    ).trim();
     if (!instanceKey) return { ok: true, ignored: 'sem instância' };
 
     const instance = await this.instances.findOne({
@@ -66,10 +110,19 @@ export class EvolutionInboundService {
       return { ok: true, ignored: event || 'evento não tratado' };
     }
 
-    const messages = this.extractMessages(body.data);
+    let messageSource: unknown = body.data;
+    if (!collectEvolutionMessageRows(messageSource).length) {
+      messageSource = body;
+    }
+    const messages = parseEvolutionMessagePayload(messageSource);
+    await this.inbox.backfillMessageMediaFromPayload(instance.id, messageSource);
     const ownerUserId = await this.resolveOwnerUserId(instance);
-    const results: Array<{ leadId: string | null; created: boolean; messageId: string | null }> =
-      [];
+    const results: Array<{
+      leadId: string | null;
+      created: boolean;
+      messageId: string | null;
+      ingested: boolean;
+    }> = [];
 
     for (const parsed of messages) {
       const outcome = await this.inbox.ingestFromInstance(instance, {
@@ -89,102 +142,6 @@ export class EvolutionInboundService {
     const phone = this.readConnectedPhone(data);
     if (phone) instance.connectedPhone = phone;
     await this.instances.save(instance);
-  }
-
-  private collectMessageRows(data: unknown): unknown[] {
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    if (typeof data !== 'object') return [];
-    const record = data as Record<string, unknown>;
-    if (Array.isArray(record.messages)) return record.messages;
-    if (record.key || record.message) return [data];
-    return [];
-  }
-
-  private messageTimestamp(item: Record<string, unknown>, key: Record<string, unknown>): Date {
-    const raw =
-      item.messageTimestamp ??
-      key.messageTimestamp ??
-      item.timestamp ??
-      (item.message as Record<string, unknown> | undefined)?.messageTimestamp;
-    const num = typeof raw === 'number' ? raw : Number(raw);
-    if (Number.isFinite(num) && num > 0) {
-      const ms = num > 1e12 ? num : num * 1000;
-      return new Date(ms);
-    }
-    return new Date();
-  }
-
-  private messageText(message: Record<string, unknown>): string {
-    const extended = message.extendedTextMessage as Record<string, unknown> | undefined;
-    const image = message.imageMessage as Record<string, unknown> | undefined;
-    const video = message.videoMessage as Record<string, unknown> | undefined;
-    const audio = message.audioMessage as Record<string, unknown> | undefined;
-    const document = message.documentMessage as Record<string, unknown> | undefined;
-
-    const candidates = [
-      message.conversation,
-      extended?.text,
-      image?.caption,
-      video?.caption,
-      document?.caption,
-      image ? '[imagem]' : null,
-      video ? '[vídeo]' : null,
-      audio ? '[áudio]' : null,
-      document ? '[documento]' : null,
-      message.stickerMessage ? '[figurinha]' : null,
-    ];
-
-    for (const item of candidates) {
-      const text = String(item ?? '').trim();
-      if (text) return text;
-    }
-
-    return '(mensagem)';
-  }
-
-  private extractMessages(data: unknown): ParsedEvolutionMessage[] {
-    const rows = this.collectMessageRows(data);
-    const output: ParsedEvolutionMessage[] = [];
-
-    for (const row of rows) {
-      if (!row || typeof row !== 'object') continue;
-      const item = row as Record<string, unknown>;
-      const key = (item.key ?? {}) as Record<string, unknown>;
-      const fromMe = Boolean(key.fromMe);
-      const jid = String(key.remoteJid ?? key.remoteJidAlt ?? key.participant ?? '');
-      const isGroup = jid.includes('@g.us') || jid.includes('@broadcast');
-      const phone = isGroup ? null : this.phoneFromJid(jid);
-      const externalId = String(
-        key.id ?? item.id ?? `${jid}-${this.messageTimestamp(item, key).getTime()}`,
-      );
-      const pushName = String(item.pushName ?? item.verifiedBizName ?? '').trim() || undefined;
-      const message = (item.message ?? {}) as Record<string, unknown>;
-
-      output.push({
-        fromMe,
-        phone,
-        remoteJid: jid,
-        pushName,
-        text: this.messageText(message),
-        externalId,
-        messageAt: this.messageTimestamp(item, key),
-        isGroup,
-      });
-    }
-
-    return output;
-  }
-
-  private phoneFromJid(jid: string): string | null {
-    const digits = jid.split('@')[0]?.replace(/\D/g, '') ?? '';
-    if (!digits) return null;
-    if (digits.length >= 12 && digits.startsWith('55')) {
-      const local = digits.slice(-11);
-      return isValidMobilePhone(local) ? local : digits;
-    }
-    const local = normalizeMobilePhone(digits);
-    return local || digits;
   }
 
   private readConnectionState(data: unknown): string | null {

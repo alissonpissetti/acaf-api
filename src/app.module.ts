@@ -60,6 +60,8 @@ import { AcafAssociationModule } from './acaf-association/acaf-association.modul
 import { EvolutionModule } from './evolution/evolution.module';
 import { EvolutionInstance } from './evolution/evolution-instance.entity';
 import { EvolutionMessage } from './evolution/evolution-message.entity';
+import { EvolutionContactProfile } from './evolution/evolution-contact-profile.entity';
+import { EvolutionInboxRead } from './evolution/evolution-inbox-read.entity';
 import { SystemSetting } from './system-settings/system-setting.entity';
 
 @Module({
@@ -121,6 +123,8 @@ import { SystemSetting } from './system-settings/system-setting.entity';
             PartnerOnboardingInvite,
             EvolutionInstance,
             EvolutionMessage,
+            EvolutionContactProfile,
+            EvolutionInboxRead,
             SystemSetting,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',

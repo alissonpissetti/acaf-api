@@ -1,9 +1,12 @@
 import { RequestMethod } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module';
+import { cleanupEvolutionContactProfilesForSync } from './database/pre-sync-evolution-cleanup';
 import { setupSwagger } from './swagger/setup-swagger';
 
 async function bootstrap() {
+  await cleanupEvolutionContactProfilesForSync();
   const app = await NestFactory.create(AppModule, { bodyParser: false });
 
   const express = await import('express');
@@ -17,6 +20,7 @@ async function bootstrap() {
     ],
   });
   app.enableCors();
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   setupSwagger(app);
 

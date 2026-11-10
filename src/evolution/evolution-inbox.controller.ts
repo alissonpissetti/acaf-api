@@ -1,9 +1,12 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RequirePermissions } from '../access-control/require-permissions.decorator';
 import { PermissionsGuard } from '../access-control/permissions.guard';
 import { EvolutionInboxService } from './evolution-inbox.service';
+
+type InboxAuthRequest = Request & { user?: { userId: string } };
 
 @ApiTags('Admin · Evolution Inbox')
 @ApiBearerAuth('admin-jwt')
@@ -14,18 +17,54 @@ export class EvolutionInboxController {
 
   @Get('threads')
   @RequirePermissions('sistema.evolution', 'comercial.leads')
-  listThreads(@Query('instanceId') instanceId?: string) {
-    return this.inbox.listThreads(instanceId ? { instanceId } : undefined);
+  listThreads(@Req() req: InboxAuthRequest, @Query('instanceId') instanceId?: string) {
+    const userId = req.user?.userId ?? '';
+    return this.inbox.listThreads(userId, instanceId ? { instanceId } : undefined);
+  }
+
+  @Get('threads/:instanceId/:contactPhone/avatar')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  async threadAvatar(
+    @Param('instanceId') instanceId: string,
+    @Param('contactPhone') contactPhone: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, mime } = await this.inbox.streamContactAvatar(instanceId, decodeURIComponent(contactPhone));
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    return new StreamableFile(buffer);
   }
 
   @Get('threads/:instanceId/:contactPhone/messages')
   @RequirePermissions('sistema.evolution', 'comercial.leads')
   listMessages(
+    @Req() req: InboxAuthRequest,
     @Param('instanceId') instanceId: string,
     @Param('contactPhone') contactPhone: string,
     @Query('limit') limit?: string,
   ) {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : 200;
-    return this.inbox.listThreadMessages(instanceId, contactPhone, Number.isFinite(parsedLimit) ? parsedLimit : 200);
+    const userId = req.user?.userId ?? null;
+    return this.inbox.listThreadMessages(
+      userId,
+      instanceId,
+      decodeURIComponent(contactPhone),
+      Number.isFinite(parsedLimit) ? parsedLimit : 200,
+    );
+  }
+
+  @Get('messages/:messageId/media')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  async messageMedia(
+    @Param('messageId') messageId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, mime, fileName } = await this.inbox.getMessageMedia(messageId);
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    if (fileName) {
+      res.setHeader('Content-Disposition', `inline; filename="${fileName.replace(/"/g, '')}"`);
+    }
+    return new StreamableFile(buffer);
   }
 }
