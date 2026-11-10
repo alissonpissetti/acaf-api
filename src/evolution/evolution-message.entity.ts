@@ -67,6 +67,9 @@ export class EvolutionMessage {
   @Column({ name: 'external_id', type: 'varchar', length: 128 })
   externalId: string;
 
+  @Column({ name: 'reaction_target_external_id', type: 'varchar', length: 128, nullable: true })
+  reactionTargetExternalId: string | null;
+
   @Column({ name: 'lead_id', type: 'uuid', nullable: true })
   leadId: string | null;
 

@@ -183,7 +183,6 @@ export function bodyTextFromWhatsAppMessage(message: Record<string, unknown>): s
     location?.address,
     document?.title,
     document?.fileName,
-    reaction?.text ? `Reação: ${String(reaction.text)}` : null,
     ...captions,
   ];
 
@@ -193,4 +192,52 @@ export function bodyTextFromWhatsAppMessage(message: Record<string, unknown>): s
   }
 
   return '';
+}
+
+export function extractWhatsAppReaction(
+  message: Record<string, unknown>,
+): { emoji: string; targetExternalId: string; remove: boolean } | null {
+  const core = unwrapWhatsAppMessageNode(message);
+  const reaction = core.reactionMessage as Record<string, unknown> | undefined;
+  if (!reaction) return null;
+  const targetKey = (reaction.key ?? {}) as Record<string, unknown>;
+  const targetExternalId = String(
+    targetKey.id ?? targetKey.stanzaId ?? reaction.stanzaId ?? reaction.msgId ?? '',
+  ).trim();
+  if (!targetExternalId) return null;
+  const emoji = String(reaction.text ?? reaction.emoji ?? '').trim();
+  return { emoji, targetExternalId, remove: !emoji };
+}
+
+export function isReactionPlaceholderBody(body: string | null | undefined): boolean {
+  const text = String(body ?? '').trim();
+  if (!text) return false;
+  if (/^rea[cç][aã]o:\s*.+/i.test(text)) return true;
+  if (/^reaction:\s*.+/i.test(text)) return true;
+  if (/^[^:\n]{2,48}:\s*rea[cç][aã]o:\s*.+/i.test(text)) return true;
+  return false;
+}
+
+export function reactionEmojiFromPlaceholderBody(body: string | null | undefined): string | null {
+  let text = String(body ?? '').trim();
+  if (!text) return null;
+  text = text.replace(/^[^:\n]{2,48}:\s*/u, '').trim();
+  text = text.replace(/^rea[cç][aã]o:\s*/i, '').replace(/^reaction:\s*/i, '').trim();
+  return text || null;
+}
+
+export function extractReactionTargetFromPayloadJson(payloadJson: string | null | undefined): string | null {
+  if (!payloadJson?.trim()) return null;
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    const key = (payload.key ?? {}) as Record<string, unknown>;
+    const { inner, rawMessage } = resolveMessageEnvelope(payload, key);
+    return (
+      extractWhatsAppReaction(inner)?.targetExternalId ??
+      extractWhatsAppReaction(rawMessage)?.targetExternalId ??
+      null
+    );
+  } catch {
+    return null;
+  }
 }

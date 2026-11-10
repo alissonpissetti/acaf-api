@@ -7,7 +7,10 @@ import {
 } from './evolution-contact.resolver';
 import {
   bodyTextFromWhatsAppMessage,
+  buildEvolutionMediaPayload,
   extractEvolutionMedia,
+  extractWhatsAppReaction,
+  isReactionPlaceholderBody,
   resolveMessageEnvelope,
 } from './evolution-message-media';
 
@@ -79,7 +82,42 @@ export function parseEvolutionMessageRow(row: unknown): ParsedEvolutionMessage |
     item.message ? item : { ...item, message: key.message },
     key,
   );
-  const { inner } = resolveMessageEnvelope(item, key);
+  const { inner, rawMessage } = resolveMessageEnvelope(item, key);
+  const reactionInfo =
+    extractWhatsAppReaction(inner) ||
+    extractWhatsAppReaction(rawMessage) ||
+    extractWhatsAppReaction((item.message ?? {}) as Record<string, unknown>);
+  if (reactionInfo?.targetExternalId) {
+    const senderName =
+      resolved.isGroup && !fromMe
+        ? extractPushName(item, false) ?? extractParticipantLabel(item, key)
+        : null;
+    const senderJid = resolved.isGroup && !fromMe
+      ? String(key.participant ?? key.participantAlt ?? '').trim() || null
+      : null;
+    const remoteJid = resolved.isGroup ? resolved.remoteJid : String(key.remoteJid ?? resolved.remoteJid);
+    return {
+      fromMe,
+      phone: resolved.phone,
+      contactKey: resolved.contactKey,
+      remoteJid,
+      pushName,
+      groupName: groupName ?? null,
+      text: reactionInfo.emoji,
+      externalId,
+      messageAt: messageTimestamp(item, key),
+      isGroup: resolved.isGroup,
+      mediaKind: 'reaction',
+      mediaPayload: buildEvolutionMediaPayload({ ...item, message: rawMessage }, key),
+      mediaMimeType: null,
+      senderName: senderName ?? null,
+      senderJid,
+      isReaction: true,
+      reactionTargetExternalId: reactionInfo.targetExternalId,
+      reactionRemove: reactionInfo.remove,
+    };
+  }
+
   let text =
     bodyTextFromWhatsAppMessage(inner) ||
     bodyTextFromWhatsAppMessage((item.message ?? {}) as Record<string, unknown>);
@@ -102,6 +140,10 @@ export function parseEvolutionMessageRow(row: unknown): ParsedEvolutionMessage |
     text = fallback[media.kind] ?? '(mensagem)';
   }
   if (!text) text = '(mensagem)';
+
+  if (!reactionInfo && isReactionPlaceholderBody(text)) {
+    return null;
+  }
 
   const jidForApi = [String(key.remoteJid ?? ''), String(key.remoteJidAlt ?? item.remoteJidAlt ?? '')]
     .map((value) => value.trim())

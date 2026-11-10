@@ -21,7 +21,13 @@ import {
   resolveInboxContactPresentation,
 } from './evolution-contact.resolver';
 import { parseEvolutionMessagePayload } from './evolution-message.parser';
-import { bodyTextFromWhatsAppMessage, resolveMessageEnvelope } from './evolution-message-media';
+import {
+  bodyTextFromWhatsAppMessage,
+  extractReactionTargetFromPayloadJson,
+  isReactionPlaceholderBody,
+  reactionEmojiFromPlaceholderBody,
+  resolveMessageEnvelope,
+} from './evolution-message-media';
 import { EvolutionRemoteMediaService } from './evolution-remote-media.service';
 import { EvolutionRemoteContactsService } from './evolution-remote-contacts.service';
 import { EvolutionContactProfile } from './evolution-contact-profile.entity';
@@ -30,6 +36,7 @@ import { EvolutionInboxRealtimeService } from './evolution-inbox-realtime.servic
 import { EvolutionMessageMediaStorageService } from './evolution-message-media-storage.service';
 import type { LidPhoneAlias } from './evolution-remote-contacts.service';
 import { normalizeMobilePhone, isValidMobilePhone } from '../users/person.utils';
+import { resolveYouTubeVideoId } from './youtube-link';
 
 export type ParsedEvolutionMessage = {
   fromMe: boolean;
@@ -47,6 +54,9 @@ export type ParsedEvolutionMessage = {
   mediaMimeType: string | null;
   senderName?: string | null;
   senderJid?: string | null;
+  isReaction?: boolean;
+  reactionTargetExternalId?: string | null;
+  reactionRemove?: boolean;
 };
 
 export type EvolutionInboxThreadDto = {
@@ -73,6 +83,12 @@ export type EvolutionInboxThreadDto = {
   unreadCount: number;
 };
 
+export type EvolutionInboxMessageReactionDto = {
+  emoji: string;
+  senderName: string | null;
+  direction: 'in' | 'out';
+};
+
 export type EvolutionInboxMessageDto = {
   id: string;
   direction: 'in' | 'out';
@@ -83,6 +99,7 @@ export type EvolutionInboxMessageDto = {
   leadId: string | null;
   mediaKind: string | null;
   hasMedia: boolean;
+  reactions: EvolutionInboxMessageReactionDto[];
 };
 
 @Injectable()
@@ -130,6 +147,14 @@ export class EvolutionInboxService {
       return { leadId: null, created: false, messageId: null, ingested: false };
     }
     parsed.contactKey = ingestContactKey;
+
+    if (parsed.isReaction && parsed.reactionTargetExternalId) {
+      return this.ingestReactionMessage(instance, parsed);
+    }
+
+    if (isReactionPlaceholderBody(parsed.text)) {
+      return { leadId: null, created: false, messageId: null, ingested: false };
+    }
 
     const duplicate = await this.messages.findOne({
       where: { instanceId: instance.id, externalId: parsed.externalId },
@@ -203,7 +228,7 @@ export class EvolutionInboxService {
         remoteJid: parsed.remoteJid,
         leadId,
       });
-      this.publishInboxActivity(instance.id, parsed.contactKey, duplicate.id, false);
+      await this.publishInboxActivity(instance.id, parsed.contactKey, duplicate.id, false);
       return { leadId, created: false, messageId: duplicate.id, ingested: false };
     }
 
@@ -252,21 +277,293 @@ export class EvolutionInboxService {
       this.queueMessageMediaPersist(saved.id);
     }
 
-    this.publishInboxActivity(instance.id, parsed.contactKey, saved.id, true);
+    await this.publishInboxActivity(instance.id, parsed.contactKey, saved.id, true);
     return { leadId, created, messageId: saved.id, ingested: true };
   }
 
-  private publishInboxActivity(
+  private mapMessageRowToDto(
+    row: EvolutionMessage,
+    reactions: EvolutionInboxMessageReactionDto[] = [],
+  ): EvolutionInboxMessageDto {
+    return {
+      id: row.id,
+      direction: row.direction,
+      body: this.formatMessageBodyForInbox(row),
+      contactName: isHumanContactName(row.contactName) ? row.contactName : null,
+      senderName: row.senderName?.trim() || this.inferGroupSenderNameFromBody(row.body) || null,
+      messageAt: row.messageAt.toISOString(),
+      leadId: row.leadId,
+      mediaKind: row.mediaKind,
+      hasMedia: Boolean(row.mediaKind && (row.mediaPayload || row.mediaStoragePath)),
+      reactions,
+    };
+  }
+
+  private isReactionMessageRow(row: EvolutionMessage): boolean {
+    if (row.mediaKind === 'reaction') return true;
+    if (row.reactionTargetExternalId?.trim()) return true;
+    return isReactionPlaceholderBody(row.body);
+  }
+
+  private parseReactionFromRow(row: EvolutionMessage): EvolutionInboxMessageReactionDto | null {
+    if (!this.isReactionMessageRow(row)) return null;
+
+    const emoji =
+      reactionEmojiFromPlaceholderBody(row.body) ||
+      (row.mediaKind === 'reaction' ? String(row.body ?? '').trim() : null);
+    if (!emoji || emoji === '(mensagem)') return null;
+
+    return {
+      emoji,
+      senderName: row.senderName?.trim() || this.inferGroupSenderNameFromBody(row.body) || null,
+      direction: row.direction,
+    };
+  }
+
+  private reactionKeysMatch(targetKey: string, messageExternalId: string): boolean {
+    const target = String(targetKey ?? '').trim();
+    const external = String(messageExternalId ?? '').trim();
+    if (!target || !external) return false;
+    if (target === external) return true;
+    if (external.endsWith(target) || target.endsWith(external)) return true;
+    if (external.includes(target) || target.includes(external)) return true;
+    return false;
+  }
+
+  private reactionsForMessage(
+    externalId: string,
+    reactionsByTarget: Map<string, EvolutionInboxMessageReactionDto[]>,
+  ): EvolutionInboxMessageReactionDto[] {
+    const merged = new Map<string, EvolutionInboxMessageReactionDto>();
+    for (const [targetId, list] of reactionsByTarget) {
+      if (!this.reactionKeysMatch(targetId, externalId)) continue;
+      for (const item of list) {
+        const key = `${item.emoji}:${item.senderName ?? ''}:${item.direction}`;
+        if (!merged.has(key)) merged.set(key, item);
+      }
+    }
+    return [...merged.values()];
+  }
+
+  private reactionTargetExternalIdFromRow(row: EvolutionMessage): string | null {
+    const direct = String(row.reactionTargetExternalId ?? '').trim();
+    if (direct) return direct;
+    return extractReactionTargetFromPayloadJson(row.mediaPayload);
+  }
+
+  private buildThreadMessageList(rows: EvolutionMessage[]): EvolutionInboxMessageDto[] {
+    const chatRows: EvolutionMessage[] = [];
+    const reactionRows: EvolutionMessage[] = [];
+    const reactionsByTarget = new Map<string, EvolutionInboxMessageReactionDto[]>();
+
+    for (const row of rows) {
+      if (this.isReactionMessageRow(row)) {
+        reactionRows.push(row);
+        const targetId = this.reactionTargetExternalIdFromRow(row);
+        const reaction = this.parseReactionFromRow(row);
+        if (reaction && targetId) {
+          const bucket = reactionsByTarget.get(targetId) ?? [];
+          bucket.push(reaction);
+          reactionsByTarget.set(targetId, bucket);
+        }
+        continue;
+      }
+      chatRows.push(row);
+    }
+
+  for (const orphan of reactionRows) {
+      if (this.reactionTargetExternalIdFromRow(orphan)) continue;
+      const reaction = this.parseReactionFromRow(orphan);
+      if (!reaction) continue;
+      const target = [...chatRows]
+        .filter((message) => message.messageAt.getTime() <= orphan.messageAt.getTime())
+        .sort((a, b) => b.messageAt.getTime() - a.messageAt.getTime())[0];
+      if (!target) continue;
+      const bucket = reactionsByTarget.get(target.externalId) ?? [];
+      bucket.push(reaction);
+      reactionsByTarget.set(target.externalId, bucket);
+    }
+
+    if (!chatRows.length) {
+      throw new NotFoundException('Nenhuma mensagem nesta conversa.');
+    }
+
+    return chatRows.map((row) =>
+      this.mapMessageRowToDto(row, this.reactionsForMessage(row.externalId, reactionsByTarget)),
+    );
+  }
+
+  async repairReactionMessages(
+    instanceId: string,
+    limit = 3000,
+    contactPhones?: string[],
+  ): Promise<number> {
+    const contactFilter = (contactPhones ?? [])
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean);
+    const rows = await this.messages.find({
+      where: {
+        instanceId,
+        ...(contactFilter.length ? { contactPhone: In(contactFilter) } : {}),
+      },
+      order: { messageAt: 'DESC' },
+      take: limit,
+    });
+
+    let updated = 0;
+    const byExternal = new Map(rows.map((row) => [row.externalId, row]));
+
+    for (const row of rows) {
+      if (!this.isReactionMessageRow(row)) continue;
+
+      const target =
+        this.reactionTargetExternalIdFromRow(row) ??
+        (() => {
+          const prior = rows
+            .filter(
+              (message) =>
+                !this.isReactionMessageRow(message) &&
+                message.contactPhone === row.contactPhone &&
+                message.messageAt.getTime() <= row.messageAt.getTime(),
+            )
+            .sort((a, b) => b.messageAt.getTime() - a.messageAt.getTime())[0];
+          return prior?.externalId ?? null;
+        })();
+
+      const emoji = reactionEmojiFromPlaceholderBody(row.body) || String(row.body ?? '').trim();
+      const patch: Partial<EvolutionMessage> = {
+        mediaKind: 'reaction',
+        body: emoji.slice(0, 2000),
+      };
+      if (target && !row.reactionTargetExternalId) {
+        patch.reactionTargetExternalId = target;
+      }
+
+      const shouldUpdate =
+        row.mediaKind !== 'reaction' ||
+        (target && row.reactionTargetExternalId !== target) ||
+        row.body !== patch.body;
+
+      if (!shouldUpdate) continue;
+
+      await this.messages.update({ id: row.id }, patch);
+      updated += 1;
+
+      if (target && byExternal.has(target)) {
+        /* vínculo persistido */
+      }
+    }
+
+    return updated;
+  }
+
+  private async ingestReactionMessage(
+    instance: EvolutionInstance,
+    parsed: ParsedEvolutionMessage,
+  ): Promise<{
+    leadId: string | null;
+    created: boolean;
+    messageId: string | null;
+    ingested: boolean;
+  }> {
+    const targetId = String(parsed.reactionTargetExternalId ?? '').trim();
+    if (!targetId) {
+      return { leadId: null, created: false, messageId: null, ingested: false };
+    }
+
+    const removePrior = this.messages
+      .createQueryBuilder()
+      .delete()
+      .from(EvolutionMessage)
+      .where('instance_id = :instanceId', { instanceId: instance.id })
+      .andWhere('media_kind = :kind', { kind: 'reaction' })
+      .andWhere('reaction_target_external_id = :targetId', { targetId: targetId });
+
+    if (parsed.senderJid?.trim()) {
+      removePrior.andWhere('sender_jid = :senderJid', { senderJid: parsed.senderJid.trim() });
+    } else if (parsed.fromMe) {
+      removePrior.andWhere("direction = 'out'");
+    } else {
+      removePrior.andWhere("direction = 'in'").andWhere('(sender_jid IS NULL OR sender_jid = \'\')');
+    }
+    await removePrior.execute();
+
+    const duplicate = await this.messages.findOne({
+      where: { instanceId: instance.id, externalId: parsed.externalId },
+    });
+
+    if (parsed.reactionRemove || !parsed.text.trim()) {
+      if (duplicate) await this.messages.delete({ id: duplicate.id });
+      await this.publishInboxActivity(instance.id, parsed.contactKey, null, true);
+      return { leadId: null, created: false, messageId: duplicate?.id ?? null, ingested: true };
+    }
+
+    if (duplicate) {
+      await this.messages.update(
+        { id: duplicate.id },
+        {
+          body: parsed.text.slice(0, 2000),
+          reactionTargetExternalId: targetId,
+          mediaKind: 'reaction',
+          senderName: parsed.senderName ?? null,
+          senderJid: parsed.senderJid ?? null,
+        },
+      );
+      await this.publishInboxActivity(instance.id, parsed.contactKey, duplicate.id, false);
+      return { leadId: null, created: false, messageId: duplicate.id, ingested: false };
+    }
+
+    const saved = await this.messages.save(
+      this.messages.create({
+        instanceId: instance.id,
+        contactPhone: parsed.contactKey,
+        contactName: parsed.isGroup && !parsed.fromMe ? parsed.senderName ?? null : null,
+        senderName: parsed.senderName ?? null,
+        senderJid: parsed.senderJid ?? null,
+        remoteJid: parsed.remoteJid,
+        direction: parsed.fromMe ? 'out' : 'in',
+        body: parsed.text.slice(0, 2000),
+        externalId: parsed.externalId,
+        reactionTargetExternalId: targetId,
+        leadId: null,
+        messageAt: parsed.messageAt,
+        mediaKind: 'reaction',
+        mediaPayload: parsed.mediaPayload,
+        mediaMimeType: null,
+      }),
+    );
+
+    await this.publishInboxActivity(instance.id, parsed.contactKey, saved.id, true);
+    return { leadId: null, created: true, messageId: saved.id, ingested: true };
+  }
+
+  private async publishInboxActivity(
     instanceId: string,
     contactKey: string,
     messageId: string | null,
     ingested: boolean,
-  ) {
+  ): Promise<void> {
+    const contactPhones = await this.resolveThreadContactKeys(instanceId, contactKey);
+    let message: EvolutionInboxMessageDto | null = null;
+    if (messageId) {
+      const row = await this.messages.findOne({ where: { id: messageId } });
+      if (row) {
+        const hideReactionRow =
+          row.mediaKind === 'reaction' ||
+          Boolean(row.reactionTargetExternalId?.trim()) ||
+          isReactionPlaceholderBody(row.body);
+        if (!hideReactionRow) {
+          message = this.mapMessageRowToDto(row);
+        }
+      }
+    }
     this.inboxRealtime.notifyThreadActivity({
       instanceId,
       contactPhone: contactKey,
+      contactPhones,
       messageId,
       ingested,
+      message,
     });
   }
 
@@ -462,7 +759,7 @@ export class EvolutionInboxService {
     );
   }
 
-  private async resolveThreadContactKeys(instanceId: string, contactKey: string): Promise<string[]> {
+  async resolveThreadContactKeys(instanceId: string, contactKey: string): Promise<string[]> {
     const keys = new Set<string>([contactKey]);
 
     const siblingRows = await this.messages
@@ -535,7 +832,8 @@ export class EvolutionInboxService {
       .createQueryBuilder('m')
       .where('m.instance_id = :instanceId', { instanceId })
       .andWhere('m.contact_phone IN (:...keys)', { keys })
-      .andWhere("m.direction = 'in'");
+      .andWhere("m.direction = 'in'")
+      .andWhere("(m.media_kind IS NULL OR m.media_kind <> 'reaction')");
 
     if (read?.lastReadAt) {
       qb.andWhere('m.message_at > :since', { since: read.lastReadAt });
@@ -570,6 +868,7 @@ export class EvolutionInboxService {
       .addSelect('MAX(lm.message_at)', 'maxAt')
       .where("lm.contact_phone IS NOT NULL AND TRIM(lm.contact_phone) <> ''")
       .andWhere("lm.contact_phone NOT IN ('unknown', '-')")
+      .andWhere("(lm.media_kind IS NULL OR lm.media_kind <> 'reaction')")
       .groupBy('lm.instance_id')
       .addGroupBy('lm.contact_phone');
 
@@ -640,22 +939,24 @@ export class EvolutionInboxService {
         contactPhone,
         contactPhoneLabel,
       );
+      const isGroup = isGroupContactKey(contactPhone);
       const presentation = resolveInboxContactPresentation({
         contactKey: contactPhone,
         displayName: contactDisplayName,
-        phoneLabel: contactPhoneLabel,
+        phoneLabel: isGroup ? null : contactPhoneLabel,
         instanceName: latest.instance?.name ?? 'WhatsApp',
         leadTitle,
         leadContactName: lead?.contactName ?? null,
         leadPhone: lead?.phone ?? null,
       });
-      const contactSubtitle =
-        presentation.subtitle ??
-        this.buildThreadSubtitle(
-          latest.instance?.name ?? 'WhatsApp',
-          contactPhoneLabel,
-          contactDisplayName,
-        );
+      const contactSubtitle = isGroup
+        ? presentation.subtitle
+        : presentation.subtitle ??
+          this.buildThreadSubtitle(
+            latest.instance?.name ?? 'WhatsApp',
+            contactPhoneLabel,
+            contactDisplayName,
+          );
       const avatarStored = Boolean(profile?.avatarStoragePath);
       const proxyPath = avatarStored
         ? `/api/admin/evolution/inbox/threads/${latest.instanceId}/${encodeURIComponent(contactPhone)}/avatar`
@@ -674,7 +975,7 @@ export class EvolutionInboxService {
         contactName: isHumanContactName(latest.contactName) ? latest.contactName : null,
         contactDisplayName: presentation.title,
         contactSubtitle,
-        contactPhoneLabel: presentation.phoneLine ?? contactPhoneLabel,
+        contactPhoneLabel: isGroup ? null : presentation.phoneLine ?? contactPhoneLabel,
         contactKind: presentation.kind,
         contactNameLine: presentation.nameLine,
         contactPhoneLine: presentation.phoneLine,
@@ -719,21 +1020,17 @@ export class EvolutionInboxService {
       take: limit,
     });
 
-    if (!rows.length) throw new NotFoundException('Nenhuma mensagem nesta conversa.');
+    await this.repairReactionMessages(instanceId, Math.max(limit, 400), contactKeys);
 
-    const chronological = [...rows].reverse();
+    const refreshed = await this.messages.find({
+      where: { instanceId, contactPhone: In(contactKeys) },
+      order: { messageAt: 'DESC' },
+      take: limit,
+    });
 
-    return chronological.map((row) => ({
-      id: row.id,
-      direction: row.direction,
-      body: this.formatMessageBodyForInbox(row),
-      contactName: isHumanContactName(row.contactName) ? row.contactName : null,
-      senderName: row.senderName?.trim() || this.inferGroupSenderNameFromBody(row.body) || null,
-      messageAt: row.messageAt.toISOString(),
-      leadId: row.leadId,
-      mediaKind: row.mediaKind,
-      hasMedia: Boolean(row.mediaKind && (row.mediaPayload || row.mediaStoragePath)),
-    }));
+    const chronological = [...refreshed].reverse();
+
+    return this.buildThreadMessageList(chronological);
   }
 
   async applyPushNamesFromPayload(instanceId: string, data: unknown): Promise<number> {
@@ -1058,6 +1355,7 @@ export class EvolutionInboxService {
     await this.repairAvatarProfileLinks(instanceId);
     await this.backfillGroupThreadNames(instanceId);
     await this.backfillMessageBodiesFromPayload(instanceId);
+    await this.repairReactionMessages(instanceId);
     return { updated, avatars, avatarsStored };
   }
 
@@ -1126,6 +1424,30 @@ export class EvolutionInboxService {
 
     let updated = 0;
     for (const row of rows) {
+      const legacyReaction = isReactionPlaceholderBody(row.body);
+      if (legacyReaction || row.mediaKind === 'reaction') {
+        const target = this.reactionTargetExternalIdFromRow(row);
+        const emoji =
+          reactionEmojiFromPlaceholderBody(row.body) ||
+          (row.mediaKind === 'reaction' ? String(row.body ?? '').trim() : null);
+        if (target && emoji) {
+          const patch: Partial<EvolutionMessage> = {
+            mediaKind: 'reaction',
+            reactionTargetExternalId: target,
+            body: emoji.slice(0, 2000),
+          };
+          if (
+            row.mediaKind !== 'reaction' ||
+            row.reactionTargetExternalId !== target ||
+            row.body !== patch.body
+          ) {
+            await this.messages.update({ id: row.id }, patch);
+            updated += 1;
+          }
+        }
+        continue;
+      }
+
       if (!this.isInboxBodyPlaceholder(row.body)) continue;
       const recovered = this.extractBodyTextFromStoredMessage(row);
       if (!recovered || recovered === row.body) continue;
@@ -1304,6 +1626,46 @@ export class EvolutionInboxService {
     const buffer = Buffer.from(await response.arrayBuffer());
     const mime = response.headers.get('content-type')?.trim() || 'image/jpeg';
     return { buffer, mime };
+  }
+
+  async youtubeLinkPreview(url: string): Promise<{
+    videoId: string;
+    title: string;
+    thumbnailUrl: string;
+    watchUrl: string;
+  }> {
+    const videoId = resolveYouTubeVideoId(url);
+    if (!videoId) {
+      throw new NotFoundException('Link do YouTube inválido.');
+    }
+
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const fallbackThumb = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+
+    try {
+      const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`;
+      const response = await fetch(oembedUrl, {
+        headers: { Accept: 'application/json' },
+      });
+      if (response.ok) {
+        const data = (await response.json()) as { title?: string; thumbnail_url?: string };
+        return {
+          videoId,
+          title: String(data.title ?? '').trim() || 'Vídeo no YouTube',
+          thumbnailUrl: String(data.thumbnail_url ?? '').trim() || fallbackThumb,
+          watchUrl,
+        };
+      }
+    } catch {
+      /* usa fallback */
+    }
+
+    return {
+      videoId,
+      title: 'Vídeo no YouTube',
+      thumbnailUrl: fallbackThumb,
+      watchUrl,
+    };
   }
 
   async getMessageMedia(

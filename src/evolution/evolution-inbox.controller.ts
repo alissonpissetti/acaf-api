@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -35,6 +35,18 @@ export class EvolutionInboxController {
     return new StreamableFile(buffer);
   }
 
+  @Post('threads/:instanceId/:contactPhone/read')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  async markThreadRead(
+    @Req() req: InboxAuthRequest,
+    @Param('instanceId') instanceId: string,
+    @Param('contactPhone') contactPhone: string,
+  ) {
+    const userId = req.user?.userId ?? '';
+    await this.inbox.markThreadRead(userId, instanceId, decodeURIComponent(contactPhone));
+    return { ok: true };
+  }
+
   @Get('threads/:instanceId/:contactPhone/messages')
   @RequirePermissions('sistema.evolution', 'comercial.leads')
   listMessages(
@@ -51,6 +63,12 @@ export class EvolutionInboxController {
       decodeURIComponent(contactPhone),
       Number.isFinite(parsedLimit) ? parsedLimit : 200,
     );
+  }
+
+  @Get('link-preview/youtube')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  youtubeLinkPreview(@Query('url') url?: string) {
+    return this.inbox.youtubeLinkPreview(url ?? '');
   }
 
   @Get('messages/:messageId/media')

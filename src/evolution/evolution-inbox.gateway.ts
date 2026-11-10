@@ -11,10 +11,11 @@ import {
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Server, Socket } from 'socket.io';
-import { UserRole, userHasRole } from '../users/user.entity';
+import type { UserRole } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import { PermissionsService } from '../access-control/access-control.service';
 import { EvolutionInboxRealtimeService } from './evolution-inbox-realtime.service';
+import { EvolutionInboxService } from './evolution-inbox.service';
 
 type JwtPayload = {
   sub: string;
@@ -49,6 +50,7 @@ export class EvolutionInboxGateway
     private readonly users: UsersService,
     private readonly permissions: PermissionsService,
     private readonly realtime: EvolutionInboxRealtimeService,
+    private readonly inbox: EvolutionInboxService,
   ) {}
 
   afterInit(server: Server) {
@@ -77,7 +79,7 @@ export class EvolutionInboxGateway
   }
 
   @SubscribeMessage('subscribe_thread')
-  handleSubscribeThread(
+  async handleSubscribeThread(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: SubscribeThreadBody,
   ) {
@@ -86,21 +88,35 @@ export class EvolutionInboxGateway
     const contactPhone = String(body?.contactPhone ?? '').trim();
     if (!instanceId || !contactPhone) return { ok: false, error: 'dados inválidos' };
 
-    const room = EvolutionInboxRealtimeService.threadRoom(instanceId, contactPhone);
-    client.join(room);
-    return { ok: true, room };
+    const keys = await this.inbox.resolveThreadContactKeys(instanceId, contactPhone);
+    const rooms = keys.map((key) => EvolutionInboxRealtimeService.threadRoom(instanceId, key));
+    for (const room of rooms) {
+      client.join(room);
+    }
+    client.data.subscribedThreadRooms = rooms;
+    return { ok: true, rooms: keys };
   }
 
   @SubscribeMessage('unsubscribe_thread')
-  handleUnsubscribeThread(
+  async handleUnsubscribeThread(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: SubscribeThreadBody,
   ) {
     const instanceId = String(body?.instanceId ?? '').trim();
     const contactPhone = String(body?.contactPhone ?? '').trim();
     if (!instanceId || !contactPhone) return { ok: false };
-    const room = EvolutionInboxRealtimeService.threadRoom(instanceId, contactPhone);
-    client.leave(room);
+
+    const prevRooms = (client.data.subscribedThreadRooms as string[] | undefined) ?? [];
+    for (const room of prevRooms) {
+      client.leave(room);
+    }
+    client.data.subscribedThreadRooms = [];
+
+    const keys = await this.inbox.resolveThreadContactKeys(instanceId, contactPhone);
+    const rooms = keys.map((key) => EvolutionInboxRealtimeService.threadRoom(instanceId, key));
+    for (const room of rooms) {
+      client.leave(room);
+    }
     return { ok: true };
   }
 
@@ -128,9 +144,6 @@ export class EvolutionInboxGateway
       const payload = this.jwt.verify<JwtPayload>(token);
       const user = await this.users.findById(payload.sub);
       if (!user?.active) return null;
-      if (!userHasRole(user, UserRole.ADMIN)) {
-        return null;
-      }
       return user.id;
     } catch (err) {
       this.logger.debug(`WebSocket auth failed: ${err instanceof Error ? err.message : 'unknown'}`);

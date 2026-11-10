@@ -345,12 +345,13 @@ export function resolveInboxContactPresentation(input: {
     const title = isPlausibleGroupTitle(input.displayName)
       ? String(input.displayName).trim()
       : groupLabelFromKey(contactKey);
+    const instance = String(input.instanceName ?? '').trim();
     return {
       kind: 'named',
       title,
-      nameLine: title,
+      nameLine: null,
       phoneLine: null,
-      subtitle: [input.instanceName, 'Grupo'].filter(Boolean).join(' · '),
+      subtitle: instance ? `Grupo · ${instance}` : 'Grupo',
       badge: 'Grupo',
       isPrivateContact: false,
     };
