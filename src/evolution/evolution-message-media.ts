@@ -150,6 +150,103 @@ export function extractEvolutionMedia(
   return null;
 }
 
+export type WhatsAppQuotedPreview = {
+  externalId: string | null;
+  participant: string | null;
+  body: string;
+  mediaKind: string | null;
+};
+
+const MEDIA_FALLBACK_LABELS: Record<string, string> = {
+  image: '[imagem]',
+  video: '[vídeo]',
+  audio: '[áudio]',
+  document: '[documento]',
+  sticker: '[figurinha]',
+};
+
+function contextInfoWithQuote(core: Record<string, unknown>): Record<string, unknown> | null {
+  const direct = core.contextInfo as Record<string, unknown> | undefined;
+  if (direct?.quotedMessage) return direct;
+
+  const carriers = [
+    'extendedTextMessage',
+    'imageMessage',
+    'videoMessage',
+    'audioMessage',
+    'documentMessage',
+    'stickerMessage',
+    'buttonsMessage',
+    'listMessage',
+    'templateMessage',
+    'productMessage',
+  ];
+  for (const field of carriers) {
+    const part = core[field] as Record<string, unknown> | undefined;
+    const ctx = part?.contextInfo as Record<string, unknown> | undefined;
+    if (ctx?.quotedMessage) return ctx;
+  }
+  return null;
+}
+
+export function extractWhatsAppQuotedPreview(
+  message: Record<string, unknown>,
+): WhatsAppQuotedPreview | null {
+  if (!message || typeof message !== 'object') return null;
+  const core = unwrapWhatsAppMessageNode(message);
+  const contextInfo = contextInfoWithQuote(core);
+  if (!contextInfo) return null;
+
+  const quotedRaw = contextInfo.quotedMessage as Record<string, unknown> | undefined;
+  if (!quotedRaw || typeof quotedRaw !== 'object') return null;
+
+  const quotedCore = unwrapWhatsAppMessageNode(quotedRaw);
+  let body =
+    bodyTextFromWhatsAppMessage(quotedCore) || bodyTextFromWhatsAppMessage(quotedRaw);
+  let mediaKind: string | null = null;
+
+  if (!body) {
+    for (const { kind, field } of MEDIA_FIELDS) {
+      if (quotedCore[field]) {
+        mediaKind = kind;
+        body = MEDIA_FALLBACK_LABELS[kind] ?? '[mídia]';
+        break;
+      }
+    }
+  }
+  if (!body) body = '(mensagem)';
+
+  const externalId = String(
+    contextInfo.stanzaId ??
+      contextInfo.quotedStanzaId ??
+      (contextInfo.quotedMessage as Record<string, unknown> | undefined)?.stanzaId ??
+      '',
+  ).trim();
+
+  const participant = String(contextInfo.participant ?? '').trim();
+
+  return {
+    externalId: externalId || null,
+    participant: participant || null,
+    body: body.slice(0, 400),
+    mediaKind,
+  };
+}
+
+export function extractQuotedPreviewFromStoredPayload(
+  payloadJson: string | null | undefined,
+): WhatsAppQuotedPreview | null {
+  if (!payloadJson?.trim()) return null;
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    const key = (payload.key ?? {}) as Record<string, unknown>;
+    const { inner, rawMessage } = resolveMessageEnvelope(payload, key);
+    return extractWhatsAppQuotedPreview(inner) || extractWhatsAppQuotedPreview(rawMessage);
+  } catch {
+    return null;
+  }
+}
+
 export function bodyTextFromWhatsAppMessage(message: Record<string, unknown>): string {
   const core = unwrapWhatsAppMessageNode(message);
   const extended = core.extendedTextMessage as Record<string, unknown> | undefined;

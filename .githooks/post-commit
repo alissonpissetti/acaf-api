@@ -1,0 +1,6 @@
+#!/bin/sh
+# Registra entrada amigável no changelog após cada commit.
+ROOT="$(git rev-parse --show-toplevel)"
+if [ -f "$ROOT/scripts/changelog-record-commit.mjs" ]; then
+  node "$ROOT/scripts/changelog-record-commit.mjs" 2>/dev/null || true
+fi

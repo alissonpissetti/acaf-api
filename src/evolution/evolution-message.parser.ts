@@ -2,6 +2,7 @@ import type { ParsedEvolutionMessage } from './evolution-inbox.service';
 import {
   extractGroupSubjectFromRecord,
   extractPushName,
+  formatPhoneLenient,
   isWhatsAppPhoneJid,
   resolveEvolutionContact,
 } from './evolution-contact.resolver';
@@ -32,7 +33,10 @@ function extractParticipantLabel(item: Record<string, unknown>, key: Record<stri
   const push = extractPushName(item, false);
   if (push) return push;
   const digits = participant.split('@')[0]?.replace(/\D/g, '') ?? '';
-  if (digits.length >= 10) return digits.slice(-4);
+  if (digits.length >= 12) {
+    const labeled = formatPhoneLenient(digits);
+    if (labeled) return labeled;
+  }
   return null;
 }
 
@@ -55,22 +59,62 @@ export function collectEvolutionMessageRows(data: unknown): unknown[] {
   if (Array.isArray(data)) return data;
   if (typeof data !== 'object') return [];
   const record = data as Record<string, unknown>;
+  if (Array.isArray(record.message)) return record.message;
+  if (record.message && typeof record.message === 'object' && (record.key || record.messageType)) {
+    return [data];
+  }
   if (Array.isArray(record.messages)) return record.messages;
   if (Array.isArray(record.records)) return record.records;
   if (Array.isArray(record.data)) return record.data;
-  if (record.key || record.message) return [data];
+  const nested = record.data;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    const inner = nested as Record<string, unknown>;
+    if (Array.isArray(inner.messages)) return inner.messages;
+    if (inner.key || inner.message || inner.messageType) return [inner];
+  }
+  if (record.key || record.message || record.messageType) return [data];
   return [];
+}
+
+function normalizeEvolutionMessageKey(item: Record<string, unknown>): Record<string, unknown> {
+  const messageBlock = item.message;
+  const nestedKey =
+    messageBlock && typeof messageBlock === 'object'
+      ? ((messageBlock as Record<string, unknown>).key as Record<string, unknown> | undefined)
+      : undefined;
+  const keySource = (item.key ?? item.senderKey ?? nestedKey ?? {}) as Record<string, unknown>;
+  const senderPn = String(
+    keySource.senderPn ??
+      item.senderPn ??
+      item.phoneNumber ??
+      item.number ??
+      (item as Record<string, unknown>).notify ??
+      '',
+  );
+  return {
+    ...keySource,
+    id: keySource.id ?? item.id,
+    fromMe: keySource.fromMe ?? item.fromMe,
+    remoteJid: String(keySource.remoteJid ?? item.remoteJid ?? item.chatId ?? ''),
+    remoteJidAlt: String(
+      keySource.remoteJidAlt ??
+        item.remoteJidAlt ??
+        (senderPn.includes('@') ? senderPn : ''),
+    ),
+    participant: String(keySource.participant ?? item.participant ?? ''),
+    participantAlt: String(keySource.participantAlt ?? item.participantAlt ?? ''),
+    senderPn,
+    message: keySource.message ?? item.message,
+    messageTimestamp: keySource.messageTimestamp ?? item.messageTimestamp,
+  };
 }
 
 export function parseEvolutionMessageRow(row: unknown): ParsedEvolutionMessage | null {
   if (!row || typeof row !== 'object') return null;
   const item = row as Record<string, unknown>;
-  const key = (item.key ?? {}) as Record<string, unknown>;
+  const key = normalizeEvolutionMessageKey(item);
   const fromMe = Boolean(key.fromMe);
-  const resolved = resolveEvolutionContact({
-    ...key,
-    remoteJidAlt: String(key.remoteJidAlt ?? item.remoteJidAlt ?? ''),
-  });
+  const resolved = resolveEvolutionContact(key);
   if (!resolved || resolved.contactKey === 'unknown') return null;
 
   const externalId = String(
@@ -150,6 +194,10 @@ export function parseEvolutionMessageRow(row: unknown): ParsedEvolutionMessage |
     .find((jid) => jid && isWhatsAppPhoneJid(jid));
   const remoteJid = jidForApi || resolved.remoteJid;
 
+  const envelopeItem = item.message ? item : { ...item, message: key.message ?? rawMessage };
+  const payloadJson =
+    media?.payloadJson ?? buildEvolutionMediaPayload(envelopeItem, key);
+
   return {
     fromMe,
     phone: resolved.phone,
@@ -162,7 +210,7 @@ export function parseEvolutionMessageRow(row: unknown): ParsedEvolutionMessage |
     messageAt: messageTimestamp(item, key),
     isGroup: resolved.isGroup,
     mediaKind: media?.kind ?? null,
-    mediaPayload: media?.payloadJson ?? null,
+    mediaPayload: payloadJson,
     mediaMimeType: media?.mimeType ?? null,
     senderName: senderName ?? null,
     senderJid,
@@ -173,4 +221,10 @@ export function parseEvolutionMessagePayload(data: unknown): ParsedEvolutionMess
   return collectEvolutionMessageRows(data)
     .map((row) => parseEvolutionMessageRow(row))
     .filter((row): row is ParsedEvolutionMessage => row !== null);
+}
+
+export function resolveContactFromEvolutionPayload(data: unknown) {
+  if (!data || typeof data !== 'object') return null;
+  const key = normalizeEvolutionMessageKey(data as Record<string, unknown>);
+  return resolveEvolutionContact(key);
 }

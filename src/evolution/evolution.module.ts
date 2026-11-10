@@ -25,6 +25,10 @@ import { EvolutionMessageMediaStorageService } from './evolution-message-media-s
 import { EvolutionInboxGateway } from './evolution-inbox.gateway';
 import { EvolutionInboxRealtimeService } from './evolution-inbox-realtime.service';
 import { EvolutionInboxRead } from './evolution-inbox-read.entity';
+import { EvolutionInboxDeviceRead } from './evolution-inbox-device-read.entity';
+import { EvolutionInboxThreadArchive } from './evolution-inbox-thread-archive.entity';
+import { EvolutionRemoteChatsService } from './evolution-remote-chats.service';
+import { EvolutionRemoteMessagesService } from './evolution-remote-messages.service';
 
 @Module({
   imports: [
@@ -34,6 +38,8 @@ import { EvolutionInboxRead } from './evolution-inbox-read.entity';
       EvolutionMessage,
       EvolutionContactProfile,
       EvolutionInboxRead,
+      EvolutionInboxDeviceRead,
+      EvolutionInboxThreadArchive,
       Department,
       User,
       CommercialLead,
@@ -55,6 +61,8 @@ import { EvolutionInboxRead } from './evolution-inbox-read.entity';
     EvolutionMessageMediaStorageService,
     EvolutionInboxRealtimeService,
     EvolutionInboxGateway,
+    EvolutionRemoteChatsService,
+    EvolutionRemoteMessagesService,
   ],
   exports: [EvolutionInstancesService],
 })

@@ -43,6 +43,10 @@ export class EvolutionRemoteContactsService {
     private readonly systemSettings: SystemSettingsService,
   ) {}
 
+  profileFromEvolutionRecord(record: unknown): EvolutionContactProfileInput | null {
+    return this.mapContactRecord(record);
+  }
+
   async fetchContactProfiles(instanceId: string): Promise<EvolutionContactProfileInput[]> {
     const row = await this.instances
       .createQueryBuilder('inst')
@@ -405,7 +409,9 @@ export class EvolutionRemoteContactsService {
           const digits = jid.split('@')[0]?.replace(/\D/g, '') ?? '';
           if (!digits) continue;
           const contactKey = `group:${digits}`;
-          const subject = evolutionGroupSubjectTitle(String(item.subject ?? item.name ?? '').trim());
+          const subject = evolutionGroupSubjectTitle(String(item.subject ?? item.name ?? '').trim(), {
+            trustRemote: true,
+          });
           const displayName = subject ?? groupLabelFromKey(contactKey);
           const pictureUrl = String(item.pictureUrl ?? item.profilePicUrl ?? item.imgUrl ?? '').trim();
           out.push({
@@ -514,7 +520,6 @@ export class EvolutionRemoteContactsService {
             String(item.subject ?? '').trim() || null,
             String(item.name ?? '').trim() || null,
             String(item.groupName ?? '').trim() || null,
-            String(item.pushName ?? '').trim() || null,
             String(item.conversationName ?? '').trim() || null,
           ],
           contactKey,

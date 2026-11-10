@@ -252,6 +252,13 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
         sortOrder: 5,
         permissionKey: 'plataforma.configuracoes',
       },
+      {
+        slug: 'atualizacoes',
+        label: 'Atualizações',
+        route: '/m/sistema/atualizacoes',
+        sortOrder: 6,
+        permissionKey: 'sistema.changelog',
+      },
     ],
   },
   {

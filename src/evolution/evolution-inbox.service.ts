@@ -6,8 +6,24 @@ import { CommercialLead } from '../commercial/commercial-lead.entity';
 import { EvolutionInstance } from './evolution-instance.entity';
 import { EvolutionMessage } from './evolution-message.entity';
 import { EvolutionInboxRead } from './evolution-inbox-read.entity';
+import { EvolutionInboxDeviceRead } from './evolution-inbox-device-read.entity';
+import { EvolutionInboxThreadArchive } from './evolution-inbox-thread-archive.entity';
+import {
+  collectEvolutionChatRows,
+  extractArchiveHintsFromPayload,
+  readChatArchived,
+  readChatReadTimestamp,
+  readChatUnreadCount,
+} from './evolution-chat.parser';
+import {
+  EvolutionRemoteChatsService,
+  type EvolutionRemoteChatRow,
+} from './evolution-remote-chats.service';
+import { EvolutionRemoteMessagesService } from './evolution-remote-messages.service';
+import { User, UserRole, userHasRole } from '../users/user.entity';
 import {
   contactLabelFromKey,
+  extractGroupSubjectFromRecord,
   formatPhoneLenient,
   groupLabelFromKey,
   isGroupContactKey,
@@ -18,15 +34,23 @@ import {
   pickBestGroupThreadName,
   isHumanContactName,
   pickBestThreadContactName,
+  resolveEvolutionContact,
   resolveInboxContactPresentation,
+  stripEmojiForNameHeuristic,
 } from './evolution-contact.resolver';
-import { parseEvolutionMessagePayload } from './evolution-message.parser';
+import {
+  parseEvolutionMessagePayload,
+  resolveContactFromEvolutionPayload,
+} from './evolution-message.parser';
+import { phoneFromSenderPn } from './evolution-contact.resolver';
 import {
   bodyTextFromWhatsAppMessage,
+  extractQuotedPreviewFromStoredPayload,
   extractReactionTargetFromPayloadJson,
   isReactionPlaceholderBody,
   reactionEmojiFromPlaceholderBody,
   resolveMessageEnvelope,
+  type WhatsAppQuotedPreview,
 } from './evolution-message-media';
 import { EvolutionRemoteMediaService } from './evolution-remote-media.service';
 import { EvolutionRemoteContactsService } from './evolution-remote-contacts.service';
@@ -59,6 +83,11 @@ export type ParsedEvolutionMessage = {
   reactionRemove?: boolean;
 };
 
+const INBOX_BOOTSTRAP_CHAT_LIMIT = 50;
+const INBOX_BOOTSTRAP_MESSAGES_PER_CHAT = 10;
+const INBOX_BOOTSTRAP_AVATAR_LIMIT = 150;
+const INBOX_BOOTSTRAP_CHAT_CONCURRENCY = 4;
+
 export type EvolutionInboxThreadDto = {
   threadKey: string;
   instanceId: string;
@@ -81,12 +110,24 @@ export type EvolutionInboxThreadDto = {
   lastMessagePreview: string;
   lastDirection: 'in' | 'out';
   unreadCount: number;
+  isArchived: boolean;
 };
 
 export type EvolutionInboxMessageReactionDto = {
   emoji: string;
   senderName: string | null;
   direction: 'in' | 'out';
+};
+
+export type EvolutionInboxMessageQuoteDto = {
+  author: string | null;
+  body: string;
+  mediaKind: string | null;
+};
+
+export type EvolutionInboxInstanceOptionDto = {
+  id: string;
+  name: string;
 };
 
 export type EvolutionInboxMessageDto = {
@@ -100,17 +141,31 @@ export type EvolutionInboxMessageDto = {
   mediaKind: string | null;
   hasMedia: boolean;
   reactions: EvolutionInboxMessageReactionDto[];
+  quote: EvolutionInboxMessageQuoteDto | null;
 };
 
 @Injectable()
 export class EvolutionInboxService {
   private readonly groupTitleRefreshAt = new Map<string, number>();
+  private readonly remoteGroupTitleCache = new Map<
+    string,
+    { at: number; titles: Map<string, string> }
+  >();
+  private readonly chatArchiveSyncAt = new Map<string, number>();
+  private readonly threadRemotePullAt = new Map<string, number>();
+  private readonly backgroundMaintenanceAt = new Map<string, number>();
+  private readonly connectBootstrapAt = new Map<string, number>();
+  private readonly connectBootstrapInFlight = new Set<string>();
 
   constructor(
     @InjectRepository(EvolutionMessage)
     private readonly messages: Repository<EvolutionMessage>,
     @InjectRepository(EvolutionInboxRead)
     private readonly inboxReads: Repository<EvolutionInboxRead>,
+    @InjectRepository(EvolutionInboxDeviceRead)
+    private readonly deviceReads: Repository<EvolutionInboxDeviceRead>,
+    @InjectRepository(EvolutionInboxThreadArchive)
+    private readonly threadArchives: Repository<EvolutionInboxThreadArchive>,
     @InjectRepository(EvolutionInstance)
     private readonly instances: Repository<EvolutionInstance>,
     @InjectRepository(EvolutionContactProfile)
@@ -123,6 +178,10 @@ export class EvolutionInboxService {
     private readonly contactAvatars: EvolutionContactAvatarService,
     private readonly inboxRealtime: EvolutionInboxRealtimeService,
     private readonly messageMediaStorage: EvolutionMessageMediaStorageService,
+    private readonly remoteChats: EvolutionRemoteChatsService,
+    private readonly remoteMessages: EvolutionRemoteMessagesService,
+    @InjectRepository(User)
+    private readonly users: Repository<User>,
   ) {}
 
   private queueMessageMediaPersist(messageId: string, options?: { force?: boolean }) {
@@ -181,7 +240,9 @@ export class EvolutionInboxService {
 
     const contactName = parsed.isGroup
       ? pickBestGroupThreadName(
-          [parsed.groupName, parsed.pushName, groupLabelFromKey(parsed.contactKey)],
+          [
+            evolutionGroupSubjectTitle(parsed.groupName) ?? parsed.groupName,
+          ],
           parsed.contactKey,
         )
       : await this.resolveStoredContactName(parsed, leadId);
@@ -205,14 +266,18 @@ export class EvolutionInboxService {
         messagePatch.senderJid = parsed.senderJid ?? null;
         if (!parsed.fromMe) messagePatch.contactName = parsed.senderName ?? null;
       }
+      if (parsed.mediaPayload?.trim()) {
+        messagePatch.mediaPayload = parsed.mediaPayload;
+      }
       if (parsed.mediaKind && parsed.mediaPayload) {
         messagePatch.mediaKind = parsed.mediaKind;
-        messagePatch.mediaPayload = parsed.mediaPayload;
         messagePatch.mediaMimeType = parsed.mediaMimeType;
         messagePatch.mediaStoragePath = null;
         messagePatch.mediaContentHash = null;
         messagePatch.mediaStoredAt = null;
         if (parsed.text?.trim()) messagePatch.body = parsed.text.slice(0, 2000);
+      } else if (parsed.text?.trim() && extractQuotedPreviewFromStoredPayload(parsed.mediaPayload)) {
+        messagePatch.body = parsed.text.slice(0, 2000);
       }
       if (Object.keys(messagePatch).length) {
         await this.messages.update({ id: duplicate.id }, messagePatch);
@@ -228,7 +293,10 @@ export class EvolutionInboxService {
         remoteJid: parsed.remoteJid,
         leadId,
       });
-      await this.publishInboxActivity(instance.id, parsed.contactKey, duplicate.id, false);
+      const threadKey =
+        (await this.rekeyThreadToPhoneIfKnown(instance.id, parsed.contactKey, parsed.mediaPayload)) ??
+        parsed.contactKey;
+      await this.publishInboxActivity(instance.id, threadKey, duplicate.id, false);
       return { leadId, created: false, messageId: duplicate.id, ingested: false };
     }
 
@@ -277,14 +345,75 @@ export class EvolutionInboxService {
       this.queueMessageMediaPersist(saved.id);
     }
 
-    await this.publishInboxActivity(instance.id, parsed.contactKey, saved.id, true);
+    const threadKey =
+      (await this.rekeyThreadToPhoneIfKnown(instance.id, parsed.contactKey, parsed.mediaPayload)) ??
+      parsed.contactKey;
+    await this.publishInboxActivity(instance.id, threadKey, saved.id, true);
     return { leadId, created, messageId: saved.id, ingested: true };
+  }
+
+  private quoteDtoForRow(
+    row: EvolutionMessage,
+    siblingsByExternalId?: Map<string, EvolutionMessage>,
+  ): EvolutionInboxMessageQuoteDto | null {
+    const preview = extractQuotedPreviewFromStoredPayload(row.mediaPayload);
+    if (!preview) return null;
+    return this.enrichQuotePreview(row, preview, siblingsByExternalId ?? new Map());
+  }
+
+  private enrichQuotePreview(
+    row: EvolutionMessage,
+    preview: WhatsAppQuotedPreview,
+    siblingsByExternalId: Map<string, EvolutionMessage>,
+  ): EvolutionInboxMessageQuoteDto {
+    let author: string | null = null;
+    let body = preview.body.trim();
+    const target =
+      preview.externalId && siblingsByExternalId.has(preview.externalId)
+        ? siblingsByExternalId.get(preview.externalId)!
+        : null;
+
+    if (target) {
+      author =
+        target.direction === 'out'
+          ? 'Você'
+          : target.senderName?.trim() ||
+            (isHumanContactName(target.contactName) ? target.contactName?.trim() : null) ||
+            null;
+      const recovered = this.formatMessageBodyForInbox(target).trim();
+      if (recovered) body = recovered.slice(0, 280);
+    }
+
+    if (!author && preview.participant) {
+      if (preview.participant.includes('@g.us')) {
+        author = 'Grupo';
+      } else {
+        const digits = preview.participant.split('@')[0]?.replace(/\D/g, '') ?? '';
+        author = digits ? formatPhoneLenient(digits) : null;
+      }
+    }
+
+    if (!body) {
+      body = preview.mediaKind
+        ? { image: '[imagem]', video: '[vídeo]', audio: '[áudio]', document: '[documento]', sticker: '[figurinha]' }[
+            preview.mediaKind
+          ] ?? '[mídia]'
+        : '(mensagem)';
+    }
+
+    return {
+      author,
+      body,
+      mediaKind: preview.mediaKind,
+    };
   }
 
   private mapMessageRowToDto(
     row: EvolutionMessage,
     reactions: EvolutionInboxMessageReactionDto[] = [],
+    quote: EvolutionInboxMessageQuoteDto | null = null,
   ): EvolutionInboxMessageDto {
+    const resolvedQuote = quote ?? this.quoteDtoForRow(row);
     return {
       id: row.id,
       direction: row.direction,
@@ -296,6 +425,7 @@ export class EvolutionInboxService {
       mediaKind: row.mediaKind,
       hasMedia: Boolean(row.mediaKind && (row.mediaPayload || row.mediaStoragePath)),
       reactions,
+      quote: resolvedQuote,
     };
   }
 
@@ -388,8 +518,18 @@ export class EvolutionInboxService {
       throw new NotFoundException('Nenhuma mensagem nesta conversa.');
     }
 
+    const siblingsByExternalId = new Map<string, EvolutionMessage>();
+    for (const row of chatRows) {
+      const externalId = String(row.externalId ?? '').trim();
+      if (externalId) siblingsByExternalId.set(externalId, row);
+    }
+
     return chatRows.map((row) =>
-      this.mapMessageRowToDto(row, this.reactionsForMessage(row.externalId, reactionsByTarget)),
+      this.mapMessageRowToDto(
+        row,
+        this.reactionsForMessage(row.externalId, reactionsByTarget),
+        this.quoteDtoForRow(row, siblingsByExternalId),
+      ),
     );
   }
 
@@ -537,6 +677,74 @@ export class EvolutionInboxService {
     return { leadId: null, created: true, messageId: saved.id, ingested: true };
   }
 
+  /** Contatos não salvos no celular costumam vir como `lid:` até aparecer o telefone no payload. */
+  private async rekeyThreadToPhoneIfKnown(
+    instanceId: string,
+    contactKey: string,
+    mediaPayload: string | null | undefined,
+  ): Promise<string | null> {
+    const fromKey = String(contactKey ?? '').trim();
+    if (!fromKey || fromKey === 'unknown') return null;
+    if (!fromKey.startsWith('lid:') && isValidMobilePhone(normalizeMobilePhone(fromKey))) return null;
+
+    let phoneKey: string | null = null;
+    if (mediaPayload?.trim()) {
+      try {
+        const payload = JSON.parse(mediaPayload) as unknown;
+        const resolved = resolveContactFromEvolutionPayload(payload);
+        if (resolved?.phone && isValidMobilePhone(normalizeMobilePhone(resolved.phone))) {
+          phoneKey = normalizeMobilePhone(resolved.phone);
+        }
+      } catch {
+        /* ignora */
+      }
+    }
+
+    if (!phoneKey && mediaPayload?.trim()) {
+      try {
+        const payload = JSON.parse(mediaPayload) as Record<string, unknown>;
+        const key = (payload.key ?? {}) as Record<string, unknown>;
+        const senderPn = String(key.senderPn ?? payload.senderPn ?? '').trim();
+        const fromPn = phoneFromSenderPn(senderPn);
+        if (fromPn && isValidMobilePhone(normalizeMobilePhone(fromPn))) {
+          phoneKey = normalizeMobilePhone(fromPn);
+        }
+      } catch {
+        /* ignora */
+      }
+    }
+
+    if (!phoneKey || phoneKey === fromKey) return null;
+
+    await this.messages.update(
+      { instanceId, contactPhone: fromKey },
+      { contactPhone: phoneKey },
+    );
+
+    const profile = await this.contactProfiles.findOne({ where: { instanceId, contactKey: fromKey } });
+    if (profile) {
+      await this.upsertContactProfile({
+        instanceId,
+        contactKey: phoneKey,
+        displayName: profile.displayName,
+        phoneLabel: formatPhoneLenient(phoneKey),
+        remoteJid: profile.remoteJid,
+        avatarUrl: profile.avatarUrl,
+        leadId: profile.leadId,
+      });
+      if (profile.leadId) {
+        await this.commercialLeads.enrichLeadPhoneFromWhatsAppInbox(profile.leadId, phoneKey);
+      }
+    }
+
+    void this.remoteContacts
+      .fetchLidPhoneAliases(instanceId)
+      .then((aliases) => this.reconcileLidContactPhones(instanceId, aliases))
+      .catch(() => {});
+
+    return phoneKey;
+  }
+
   private async publishInboxActivity(
     instanceId: string,
     contactKey: string,
@@ -554,6 +762,33 @@ export class EvolutionInboxService {
           isReactionPlaceholderBody(row.body);
         if (!hideReactionRow) {
           message = this.mapMessageRowToDto(row);
+        } else {
+          const targetExternalId = this.reactionTargetExternalIdFromRow(row);
+          if (targetExternalId) {
+            const targetRow = await this.messages.findOne({
+              where: { instanceId, contactPhone: row.contactPhone, externalId: targetExternalId },
+            });
+            if (targetRow && !this.isReactionMessageRow(targetRow)) {
+              const reactionRows = await this.messages.find({
+                where: { instanceId, contactPhone: row.contactPhone, mediaKind: 'reaction' },
+                order: { messageAt: 'ASC' },
+                take: 400,
+              });
+              const reactionsByTarget = new Map<string, EvolutionInboxMessageReactionDto[]>();
+              for (const reactionRow of reactionRows) {
+                const targetId = this.reactionTargetExternalIdFromRow(reactionRow);
+                const reaction = this.parseReactionFromRow(reactionRow);
+                if (!reaction || !targetId) continue;
+                const bucket = reactionsByTarget.get(targetId) ?? [];
+                bucket.push(reaction);
+                reactionsByTarget.set(targetId, bucket);
+              }
+              message = this.mapMessageRowToDto(
+                targetRow,
+                this.reactionsForMessage(targetExternalId, reactionsByTarget),
+              );
+            }
+          }
         }
       }
     }
@@ -627,7 +862,11 @@ export class EvolutionInboxService {
     let body = this.formatMessageBodyForInbox(row);
     if (isGroupContactKey(row.contactPhone) && row.direction === 'in') {
       const sender = row.senderName?.trim() || this.inferGroupSenderNameFromBody(row.body);
-      if (sender && !body.toLowerCase().startsWith(`${sender.toLowerCase()}:`)) {
+      if (
+        sender &&
+        !this.isWeakGroupSenderLabel(sender) &&
+        !body.toLowerCase().startsWith(`${sender.toLowerCase()}:`)
+      ) {
         body = `${sender}: ${body}`;
       }
     }
@@ -671,9 +910,16 @@ export class EvolutionInboxService {
           ? existing.displayName
           : labelFallback;
       if (isGroupContactKey(contactKey)) {
-        const fromInput = isPlausibleGroupTitle(input.displayName) ? String(input.displayName).trim() : null;
-        const fromExisting = isPlausibleGroupTitle(existing.displayName) ? existing.displayName : null;
-        nextDisplay = fromInput ?? fromExisting ?? groupLabelFromKey(contactKey);
+        const pickGroupTitle = (name: string | null | undefined): string | null => {
+          const auth = evolutionGroupSubjectTitle(name);
+          if (auth) return auth;
+          const trimmed = String(name ?? '').trim();
+          if (!trimmed || isLikelyParticipantName(trimmed)) return null;
+          return isPlausibleGroupTitle(trimmed) ? trimmed : null;
+        };
+        const fromInput = pickGroupTitle(input.displayName);
+        const fromExisting = pickGroupTitle(existing.displayName);
+        nextDisplay = pickBestGroupThreadName([fromInput, fromExisting], contactKey);
       }
       existing.displayName = nextDisplay;
       if (input.phoneLabel) existing.phoneLabel = input.phoneLabel;
@@ -719,6 +965,103 @@ export class EvolutionInboxService {
     return lead.contactName?.trim() || lead.title?.trim() || null;
   }
 
+  private collapseMessageRowsByRemoteJid(rows: EvolutionMessage[]): EvolutionMessage[] {
+    const collapsed = new Map<string, EvolutionMessage>();
+    for (const latest of rows) {
+      const contactPhone = String(latest.contactPhone ?? '').trim();
+      const jidRaw = String(latest.remoteJid ?? '').trim().toLowerCase();
+      const groupKey = jidRaw
+        ? `${latest.instanceId}:jid:${jidRaw}`
+        : `${latest.instanceId}:phone:${contactPhone}`;
+      const existing = collapsed.get(groupKey);
+      if (!existing) {
+        collapsed.set(groupKey, latest);
+        continue;
+      }
+      const newer =
+        latest.messageAt.getTime() >= existing.messageAt.getTime() ? latest : existing;
+      const older = newer === latest ? existing : latest;
+      const canonicalPhone = this.pickCanonicalContactKey(newer.contactPhone, older.contactPhone);
+      collapsed.set(groupKey, { ...newer, contactPhone: canonicalPhone });
+    }
+    return [...collapsed.values()];
+  }
+
+  private async resolveOwnerUserId(instance: EvolutionInstance): Promise<string> {
+    if (instance.defaultOwnerUserId) {
+      const user = await this.users.findOne({
+        where: { id: instance.defaultOwnerUserId, active: true },
+        select: ['id'],
+      });
+      if (user) return user.id;
+    }
+    const rows = await this.users.find({ where: { active: true }, order: { createdAt: 'ASC' }, take: 50 });
+    const admin = rows.find((user) => userHasRole(user, UserRole.ADMIN));
+    if (admin) return admin.id;
+    if (rows[0]) return rows[0].id;
+    throw new NotFoundException('Nenhum usuário disponível para sincronizar mensagens.');
+  }
+
+  private async pullRemoteMessagesForThreadIfDue(
+    instanceId: string,
+    contactKey: string,
+  ): Promise<void> {
+    const throttleKey = `${instanceId}:${contactKey}`;
+    const last = this.threadRemotePullAt.get(throttleKey) ?? 0;
+    if (Date.now() - last < 45_000) return;
+    this.threadRemotePullAt.set(throttleKey, Date.now());
+
+    const instance = await this.instances.findOne({
+      where: { id: instanceId, active: true },
+      select: ['id', 'name', 'defaultOwnerUserId', 'autoCreateLeads'],
+    });
+    if (!instance) return;
+
+    const keys = await this.resolveThreadContactKeys(instanceId, contactKey);
+    let remoteJid = await this.resolveRemoteJidForContact(instanceId, contactKey);
+    if (!remoteJid) {
+      for (const alias of keys) {
+        remoteJid = await this.resolveRemoteJidForContact(instanceId, alias);
+        if (remoteJid) break;
+      }
+    }
+    const jidCandidates = new Set<string>();
+    if (remoteJid) jidCandidates.add(remoteJid);
+    const digits = normalizeMobilePhone(contactKey);
+    if (isValidMobilePhone(digits)) {
+      jidCandidates.add(`${digits}@s.whatsapp.net`);
+      jidCandidates.add(`55${digits}@s.whatsapp.net`);
+      jidCandidates.add(`${digits}@c.us`);
+    }
+    if (contactKey.startsWith('lid:')) {
+      const lid = contactKey.slice(4).replace(/\D/g, '');
+      if (lid) jidCandidates.add(`${lid}@lid`);
+    }
+
+    const parsedMap = new Map<string, ParsedEvolutionMessage>();
+    for (const jid of jidCandidates) {
+      const payload = await this.remoteMessages.fetchMessagesForJid(instanceId, jid, 40);
+      for (const message of parseEvolutionMessagePayload(payload)) {
+        const sig = `${message.externalId}:${message.contactKey}`;
+        if (!parsedMap.has(sig)) parsedMap.set(sig, message);
+      }
+    }
+    const parsed = [...parsedMap.values()];
+    if (!parsed.length) return;
+
+    const ownerUserId = await this.resolveOwnerUserId(instance);
+    for (const message of parsed) {
+      await this.ingestFromInstance(instance, { ownerUserId, parsed: message });
+    }
+
+    await this.rekeyThreadToPhoneIfKnown(
+      instanceId,
+      contactKey,
+      parsed[parsed.length - 1]?.mediaPayload ?? null,
+    );
+    this.inboxRealtime.notifyThreadsUpdated(instanceId);
+  }
+
   private pickCanonicalContactKey(current: string, candidate: string): string {
     const rank = (key: string) => {
       if (key.startsWith('group:')) return 30;
@@ -751,7 +1094,8 @@ export class EvolutionInboxService {
       const threadKey = `${best.instanceId}:${contactPhone}`;
       const avatarUrl = group.map((row) => row.avatarUrl).find(Boolean) ?? best.avatarUrl;
       const unreadCount = group.reduce((sum, row) => sum + (row.unreadCount ?? 0), 0);
-      merged.push({ ...best, contactPhone, threadKey, avatarUrl, unreadCount });
+      const isArchived = group.some((row) => row.isArchived);
+      merged.push({ ...best, contactPhone, threadKey, avatarUrl, unreadCount, isArchived });
     }
 
     return merged.sort(
@@ -761,6 +1105,22 @@ export class EvolutionInboxService {
 
   async resolveThreadContactKeys(instanceId: string, contactKey: string): Promise<string[]> {
     const keys = new Set<string>([contactKey]);
+
+    if (contactKey.startsWith('group:')) {
+      const suffix = contactKey.replace(/^group:/, '').replace(/\D/g, '');
+      if (suffix.length >= 6) {
+        const groupRows = await this.messages
+          .createQueryBuilder('m')
+          .select('DISTINCT m.contact_phone', 'contactPhone')
+          .where('m.instance_id = :instanceId', { instanceId })
+          .andWhere('m.contact_phone LIKE :pattern', { pattern: `group:%${suffix}` })
+          .getRawMany<{ contactPhone: string }>();
+        for (const row of groupRows) {
+          const phone = String(row.contactPhone ?? '').trim();
+          if (phone) keys.add(phone);
+        }
+      }
+    }
 
     const siblingRows = await this.messages
       .createQueryBuilder('m')
@@ -778,6 +1138,20 @@ export class EvolutionInboxService {
     for (const row of siblingRows) {
       const phone = String(row.contactPhone ?? '').trim();
       if (phone) keys.add(phone);
+    }
+
+    const remoteJid = await this.resolveRemoteJidForContact(instanceId, contactKey);
+    if (remoteJid) {
+      const jidRows = await this.messages
+        .createQueryBuilder('m')
+        .select('DISTINCT m.contact_phone', 'contactPhone')
+        .where('m.instance_id = :instanceId', { instanceId })
+        .andWhere('LOWER(m.remote_jid) = :remoteJid', { remoteJid: remoteJid.toLowerCase() })
+        .getRawMany<{ contactPhone: string }>();
+      for (const row of jidRows) {
+        const phone = String(row.contactPhone ?? '').trim();
+        if (phone) keys.add(phone);
+      }
     }
 
     const profile = await this.contactProfiles.findOne({
@@ -800,22 +1174,352 @@ export class EvolutionInboxService {
     if (!userId || !instanceId || !key) return;
 
     const now = new Date();
-    const existing = await this.inboxReads.findOne({
-      where: { userId, instanceId, contactKey: key },
-    });
-    if (existing) {
-      existing.lastReadAt = now;
-      await this.inboxReads.save(existing);
-      return;
+    const aliases = await this.resolveThreadContactKeys(instanceId, key);
+    for (const alias of aliases) {
+      const existing = await this.inboxReads.findOne({
+        where: { userId, instanceId, contactKey: alias },
+      });
+      if (existing) {
+        existing.lastReadAt = now;
+        await this.inboxReads.save(existing);
+      } else {
+        await this.inboxReads.save(
+          this.inboxReads.create({
+            userId,
+            instanceId,
+            contactKey: alias,
+            lastReadAt: now,
+          }),
+        );
+      }
+      await this.upsertDeviceReadAt(instanceId, alias, now);
     }
-    await this.inboxReads.save(
-      this.inboxReads.create({
-        userId,
+  }
+
+  async applyChatsSyncFromWebhook(instanceId: string, data: unknown): Promise<number> {
+    let updated = 0;
+    const archiveTouched = new Set<string>();
+
+    const applyArchive = async (contactKey: string, archived: boolean) => {
+      const key = `${contactKey}:${archived}`;
+      if (archiveTouched.has(key)) return;
+      archiveTouched.add(key);
+      if (await this.storeArchiveForThread(instanceId, contactKey, archived, true)) {
+        updated += 1;
+      }
+    };
+
+    for (const hint of extractArchiveHintsFromPayload(data)) {
+      const resolved = resolveEvolutionContact({
+        remoteJid: hint.remoteJid,
+        remoteJidAlt: hint.remoteJid,
+      });
+      if (!resolved || resolved.contactKey === 'unknown') continue;
+      await applyArchive(resolved.contactKey, hint.archived);
+    }
+
+    for (const chat of collectEvolutionChatRows(data)) {
+      const jid = String(chat.id ?? chat.remoteJid ?? chat.jid ?? '').trim();
+      if (!jid) continue;
+      const resolved = resolveEvolutionContact({
+        remoteJid: jid,
+        remoteJidAlt: String(chat.remoteJidAlt ?? chat.remoteJid ?? ''),
+      });
+      if (!resolved || resolved.contactKey === 'unknown') continue;
+
+      const archived = readChatArchived(chat);
+      if (archived !== null) {
+        await applyArchive(resolved.contactKey, archived);
+      }
+
+      const unread = readChatUnreadCount(chat);
+      if (unread !== null && unread === 0) {
+        const hinted = readChatReadTimestamp(chat);
+        const readAt = await this.resolveDeviceReadAtForContact(
+          instanceId,
+          resolved.contactKey,
+          hinted,
+        );
+        const readChanged = await this.upsertDeviceReadAt(instanceId, resolved.contactKey, readAt);
+        if (readChanged) updated += 1;
+      }
+    }
+
+    if (updated > 0) {
+      this.inboxRealtime.notifyThreadsUpdated(instanceId);
+    }
+    return updated;
+  }
+
+  async syncChatArchiveFromRemote(instanceId: string): Promise<number> {
+    const chats = await this.remoteChats.fetchChats(instanceId);
+    let updated = 0;
+    for (const chat of chats) {
+      const archived =
+        chat.archived ??
+        readChatArchived(chat.raw) ??
+        readChatArchived((chat.raw?.chat as Record<string, unknown>) ?? {});
+      if (archived === null) continue;
+      const changed = await this.storeArchiveForThread(instanceId, chat.contactKey, archived, true);
+      if (changed) updated += 1;
+
+      if (chat.unreadCount === 0) {
+        const readAt = await this.resolveDeviceReadAtForContact(instanceId, chat.contactKey, null);
+        const readChanged = await this.upsertDeviceReadAt(instanceId, chat.contactKey, readAt);
+        if (readChanged) updated += 1;
+      }
+    }
+    if (updated > 0) {
+      this.inboxRealtime.notifyThreadsUpdated(instanceId);
+    }
+    return updated;
+  }
+
+  async setThreadArchived(input: {
+    instanceId: string;
+    contactKey: string;
+    archive: boolean;
+    syncWhatsApp?: boolean;
+  }): Promise<{ isArchived: boolean; syncedWhatsApp: boolean; warning?: string }> {
+    const instanceId = String(input.instanceId ?? '').trim();
+    const contactKey = String(input.contactKey ?? '').trim();
+    const archive = Boolean(input.archive);
+    if (!instanceId || !contactKey) {
+      throw new NotFoundException('Conversa não encontrada.');
+    }
+
+    const fromPanel = input.syncWhatsApp === false;
+    await this.storeArchiveForThread(instanceId, contactKey, archive, fromPanel);
+
+    let syncedWhatsApp = false;
+    let syncWarning: string | undefined;
+    if (input.syncWhatsApp !== false) {
+      const remoteJid = await this.resolveRemoteJidForContact(instanceId, contactKey);
+      if (remoteJid) {
+        const lastMessage = await this.buildLastMessagePayloadForArchive(instanceId, contactKey);
+        if (!lastMessage) {
+          syncWarning =
+            'Conversa arquivada no painel; WhatsApp não sincronizado (sem última mensagem para a Evolution).';
+        } else {
+          const outcome = await this.remoteChats.archiveChat(instanceId, {
+            remoteJid,
+            archive,
+            lastMessage,
+          });
+          syncedWhatsApp = outcome.ok;
+          if (!outcome.ok && outcome.error) {
+            syncWarning = `Conversa arquivada no painel; WhatsApp: ${outcome.error.slice(0, 180)}`;
+          }
+        }
+      } else {
+        syncWarning = 'Conversa arquivada no painel; JID do chat não encontrado para o WhatsApp.';
+      }
+    }
+
+    this.inboxRealtime.notifyThreadsUpdated(instanceId);
+    return { isArchived: archive, syncedWhatsApp, warning: syncWarning };
+  }
+
+  /** Grava o estado de arquivo em todas as chaves da thread (telefone, LID, grupo). */
+  private async storeArchiveForThread(
+    instanceId: string,
+    contactKey: string,
+    archived: boolean,
+    fromDevice: boolean,
+  ): Promise<boolean> {
+    const keys = await this.resolveThreadContactKeys(instanceId, contactKey);
+    let changed = false;
+    for (const key of keys) {
+      if (await this.upsertThreadArchive(instanceId, key, archived, fromDevice)) {
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  private async upsertThreadArchive(
+    instanceId: string,
+    contactKey: string,
+    archived: boolean,
+    fromDevice: boolean,
+  ): Promise<boolean> {
+    const key = String(contactKey ?? '').trim();
+    if (!key) return false;
+    const existing = await this.threadArchives.findOne({ where: { instanceId, contactKey: key } });
+    const archivedAt = archived ? new Date() : null;
+    if (existing) {
+      if (existing.isArchived === archived) return false;
+      existing.isArchived = archived;
+      existing.archivedAt = archivedAt;
+      existing.syncedFromDevice = fromDevice;
+      await this.threadArchives.save(existing);
+      return true;
+    }
+    if (!archived) return false;
+    await this.threadArchives.save(
+      this.threadArchives.create({
         instanceId,
         contactKey: key,
-        lastReadAt: now,
+        isArchived: true,
+        archivedAt,
+        syncedFromDevice: fromDevice,
       }),
     );
+    return true;
+  }
+
+  private async resolveRemoteJidForContact(
+    instanceId: string,
+    contactKey: string,
+  ): Promise<string | null> {
+    const profile = await this.contactProfiles.findOne({
+      where: { instanceId, contactKey },
+      select: ['remoteJid'],
+    });
+    if (profile?.remoteJid?.trim()) return profile.remoteJid.trim();
+
+    const latest = await this.messages.findOne({
+      where: { instanceId, contactPhone: contactKey },
+      order: { messageAt: 'DESC' },
+      select: ['remoteJid'],
+    });
+    if (latest?.remoteJid?.trim()) return latest.remoteJid.trim();
+
+    if (contactKey.startsWith('group:')) {
+      return `${contactKey.replace(/^group:/, '')}@g.us`;
+    }
+    const digits = contactKey.replace(/\D/g, '');
+    if (digits.length >= 10) return `${digits}@s.whatsapp.net`;
+    if (contactKey.startsWith('lid:')) {
+      const lid = contactKey.slice(4);
+      if (lid) return `${lid}@lid`;
+    }
+    return null;
+  }
+
+  private async buildLastMessagePayloadForArchive(
+    instanceId: string,
+    contactKey: string,
+  ): Promise<Record<string, unknown> | null> {
+    const keys = await this.resolveThreadContactKeys(instanceId, contactKey);
+    const row = await this.messages.findOne({
+      where: { instanceId, contactPhone: In(keys) },
+      order: { messageAt: 'DESC' },
+      select: ['externalId', 'direction', 'remoteJid', 'mediaPayload', 'messageAt'],
+    });
+    if (!row) return null;
+
+    const messageTimestamp = Math.floor(row.messageAt.getTime() / 1000);
+
+    if (row.mediaPayload?.trim()) {
+      try {
+        const payload = JSON.parse(row.mediaPayload) as Record<string, unknown>;
+        const key = (payload.key ?? {}) as Record<string, unknown>;
+        if (key.id && key.remoteJid) {
+          const messageBlock = payload.message;
+          const nestedTs =
+            messageBlock && typeof messageBlock === 'object'
+              ? (messageBlock as Record<string, unknown>).messageTimestamp
+              : undefined;
+          const rawTs = payload.messageTimestamp ?? nestedTs;
+          const ts =
+            typeof rawTs === 'number' && Number.isFinite(rawTs)
+              ? Math.floor(rawTs > 1e12 ? rawTs / 1000 : rawTs)
+              : messageTimestamp;
+          return {
+            key: {
+              remoteJid: key.remoteJid,
+              fromMe: Boolean(key.fromMe),
+              id: String(key.id),
+            },
+            messageTimestamp: ts,
+          };
+        }
+      } catch {
+        /* fallback */
+      }
+    }
+
+    const remoteJid = row.remoteJid ?? (await this.resolveRemoteJidForContact(instanceId, contactKey));
+    if (!remoteJid || !row.externalId) return null;
+    return {
+      key: {
+        remoteJid,
+        fromMe: row.direction === 'out',
+        id: row.externalId,
+      },
+      messageTimestamp,
+    };
+  }
+
+  private async isContactArchived(instanceId: string, contactKey: string): Promise<boolean> {
+    const keys = await this.resolveThreadContactKeys(instanceId, contactKey);
+    const rows = await this.threadArchives.find({
+      where: { instanceId, contactKey: In(keys), isArchived: true },
+      select: ['id'],
+      take: 1,
+    });
+    return rows.length > 0;
+  }
+
+  private async upsertDeviceReadAt(
+    instanceId: string,
+    contactKey: string,
+    readAt: Date,
+  ): Promise<boolean> {
+    const key = String(contactKey ?? '').trim();
+    if (!key) return false;
+    const existing = await this.deviceReads.findOne({ where: { instanceId, contactKey: key } });
+    if (existing) {
+      if (existing.readAt.getTime() >= readAt.getTime()) return false;
+      existing.readAt = readAt;
+      await this.deviceReads.save(existing);
+      return true;
+    }
+    await this.deviceReads.save(
+      this.deviceReads.create({
+        instanceId,
+        contactKey: key,
+        readAt,
+      }),
+    );
+    return true;
+  }
+
+  private async resolveDeviceReadAtForContact(
+    instanceId: string,
+    contactKey: string,
+    hinted: Date | null,
+  ): Promise<Date> {
+    const latestInbound = await this.messages.findOne({
+      where: { instanceId, contactPhone: contactKey, direction: 'in' },
+      order: { messageAt: 'DESC' },
+      select: ['messageAt'],
+    });
+    const candidates = [hinted, latestInbound?.messageAt, new Date()].filter(Boolean) as Date[];
+    return new Date(Math.max(...candidates.map((value) => value.getTime())));
+  }
+
+  private async effectiveReadSince(
+    userId: string,
+    instanceId: string,
+    contactKey: string,
+  ): Promise<Date | null> {
+    const keys = await this.resolveThreadContactKeys(instanceId, contactKey);
+    const userReads = await this.inboxReads.find({
+      where: { userId, instanceId, contactKey: In(keys) },
+      select: ['lastReadAt'],
+    });
+    const deviceReads = await this.deviceReads.find({
+      where: { instanceId, contactKey: In(keys) },
+      select: ['readAt'],
+    });
+    const stamps = [
+      ...userReads.map((row) => row.lastReadAt),
+      ...deviceReads.map((row) => row.readAt),
+    ].filter(Boolean) as Date[];
+    if (!stamps.length) return null;
+    return new Date(Math.max(...stamps.map((value) => value.getTime())));
   }
 
   private async countUnreadMessages(
@@ -824,9 +1528,7 @@ export class EvolutionInboxService {
     contactKey: string,
   ): Promise<number> {
     const keys = await this.resolveThreadContactKeys(instanceId, contactKey);
-    const read = await this.inboxReads.findOne({
-      where: { userId, instanceId, contactKey },
-    });
+    const since = await this.effectiveReadSince(userId, instanceId, contactKey);
 
     const qb = this.messages
       .createQueryBuilder('m')
@@ -835,30 +1537,95 @@ export class EvolutionInboxService {
       .andWhere("m.direction = 'in'")
       .andWhere("(m.media_kind IS NULL OR m.media_kind <> 'reaction')");
 
-    if (read?.lastReadAt) {
-      qb.andWhere('m.message_at > :since', { since: read.lastReadAt });
+    if (since) {
+      qb.andWhere('m.message_at > :since', { since });
     }
 
     return qb.getCount();
   }
 
+  /** Nomes, avatares, LID e arquivados — disparado em background ao listar conversas (throttle ~5 min). */
+  queueBackgroundMaintenance(instanceIds: string[]): void {
+    const unique = [...new Set(instanceIds.map((id) => String(id ?? '').trim()).filter(Boolean))];
+    for (const id of unique) {
+      const last = this.backgroundMaintenanceAt.get(id) ?? 0;
+      if (Date.now() - last < 8 * 60_000) continue;
+      this.backgroundMaintenanceAt.set(id, Date.now());
+      void this.runBackgroundMaintenance(id).catch(() => {});
+    }
+  }
+
+  private async runBackgroundMaintenance(instanceId: string): Promise<void> {
+    const lid = await this.backfillLidThreadsFromStoredPayloads(instanceId, 120);
+    const archives = await this.syncChatArchiveFromRemote(instanceId).catch(() => 0);
+    const names = await this.syncContactNamesFromEvolution(instanceId).catch(() => ({
+      updated: 0,
+      avatars: 0,
+      avatarsStored: 0,
+    }));
+    const changed = lid > 0 || archives > 0 || (names.updated ?? 0) > 0 || (names.avatarsStored ?? 0) > 0;
+    if (changed) {
+      this.inboxRealtime.notifyThreadsUpdated(instanceId);
+    }
+  }
+
+  async listInstancesWithMessageHistory(): Promise<EvolutionInboxInstanceOptionDto[]> {
+    const rows = await this.messages
+      .createQueryBuilder('m')
+      .innerJoin('m.instance', 'inst')
+      .select('inst.id', 'id')
+      .addSelect('inst.name', 'name')
+      .where('inst.active = :active', { active: true })
+      .andWhere("m.contact_phone IS NOT NULL AND TRIM(m.contact_phone) <> ''")
+      .andWhere("m.contact_phone NOT IN ('unknown', '-')")
+      .andWhere("(m.media_kind IS NULL OR m.media_kind <> 'reaction')")
+      .groupBy('inst.id')
+      .addGroupBy('inst.name')
+      .orderBy('inst.name', 'ASC')
+      .getRawMany<{ id: string; name: string }>();
+
+    return rows
+      .map((row) => ({
+        id: String(row.id ?? '').trim(),
+        name: String(row.name ?? '').trim() || 'WhatsApp',
+      }))
+      .filter((row) => row.id);
+  }
+
   async listThreads(
     userId: string,
-    filters?: { instanceId?: string },
+    filters?: { instanceId?: string; view?: 'active' | 'archived' | 'all'; light?: boolean },
   ): Promise<EvolutionInboxThreadDto[]> {
     const instanceId = filters?.instanceId?.trim();
-    if (instanceId) {
-      const last = this.groupTitleRefreshAt.get(instanceId) ?? 0;
-      const ttlMs = 5 * 60_000;
-      if (Date.now() - last > ttlMs) {
-        try {
-          await this.backfillGroupThreadNames(instanceId);
-          await this.backfillMessageBodiesFromPayload(instanceId, 800);
-          this.groupTitleRefreshAt.set(instanceId, Date.now());
-        } catch {
-          /* mantém cache local */
+    const view = filters?.view ?? 'active';
+    const light = Boolean(filters?.light);
+    let remoteGroupTitles = new Map<string, string>();
+    if (instanceId && !light) {
+      const archiveSyncAt = this.chatArchiveSyncAt.get(instanceId) ?? 0;
+      const archiveSyncDue = Date.now() - archiveSyncAt > 3 * 60_000;
+      const needsArchiveSync = view === 'archived' || view === 'all';
+      if (archiveSyncDue && (needsArchiveSync || view === 'active')) {
+        this.chatArchiveSyncAt.set(instanceId, Date.now());
+        const sync = this.syncChatArchiveFromRemote(instanceId).catch(() => 0);
+        if (needsArchiveSync) {
+          await sync;
+        } else {
+          void sync;
         }
       }
+      const last = this.groupTitleRefreshAt.get(instanceId) ?? 0;
+      const ttlMs = 2 * 60_000;
+      if (Date.now() - last > ttlMs) {
+        this.groupTitleRefreshAt.set(instanceId, Date.now());
+        void this.backfillGroupThreadNames(instanceId)
+          .then(() => this.backfillMessageBodiesFromPayload(instanceId, 800))
+          .then(() => this.refreshRemoteGroupTitleCache(instanceId))
+          .catch(() => {});
+      }
+      remoteGroupTitles = await this.remoteGroupTitlesForInstance(instanceId);
+      this.queueBackgroundMaintenance([instanceId]);
+    } else if (instanceId) {
+      remoteGroupTitles = await this.remoteGroupTitlesForInstance(instanceId);
     }
 
     const latestSub = this.messages
@@ -890,7 +1657,7 @@ export class EvolutionInboxService {
       qb.andWhere('m.instance_id = :instanceId', { instanceId: filters.instanceId });
     }
 
-    const rows = await qb.getMany();
+    const rows = this.collapseMessageRowsByRemoteJid(await qb.getMany());
     const draftThreads: EvolutionInboxThreadDto[] = [];
 
     const leadIds = [...new Set(rows.map((row) => row.leadId).filter(Boolean))] as string[];
@@ -903,6 +1670,9 @@ export class EvolutionInboxService {
     const leadById = new Map(leadRows.map((lead) => [lead.id, lead]));
 
     const instanceIds = [...new Set(rows.map((row) => row.instanceId))];
+    if (!light && !instanceId && instanceIds.length) {
+      this.queueBackgroundMaintenance(instanceIds);
+    }
     const profileRows = instanceIds.length
       ? await this.contactProfiles.find({ where: { instanceId: In(instanceIds) } })
       : [];
@@ -923,15 +1693,21 @@ export class EvolutionInboxService {
         profileRows,
         latest.leadId,
       );
-      const profileGroupTitle =
-        profile?.displayName &&
-        !isGenericGroupThreadName(profile.displayName, contactPhone) &&
-        (evolutionGroupSubjectTitle(profile.displayName) || isPlausibleGroupTitle(profile.displayName))
-          ? profile.displayName
-          : null;
+      const profileGroupTitle = isGroupContactKey(contactPhone)
+        ? this.pickAuthoritativeGroupTitle(profile?.displayName, contactPhone)
+        : null;
+      const remoteGroupTitle = isGroupContactKey(contactPhone)
+        ? remoteGroupTitles.get(contactPhone) ?? null
+        : null;
       const messageNames = isGroupContactKey(contactPhone)
-        ? [profileGroupTitle]
-        : [latest.direction === 'in' ? latest.contactName : null, profile?.displayName];
+        ? [remoteGroupTitle, profileGroupTitle, profile?.displayName]
+        : [
+            latest.direction === 'in' ? latest.contactName : null,
+            latest.direction === 'in' ? latest.senderName : null,
+            profile?.displayName,
+            lead?.contactName,
+            lead?.title,
+          ];
       const contactPhoneLabel = profile?.phoneLabel ?? formatPhoneLenient(contactPhone);
       const contactDisplayName = pickBestThreadContactName(
         messageNames,
@@ -991,10 +1767,26 @@ export class EvolutionInboxService {
         unreadCount: userId
           ? await this.countUnreadMessages(userId, latest.instanceId, contactPhone)
           : 0,
+        isArchived: false,
       });
     }
 
-    return this.mergeInboxThreads(draftThreads);
+    const merged = this.mergeInboxThreads(draftThreads);
+    const archiveFlags = await Promise.all(
+      merged.map((thread) => this.isContactArchived(thread.instanceId, thread.contactPhone)),
+    );
+    const withArchive = merged.map((thread, index) => ({
+      ...thread,
+      isArchived: archiveFlags[index] ?? false,
+    }));
+
+    if (view === 'archived') {
+      return withArchive.filter((thread) => thread.isArchived);
+    }
+    if (view === 'active') {
+      return withArchive.filter((thread) => !thread.isArchived);
+    }
+    return withArchive;
   }
 
   async listThreadMessages(
@@ -1002,6 +1794,7 @@ export class EvolutionInboxService {
     instanceId: string,
     contactPhone: string,
     limit = 300,
+    options?: { syncRemote?: boolean },
   ): Promise<EvolutionInboxMessageDto[]> {
     const contactKey = String(contactPhone ?? '').trim();
     if (!contactKey) throw new NotFoundException('Conversa não encontrada.');
@@ -1011,6 +1804,14 @@ export class EvolutionInboxService {
 
     if (userId) {
       await this.markThreadRead(userId, instanceId, contactKey);
+    }
+
+    if (options?.syncRemote !== false) {
+      try {
+        await this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey);
+      } catch {
+        /* Evolution indisponível: exibe histórico local */
+      }
     }
 
     const contactKeys = await this.resolveThreadContactKeys(instanceId, contactKey);
@@ -1040,11 +1841,15 @@ export class EvolutionInboxService {
 
     for (const message of parsed) {
       if (message.isGroup) {
-        const subject = message.groupName?.trim();
-        if (isPlausibleGroupTitle(subject)) {
+        const subject =
+          evolutionGroupSubjectTitle(message.groupName) ??
+          (message.groupName?.trim() && isPlausibleGroupTitle(message.groupName)
+            ? message.groupName.trim()
+            : null);
+        if (subject) {
           const prev = bestNameByKey.get(message.contactKey);
-          if (!prev || subject!.length > prev.length) {
-            bestNameByKey.set(message.contactKey, subject!);
+          if (!prev || subject.length > prev.length) {
+            bestNameByKey.set(message.contactKey, subject);
           }
         }
         if (message.remoteJid) jidByKey.set(message.contactKey, message.remoteJid);
@@ -1233,10 +2038,151 @@ export class EvolutionInboxService {
     return created;
   }
 
+  async backfillLidThreadsFromStoredPayloads(instanceId: string, limit = 400): Promise<number> {
+    const rows = await this.messages
+      .createQueryBuilder('m')
+      .where('m.instance_id = :instanceId', { instanceId })
+      .andWhere("m.contact_phone LIKE 'lid:%'")
+      .andWhere('m.media_payload IS NOT NULL AND TRIM(m.media_payload) <> \'\'')
+      .orderBy('m.message_at', 'DESC')
+      .take(limit)
+      .getMany();
+    const touched = new Set<string>();
+    let updated = 0;
+    for (const row of rows) {
+      const lidKey = String(row.contactPhone ?? '').trim();
+      if (!lidKey || touched.has(lidKey)) continue;
+      touched.add(lidKey);
+      const phoneKey = await this.rekeyThreadToPhoneIfKnown(instanceId, lidKey, row.mediaPayload);
+      if (phoneKey) updated += 1;
+    }
+    return updated;
+  }
+
+  /** Após conectar o WhatsApp: identidades primeiro, depois prévia leve das conversas. */
+  queueInboxBootstrapAfterConnect(instanceId: string, options?: { force?: boolean }): void {
+    const key = String(instanceId ?? '').trim();
+    if (!key) return;
+    const force = Boolean(options?.force);
+    const last = this.connectBootstrapAt.get(key) ?? 0;
+    if (!force && Date.now() - last < 20 * 60_000) return;
+    if (this.connectBootstrapInFlight.has(key)) return;
+
+    this.connectBootstrapInFlight.add(key);
+    this.connectBootstrapAt.set(key, Date.now());
+    void this.runInboxBootstrapAfterConnect(key)
+      .catch(() => {})
+      .finally(() => this.connectBootstrapInFlight.delete(key));
+  }
+
+  private chatRecencyFromRaw(raw: Record<string, unknown>): number {
+    const conv = Number(raw.conversationTimestamp ?? raw.t ?? 0);
+    if (Number.isFinite(conv) && conv > 0) return conv;
+    const last = raw.lastMessage as Record<string, unknown> | undefined;
+    const nested = last?.messageTimestamp ?? last?.timestamp ?? (last?.key as Record<string, unknown> | undefined)?.messageTimestamp;
+    const ts = Number(nested ?? 0);
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  private async seedProfilesFromRemoteChats(
+    instanceId: string,
+    chats: EvolutionRemoteChatRow[],
+  ): Promise<void> {
+    const seen = new Set<string>();
+    for (const chat of chats) {
+      const entry = this.remoteContacts.profileFromEvolutionRecord(chat.raw);
+      if (!entry) continue;
+      const contactKey = String(entry.contactKey ?? '').trim();
+      if (!contactKey || contactKey === 'unknown' || seen.has(contactKey)) continue;
+      seen.add(contactKey);
+      await this.upsertContactProfile({
+        instanceId,
+        contactKey,
+        displayName: entry.displayName,
+        phoneLabel: entry.phoneLabel,
+        remoteJid: entry.remoteJid ?? chat.remoteJid,
+        avatarUrl: entry.avatarUrl,
+      });
+      if (entry.avatarUrl?.startsWith('http')) {
+        await this.contactAvatars
+          .persistProfileAvatar(instanceId, contactKey, entry.avatarUrl)
+          .catch(() => {});
+      }
+    }
+  }
+
+  private isWeakGroupSenderLabel(sender: string | null | undefined): boolean {
+    const value = String(sender ?? '').trim();
+    if (!value) return true;
+    if (/^\d{3,6}$/.test(value)) return true;
+    if (/^whatsapp\s*···/i.test(value)) return true;
+    return false;
+  }
+
+  private async runInboxBootstrapAfterConnect(instanceId: string): Promise<void> {
+    const instance = await this.instances.findOne({
+      where: { id: instanceId, active: true },
+      select: ['id', 'name', 'defaultOwnerUserId', 'autoCreateLeads'],
+    });
+    if (!instance) return;
+
+    const chats = await this.remoteChats.fetchChats(instanceId);
+    const sorted = [...chats].sort(
+      (a, b) => this.chatRecencyFromRaw(b.raw) - this.chatRecencyFromRaw(a.raw),
+    );
+    const targets = sorted.slice(0, INBOX_BOOTSTRAP_CHAT_LIMIT);
+
+    await this.seedProfilesFromRemoteChats(instanceId, sorted);
+    const lidAliases = await this.remoteContacts.fetchLidPhoneAliases(instanceId);
+    await this.reconcileLidContactPhones(instanceId, lidAliases);
+    await this.refreshRemoteGroupTitleCache(instanceId).catch(() => {});
+    await this.syncContactNamesFromEvolution(instanceId, { bootstrap: true });
+    this.inboxRealtime.notifyThreadsUpdated(instanceId);
+
+    void this.syncChatArchiveFromRemote(instanceId).catch(() => 0);
+
+    if (!targets.length) return;
+
+    const ownerUserId = await this.resolveOwnerUserId(instance);
+
+    const ingestChat = async (chat: EvolutionRemoteChatRow) => {
+      const jid = String(chat.remoteJid ?? '').trim();
+      if (!jid) return;
+      const payload = await this.remoteMessages.fetchMessagesForJid(
+        instanceId,
+        jid,
+        INBOX_BOOTSTRAP_MESSAGES_PER_CHAT,
+      );
+      for (const parsed of parseEvolutionMessagePayload(payload)) {
+        await this.ingestFromInstance(instance, { ownerUserId, parsed });
+      }
+    };
+
+    for (let offset = 0; offset < targets.length; offset += INBOX_BOOTSTRAP_CHAT_CONCURRENCY) {
+      const slice = targets.slice(offset, offset + INBOX_BOOTSTRAP_CHAT_CONCURRENCY);
+      await Promise.all(slice.map((chat) => ingestChat(chat)));
+    }
+
+    await this.backfillLidThreadsFromStoredPayloads(instanceId, 120);
+    await this.backfillNamesFromStoredMessages(instanceId);
+    await this.backfillGroupThreadNames(instanceId).catch(() => 0);
+    await this.refreshRemoteGroupTitleCache(instanceId).catch(() => {});
+    await this.syncContactNamesFromEvolution(instanceId, { bootstrap: true, postIngest: true });
+    this.inboxRealtime.notifyThreadsUpdated(instanceId);
+  }
+
   async syncContactNamesFromEvolution(
     instanceId: string,
+    options?: { bootstrap?: boolean; postIngest?: boolean },
   ): Promise<{ updated: number; avatars: number; avatarsStored: number }> {
-    await this.ensureThreadProfilesFromMessages(instanceId);
+    const bootstrap = Boolean(options?.bootstrap);
+    const postIngest = Boolean(options?.postIngest);
+    if (!postIngest) {
+      await this.backfillLidThreadsFromStoredPayloads(instanceId, bootstrap ? 80 : 400);
+    }
+    if (!bootstrap && !postIngest) {
+      await this.ensureThreadProfilesFromMessages(instanceId);
+    }
     await this.messages.update({ instanceId, direction: 'out' }, { contactName: null });
     await this.backfillNamesFromStoredMessages(instanceId);
     const lidAliases = await this.remoteContacts.fetchLidPhoneAliases(instanceId);
@@ -1295,7 +2241,23 @@ export class EvolutionInboxService {
       }
     }
 
-    profiles = await this.remoteContacts.enrichAvatars(instanceId, profiles, 400);
+    const avatarLimit = bootstrap ? INBOX_BOOTSTRAP_AVATAR_LIMIT : 400;
+    if (bootstrap && profiles.length > avatarLimit) {
+      const chats = await this.remoteChats.fetchChats(instanceId);
+      const priorityKeys = new Set(
+        [...chats]
+          .sort((a, b) => this.chatRecencyFromRaw(b.raw) - this.chatRecencyFromRaw(a.raw))
+          .slice(0, INBOX_BOOTSTRAP_CHAT_LIMIT)
+          .map((row) => row.contactKey),
+      );
+      profiles.sort((a, b) => {
+        const aPri = priorityKeys.has(a.contactKey) ? 1 : 0;
+        const bPri = priorityKeys.has(b.contactKey) ? 1 : 0;
+        if (aPri !== bPri) return bPri - aPri;
+        return a.displayName.length - b.displayName.length;
+      });
+    }
+    profiles = await this.remoteContacts.enrichAvatars(instanceId, profiles, avatarLimit);
 
     let updated = 0;
     let avatars = 0;
@@ -1348,6 +2310,11 @@ export class EvolutionInboxService {
         );
       }
     }
+    if (bootstrap) {
+      await this.backfillGroupThreadNames(instanceId).catch(() => 0);
+      return { updated, avatars, avatarsStored };
+    }
+
     avatarsStored += await this.contactAvatars.persistMissingAvatarsForInstance(instanceId);
     const avatarRefresh = await this.contactAvatars.refreshAvatarsDetectingChanges(instanceId);
     avatarsStored += avatarRefresh.updated;
@@ -1357,6 +2324,74 @@ export class EvolutionInboxService {
     await this.backfillMessageBodiesFromPayload(instanceId);
     await this.repairReactionMessages(instanceId);
     return { updated, avatars, avatarsStored };
+  }
+
+  private async remoteGroupTitlesForInstance(instanceId: string): Promise<Map<string, string>> {
+    const now = Date.now();
+    const hit = this.remoteGroupTitleCache.get(instanceId);
+    if (hit && now - hit.at < 2 * 60_000) return hit.titles;
+
+    await this.refreshRemoteGroupTitleCache(instanceId);
+    return this.remoteGroupTitleCache.get(instanceId)?.titles ?? new Map();
+  }
+
+  private async refreshRemoteGroupTitleCache(instanceId: string): Promise<void> {
+    const profiles = await this.remoteContacts.fetchContactProfiles(instanceId);
+    const titles = new Map<string, string>();
+    for (const entry of profiles) {
+      if (!isGroupContactKey(entry.contactKey)) continue;
+      const title = evolutionGroupSubjectTitle(entry.displayName, { trustRemote: true });
+      if (title) titles.set(entry.contactKey, title);
+    }
+    this.remoteGroupTitleCache.set(instanceId, { at: Date.now(), titles });
+  }
+
+  private pickAuthoritativeGroupTitle(
+    displayName: string | null | undefined,
+    contactKey: string,
+  ): string | null {
+    const auth = evolutionGroupSubjectTitle(displayName);
+    if (auth && !isLikelyParticipantName(stripEmojiForNameHeuristic(displayName ?? ''))) {
+      return auth;
+    }
+    const trimmed = stripEmojiForNameHeuristic(displayName ?? '');
+    if (
+      trimmed &&
+      !isGenericGroupThreadName(trimmed, contactKey) &&
+      !isLikelyParticipantName(trimmed) &&
+      isPlausibleGroupTitle(trimmed)
+    ) {
+      return trimmed;
+    }
+    return null;
+  }
+
+  private async bestGroupTitleFromStoredPayloads(
+    instanceId: string,
+    contactKey: string,
+  ): Promise<string | null> {
+    const rows = await this.messages.find({
+      where: { instanceId, contactPhone: contactKey },
+      order: { messageAt: 'DESC' },
+      take: 40,
+      select: ['id', 'mediaPayload'],
+    });
+    let best: string | null = null;
+    for (const row of rows) {
+      if (!row.mediaPayload?.trim()) continue;
+      try {
+        const payload = JSON.parse(row.mediaPayload) as Record<string, unknown>;
+        const subject = extractGroupSubjectFromRecord(payload);
+        const title =
+          evolutionGroupSubjectTitle(subject) ??
+          (subject && isPlausibleGroupTitle(subject) ? subject : null);
+        if (!title) continue;
+        if (!best || title.length > best.length) best = title;
+      } catch {
+        /* ignora */
+      }
+    }
+    return best;
   }
 
   async backfillGroupThreadNames(instanceId: string): Promise<number> {
@@ -1371,7 +2406,7 @@ export class EvolutionInboxService {
     for (const entry of remoteProfiles) {
       if (!isGroupContactKey(entry.contactKey)) continue;
       const title =
-        evolutionGroupSubjectTitle(entry.displayName) ??
+        evolutionGroupSubjectTitle(entry.displayName, { trustRemote: true }) ??
         (isPlausibleGroupTitle(entry.displayName) ? entry.displayName : null);
       if (!title) continue;
 
@@ -1393,17 +2428,25 @@ export class EvolutionInboxService {
     for (const profile of groupProfiles) {
       if (!isGroupContactKey(profile.contactKey)) continue;
       const remote = remoteByKey.get(profile.contactKey);
-      const remoteTitle = remote && isPlausibleGroupTitle(remote.displayName) ? remote.displayName : null;
-      const currentTitle = isPlausibleGroupTitle(profile.displayName) ? profile.displayName : null;
+      const remoteTitle =
+        remote &&
+        (evolutionGroupSubjectTitle(remote.displayName, { trustRemote: true }) ??
+          (isPlausibleGroupTitle(remote.displayName) &&
+          !isLikelyParticipantName(stripEmojiForNameHeuristic(remote.displayName))
+            ? remote.displayName
+            : null));
+      const currentTitle = this.pickAuthoritativeGroupTitle(profile.displayName, profile.contactKey);
       const contaminated =
-        Boolean(profile.displayName?.trim()) &&
-        (isLikelyParticipantName(profile.displayName) || !isPlausibleGroupTitle(profile.displayName));
-      if (!contaminated && currentTitle) continue;
+        !currentTitle ||
+        isGenericGroupThreadName(profile.displayName, profile.contactKey) ||
+        isLikelyParticipantName(stripEmojiForNameHeuristic(profile.displayName ?? ''));
+      if (!contaminated && currentTitle && remoteTitle && remoteTitle === currentTitle) continue;
+      if (!contaminated && currentTitle && !remoteTitle) continue;
 
-      const nextTitle =
-        remoteTitle ??
-        currentTitle ??
-        pickBestGroupThreadName([remote?.displayName, profile.displayName], profile.contactKey);
+      const nextTitle = pickBestGroupThreadName(
+        remoteTitle ? [remoteTitle] : [currentTitle, remote?.displayName, profile.displayName],
+        profile.contactKey,
+      );
 
       if (nextTitle !== profile.displayName) {
         profile.displayName = nextTitle;

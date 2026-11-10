@@ -62,7 +62,10 @@ import { EvolutionInstance } from './evolution/evolution-instance.entity';
 import { EvolutionMessage } from './evolution/evolution-message.entity';
 import { EvolutionContactProfile } from './evolution/evolution-contact-profile.entity';
 import { EvolutionInboxRead } from './evolution/evolution-inbox-read.entity';
+import { EvolutionInboxDeviceRead } from './evolution/evolution-inbox-device-read.entity';
+import { EvolutionInboxThreadArchive } from './evolution/evolution-inbox-thread-archive.entity';
 import { SystemSetting } from './system-settings/system-setting.entity';
+import { ChangelogModule } from './changelog/changelog.module';
 
 @Module({
   imports: [
@@ -125,6 +128,8 @@ import { SystemSetting } from './system-settings/system-setting.entity';
             EvolutionMessage,
             EvolutionContactProfile,
             EvolutionInboxRead,
+            EvolutionInboxDeviceRead,
+            EvolutionInboxThreadArchive,
             SystemSetting,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
@@ -163,6 +168,7 @@ import { SystemSetting } from './system-settings/system-setting.entity';
     SupportModule,
     AcafAssociationModule,
     EvolutionModule,
+    ChangelogModule,
   ],
 })
 export class AppModule {}

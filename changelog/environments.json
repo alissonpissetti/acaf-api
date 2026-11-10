@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "environments": [
+    {
+      "id": "adm",
+      "label": "Admin",
+      "folder": "acaf-adm",
+      "aliases": ["admin", "painel", "adm"]
+    },
+    {
+      "id": "api",
+      "label": "API",
+      "folder": "acaf-api",
+      "aliases": ["api", "backend"]
+    },
+    {
+      "id": "partner",
+      "label": "Parceiro",
+      "folder": "acaf-partner",
+      "aliases": ["partner", "parceiro"]
+    },
+    {
+      "id": "app",
+      "label": "App",
+      "folder": "acaf-app",
+      "aliases": ["app", "mobile"]
+    },
+    {
+      "id": "corporate",
+      "label": "Corporativo",
+      "folder": "acaf-corporate",
+      "aliases": ["corporate", "corporativo"]
+    },
+    {
+      "id": "site",
+      "label": "Site",
+      "folder": "acaf-site",
+      "aliases": ["site", "website"]
+    },
+    {
+      "id": "associacao",
+      "label": "Associação",
+      "folder": "acaf-association",
+      "aliases": ["associacao", "association", "acaf"]
+    }
+  ],
+  "infra": [
+    {
+      "id": "plataforma",
+      "label": "Plataforma",
+      "folders": ["changelog/", "scripts/", ".githooks/", "_brand-extract/"]
+    }
+  ],
+  "legacyAreaIds": {
+    "parceiro": "partner",
+    "corporativo": "corporate",
+    "painel-admin": "adm"
+  }
+}

@@ -99,9 +99,7 @@ export class EvolutionInstancesService {
     return {
       enabled: true,
       url,
-      webhookByEvents: false,
       byEvents: false,
-      webhookBase64: false,
       base64: false,
       events: [...EVOLUTION_WEBHOOK_EVENTS],
       ...(headers ? { headers } : {}),
@@ -114,40 +112,27 @@ export class EvolutionInstancesService {
     instanceKey: string,
   ): Promise<void> {
     const webhook = await this.buildEvolutionWebhookPayload();
-    const webhookUrl = String(webhook.url ?? '');
     const endpoint = `${remote.baseUrl}/webhook/set/${encodeURIComponent(instanceKey)}`;
-    const attempts: Record<string, unknown>[] = [
-      { webhook },
-      {
-        enabled: true,
-        url: webhookUrl,
-        webhookByEvents: false,
-        byEvents: false,
-        webhookBase64: false,
-        base64: false,
-        events: webhook.events,
-        ...(webhook.headers ? { headers: webhook.headers } : {}),
-      },
-    ];
+    const body = { webhook };
 
-    let lastError = '';
-    for (const body of attempts) {
-      try {
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: this.evolutionHeaders(remote.apiKey),
-          body: JSON.stringify(body),
-        });
-        if (response.ok) return;
-        lastError = await response.text();
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
-      }
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: this.evolutionHeaders(remote.apiKey),
+        body: JSON.stringify(body),
+      });
+      if (response.ok || response.status === 201) return;
+      const lastError = await response.text();
+      throw new BadRequestException(
+        `Não foi possível registrar o webhook na Evolution para «${instanceKey}»: ${lastError.slice(0, 280)}`,
+      );
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      const lastError = err instanceof Error ? err.message : String(err);
+      throw new BadRequestException(
+        `Não foi possível registrar o webhook na Evolution para «${instanceKey}»: ${lastError.slice(0, 280)}`,
+      );
     }
-
-    throw new BadRequestException(
-      `Não foi possível registrar o webhook na Evolution para «${instanceKey}»: ${lastError.slice(0, 200)}`,
-    );
   }
 
   private extractRemoteInstanceNames(payload: unknown): string[] {
@@ -278,16 +263,29 @@ export class EvolutionInstancesService {
   private async deleteRemoteInstance(
     remote: { baseUrl: string; apiKey: string },
     instanceKey: string,
-  ): Promise<void> {
-    const url = `${remote.baseUrl}/instance/delete/${encodeURIComponent(instanceKey)}`;
+  ): Promise<{ ok: boolean; message?: string }> {
+    const encoded = encodeURIComponent(instanceKey);
+    const url = `${remote.baseUrl}/instance/delete/${encoded}`;
+    const headers = this.evolutionHeaders(remote.apiKey);
+
+    const tryRequest = async (method: 'DELETE' | 'POST') => {
+      const response = await fetch(url, { method, headers });
+      if (response.ok || response.status === 404) return { ok: true as const };
+      const text = await response.text();
+      return { ok: false as const, message: this.formatEvolutionHttpError(response.status, text) };
+    };
+
     try {
-      const response = await fetch(url, {
-        method: 'DELETE',
-        headers: { apikey: remote.apiKey },
-      });
-      if (response.ok || response.status === 404) return;
-    } catch {
-      // Mantém exclusão local mesmo se a Evolution estiver indisponível.
+      let result = await tryRequest('DELETE');
+      if (!result.ok) {
+        result = await tryRequest('POST');
+      }
+      return result.ok ? { ok: true } : { ok: false, message: result.message };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : 'Falha ao contactar a Evolution API.',
+      };
     }
   }
 
@@ -493,12 +491,16 @@ export class EvolutionInstancesService {
       if (!owner && meta?.ownerJid) owner = meta.ownerJid;
 
       if (persist) {
+        const previous = String(row.connectionState ?? '').trim().toLowerCase();
         const phone = this.formatPhoneFromOwner(owner);
         const patch: Partial<EvolutionInstance> = { connectionState: state };
         if (phone) patch.connectedPhone = phone;
         await this.instances.update(row.id, patch);
         row.connectionState = state;
         if (phone) row.connectedPhone = phone;
+        if (this.isConnectedState(state) && !this.isConnectedState(previous)) {
+          this.inbox.queueInboxBootstrapAfterConnect(row.id, { force: true });
+        }
       }
 
       return { ok: true, state };
@@ -775,11 +777,17 @@ export class EvolutionInstancesService {
     return this.getById(id);
   }
 
-  async remove(id: string): Promise<{ ok: true }> {
+  async remove(id: string): Promise<{ ok: true; warning?: string }> {
     const row = await this.findWithSecret(id);
     const remote = await this.resolveRemoteApi(row);
-    await this.deleteRemoteInstance(remote, row.instanceKey);
+    const deleted = await this.deleteRemoteInstance(remote, row.instanceKey);
     await this.instances.remove(row);
+    if (!deleted.ok) {
+      return {
+        ok: true,
+        warning: `Removida no ACAF, mas a Evolution ainda tem a instância «${row.instanceKey}». ${deleted.message ?? 'Exclua na Evolution ou use outro nome ao recriar.'}`,
+      };
+    }
     return { ok: true };
   }
 
@@ -798,6 +806,9 @@ export class EvolutionInstancesService {
     const result = await this.testConnection(id, { persist: true });
     if (!result.ok) {
       throw new BadRequestException(result.message ?? 'Não foi possível atualizar o status da instância.');
+    }
+    if (this.isConnectedState(result.state ?? row.connectionState)) {
+      this.inbox.queueInboxBootstrapAfterConnect(id, { force: true });
     }
     return this.getById(id);
   }
@@ -923,6 +934,8 @@ export class EvolutionInstancesService {
     const { imported, total } = await this.inbound.ingestMessagePayload(row.id, payload);
     const mediaPatched = await this.inbox.backfillMessageMediaFromPayload(row.id, payload);
     await this.inbox.applyPushNamesFromPayload(row.id, payload);
+    await this.inbox.syncChatArchiveFromRemote(row.id).catch(() => 0);
+    await this.inbox.backfillLidThreadsFromStoredPayloads(row.id).catch(() => 0);
     const { avatars, avatarsStored, updated: namesUpdated } =
       await this.inbox.syncContactNamesFromEvolution(row.id);
     const mediaStored = await this.inbox.syncMessageMediaToStorage(row.id, 500);

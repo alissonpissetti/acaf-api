@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "bootstrap-changelog",
+      "commitSha": null,
+      "committedAt": "2026-11-10T10:30:00.000-03:00",
+      "title": "Histórico de novidades no painel admin",
+      "summary": "Acompanhe as mudanças do projeto em um só lugar, no time e no futuro com clientes e parceiros.",
+      "category": "feature",
+      "areas": ["adm", "api", "plataforma"],
+      "highlights": [
+        "Página «Atualizações» no módulo Sistema",
+        "Registro automático a cada commit (com o hook do Git configurado)",
+        "Texto amigável a partir da mensagem de commit e da seção «Changelog:»",
+        "Filtro por ambiente: admin, API, parceiro, app, corporativo, site"
+      ],
+      "author": "Equipe Movly",
+      "audience": "internal",
+      "published": true
+    }
+  ]
+}

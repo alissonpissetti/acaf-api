@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, Query, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -15,11 +15,30 @@ type InboxAuthRequest = Request & { user?: { userId: string } };
 export class EvolutionInboxController {
   constructor(private readonly inbox: EvolutionInboxService) {}
 
+  @Get('instances')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  listInstancesWithHistory() {
+    return this.inbox.listInstancesWithMessageHistory();
+  }
+
   @Get('threads')
   @RequirePermissions('sistema.evolution', 'comercial.leads')
-  listThreads(@Req() req: InboxAuthRequest, @Query('instanceId') instanceId?: string) {
+  listThreads(
+    @Req() req: InboxAuthRequest,
+    @Query('instanceId') instanceId?: string,
+    @Query('view') view?: 'active' | 'archived' | 'all',
+    @Query('light') light?: string,
+  ) {
     const userId = req.user?.userId ?? '';
-    return this.inbox.listThreads(userId, instanceId ? { instanceId } : undefined);
+    const safeView =
+      view === 'archived' || view === 'all' || view === 'active' ? view : 'active';
+    const lightList = light === '1' || light === 'true';
+    return this.inbox.listThreads(
+      userId,
+      instanceId
+        ? { instanceId, view: safeView, light: lightList }
+        : { view: safeView, light: lightList },
+    );
   }
 
   @Get('threads/:instanceId/:contactPhone/avatar')
@@ -33,6 +52,43 @@ export class EvolutionInboxController {
     res.setHeader('Content-Type', mime);
     res.setHeader('Cache-Control', 'private, max-age=3600');
     return new StreamableFile(buffer);
+  }
+
+  @Post('instances/:instanceId/sync-archives')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  async syncArchives(@Param('instanceId') instanceId: string) {
+    const updated = await this.inbox.syncChatArchiveFromRemote(instanceId);
+    return { ok: true, updated };
+  }
+
+  @Post('threads/:instanceId/:contactPhone/archive')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  async setThreadArchived(
+    @Param('instanceId') instanceId: string,
+    @Param('contactPhone') contactPhone: string,
+    @Body() body: { archive?: boolean; syncWhatsApp?: boolean },
+  ) {
+    return this.inbox.setThreadArchived({
+      instanceId,
+      contactKey: decodeURIComponent(contactPhone),
+      archive: body?.archive !== false,
+      syncWhatsApp: body?.syncWhatsApp,
+    });
+  }
+
+  @Post('threads/:instanceId/:contactPhone/unarchive')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  async setThreadUnarchived(
+    @Param('instanceId') instanceId: string,
+    @Param('contactPhone') contactPhone: string,
+    @Body() body: { syncWhatsApp?: boolean },
+  ) {
+    return this.inbox.setThreadArchived({
+      instanceId,
+      contactKey: decodeURIComponent(contactPhone),
+      archive: false,
+      syncWhatsApp: body?.syncWhatsApp,
+    });
   }
 
   @Post('threads/:instanceId/:contactPhone/read')
@@ -54,14 +110,17 @@ export class EvolutionInboxController {
     @Param('instanceId') instanceId: string,
     @Param('contactPhone') contactPhone: string,
     @Query('limit') limit?: string,
+    @Query('remote') remote?: string,
   ) {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : 200;
     const userId = req.user?.userId ?? null;
+    const syncRemote = remote !== '0' && remote !== 'false';
     return this.inbox.listThreadMessages(
       userId,
       instanceId,
       decodeURIComponent(contactPhone),
       Number.isFinite(parsedLimit) ? parsedLimit : 200,
+      { syncRemote },
     );
   }
 

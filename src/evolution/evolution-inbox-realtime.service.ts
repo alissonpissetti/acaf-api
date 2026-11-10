@@ -31,6 +31,17 @@ export class EvolutionInboxRealtimeService {
     this.server = server;
   }
 
+  notifyThreadsUpdated(instanceId: string) {
+    const server = this.server;
+    if (!server) return;
+    server.to(EvolutionInboxRealtimeService.instanceRoom(instanceId)).emit('threads_updated', {
+      instanceId,
+    });
+    server.to(EvolutionInboxRealtimeService.inboxRoom()).emit('threads_updated', {
+      instanceId,
+    });
+  }
+
   notifyThreadActivity(payload: EvolutionInboxThreadActivityPayload) {
     const server = this.server;
     if (!server) return;
@@ -49,11 +60,15 @@ export class EvolutionInboxRealtimeService {
       const threadRoom = EvolutionInboxRealtimeService.threadRoom(payload.instanceId, contactPhone);
       server.to(threadRoom).emit('thread_activity', payload);
     }
-    server.to(instanceRoom).emit('threads_updated', {
-      instanceId: payload.instanceId,
-    });
-    server.to(inboxRoom).emit('threads_updated', {
-      instanceId: payload.instanceId,
-    });
+    server.to(instanceRoom).emit('thread_activity', payload);
+    server.to(inboxRoom).emit('thread_activity', payload);
+    if (!payload.message?.id) {
+      server.to(instanceRoom).emit('threads_updated', {
+        instanceId: payload.instanceId,
+      });
+      server.to(inboxRoom).emit('threads_updated', {
+        instanceId: payload.instanceId,
+      });
+    }
   }
 }

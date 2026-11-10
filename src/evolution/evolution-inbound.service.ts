@@ -10,7 +10,12 @@ import {
   collectEvolutionMessageRows,
   parseEvolutionMessagePayload,
 } from './evolution-message.parser';
-import { isEvolutionMessageWebhookEvent } from './evolution-webhook.constants';
+import {
+  isEvolutionChatWebhookEvent,
+  isEvolutionContactWebhookEvent,
+  isEvolutionGroupWebhookEvent,
+  isEvolutionMessageWebhookEvent,
+} from './evolution-webhook.constants';
 
 type EvolutionWebhookBody = {
   event?: string;
@@ -106,16 +111,44 @@ export class EvolutionInboundService {
       return { ok: true, kind: 'connection' };
     }
 
-    if (!isEvolutionMessageWebhookEvent(event)) {
-      return { ok: true, ignored: event || 'evento não tratado' };
+    if (isEvolutionChatWebhookEvent(event)) {
+      const updated = await this.inbox.applyChatsSyncFromWebhook(instance.id, body.data ?? body);
+      return { ok: true, kind: 'chats', updated };
     }
 
-    let messageSource: unknown = body.data;
+    if (isEvolutionGroupWebhookEvent(event)) {
+      void this.inbox.backfillGroupThreadNames(instance.id).catch(() => {});
+      return { ok: true, kind: 'groups' };
+    }
+
+    if (isEvolutionContactWebhookEvent(event)) {
+      void this.inbox
+        .applyPushNamesFromPayload(instance.id, body.data ?? body)
+        .catch(() => {});
+      return { ok: true, kind: 'contacts' };
+    }
+
+    let messageSource: unknown = body.data ?? body;
     if (!collectEvolutionMessageRows(messageSource).length) {
       messageSource = body;
     }
-    const messages = parseEvolutionMessagePayload(messageSource);
+    const hasMessagePayload =
+      collectEvolutionMessageRows(messageSource).length > 0 ||
+      collectEvolutionMessageRows(body).length > 0;
+
+    if (!isEvolutionMessageWebhookEvent(event) && !hasMessagePayload) {
+      return { ok: true, kind: 'event', event: body.event ?? event };
+    }
+
+    let messages = parseEvolutionMessagePayload(messageSource);
+    if (!messages.length && collectEvolutionMessageRows(body).length) {
+      messages = parseEvolutionMessagePayload(body);
+    }
+    if (!messages.length) {
+      return { ok: true, kind: 'messages', ignored: 'sem mensagens parseáveis', event: body.event ?? event };
+    }
     await this.inbox.backfillMessageMediaFromPayload(instance.id, messageSource);
+    await this.inbox.applyPushNamesFromPayload(instance.id, messageSource).catch(() => {});
     const ownerUserId = await this.resolveOwnerUserId(instance);
     const results: Array<{
       leadId: string | null;
@@ -138,10 +171,21 @@ export class EvolutionInboundService {
   private async applyConnectionState(instance: EvolutionInstance, data: unknown) {
     const state = this.readConnectionState(data);
     if (!state) return;
+    const previous = String(instance.connectionState ?? '')
+      .trim()
+      .toLowerCase();
     instance.connectionState = state;
     const phone = this.readConnectedPhone(data);
     if (phone) instance.connectedPhone = phone;
     await this.instances.save(instance);
+    const normalized = state.toLowerCase();
+    if (this.isWhatsAppSessionOpen(normalized) && !this.isWhatsAppSessionOpen(previous)) {
+      this.inbox.queueInboxBootstrapAfterConnect(instance.id, { force: true });
+    }
+  }
+
+  private isWhatsAppSessionOpen(state: string): boolean {
+    return state === 'open' || state === 'connected' || state === 'online';
   }
 
   private readConnectionState(data: unknown): string | null {
