@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "a9a8c1ac-1291-474b-a0ef-ef79f5121cb5",
+      "commitSha": "3fc55fb07fadb00d4a86c9348d0ea58ea5ed3aa6",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-10T17:42:31-03:00",
+      "title": "Atualiza changelog.json",
+      "summary": null,
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "816766a2-7d23-432a-9bb4-a8f792d91b3f",
       "commitSha": "f7a4a024419d855777e52ce785b5fbf7dd73c88b",
       "repository": "api",
