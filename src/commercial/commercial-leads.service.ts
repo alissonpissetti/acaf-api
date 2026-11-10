@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
   formatCnpj,
+  formatMobilePhone,
   isValidCnpj,
   isValidMobilePhone,
   normalizeCnpj,
@@ -1156,5 +1157,78 @@ export class CommercialLeadsService {
     }
 
     return map;
+  }
+
+  async findOpenLeadByPhone(phone: string): Promise<CommercialLead | null> {
+    const digits = normalizeMobilePhone(phone);
+    if (!digits) return null;
+
+    const direct = await this.leads.findOne({ where: { phone: digits } });
+    if (direct) return direct;
+
+    const contact = await this.leadContacts
+      .createQueryBuilder('contact')
+      .where('contact.phone = :phone', { phone: digits })
+      .orderBy('contact.createdAt', 'DESC')
+      .getOne();
+    if (!contact) return null;
+
+    return this.leads.findOne({ where: { id: contact.leadId } });
+  }
+
+  /** Mensagem inbound WhatsApp: reusa lead por telefone ou cria lead básico no funil padrão. */
+  async ensureLeadFromWhatsAppInbox(input: {
+    phone: string;
+    pushName?: string | null;
+    messageText: string;
+    externalId: string;
+    ownerUserId: string;
+    createdByUserId: string;
+    instanceLabel: string;
+  }): Promise<{ leadId: string; created: boolean }> {
+    const existing = await this.findOpenLeadByPhone(input.phone);
+    const preview = input.messageText.trim().slice(0, 500);
+
+    if (existing) {
+      if (preview) {
+        await this.ingestWhatsAppInteraction(existing.id, preview, input.externalId);
+      }
+      return { leadId: existing.id, created: false };
+    }
+
+    const digits = normalizeMobilePhone(input.phone);
+    const title =
+      input.pushName?.trim() ||
+      (digits && isValidMobilePhone(digits)
+        ? `WhatsApp ${formatMobilePhone(digits)}`
+        : `WhatsApp ${input.phone}`);
+
+    const lead = await this.create(
+      {
+        title,
+        phone: digits && isValidMobilePhone(digits) ? digits : undefined,
+        contactName: input.pushName?.trim() || undefined,
+        contacts:
+          digits && isValidMobilePhone(digits)
+            ? [
+                {
+                  name: input.pushName?.trim() || title,
+                  phone: digits,
+                  isPrimary: true,
+                },
+              ]
+            : undefined,
+        notes: `Origem: instância WhatsApp «${input.instanceLabel}».`,
+        ownerUserId: input.ownerUserId,
+        temperature: 'warm',
+      },
+      input.createdByUserId,
+    );
+
+    if (preview) {
+      await this.ingestWhatsAppInteraction(lead.id, preview, input.externalId);
+    }
+
+    return { leadId: lead.id, created: true };
   }
 }

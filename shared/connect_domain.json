@@ -2,6 +2,8 @@
   "schemaVersion": 2,
   "connectFeePercent": 22.01,
   "dailyFeePercent": 22.01,
+  "evolutionApiBaseUrl": "",
+  "evolutionApiKey": "",
   "corporateBenefitPerMonth": 44.9,
   "feeModel": {
     "gymPortalVisible": "20% sobre o valor de cada diária e sobre o total mensal dos planos de assinatura (colaborador + benefício corporativo).",

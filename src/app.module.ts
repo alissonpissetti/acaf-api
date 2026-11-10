@@ -57,6 +57,10 @@ import { SupportTicket } from './support/support-ticket.entity';
 import { SupportQueue } from './support/support-queue.entity';
 import { SupportModule } from './support/support.module';
 import { AcafAssociationModule } from './acaf-association/acaf-association.module';
+import { EvolutionModule } from './evolution/evolution.module';
+import { EvolutionInstance } from './evolution/evolution-instance.entity';
+import { EvolutionMessage } from './evolution/evolution-message.entity';
+import { SystemSetting } from './system-settings/system-setting.entity';
 
 @Module({
   imports: [
@@ -115,6 +119,9 @@ import { AcafAssociationModule } from './acaf-association/acaf-association.modul
             SupportTicketMessage,
             SupportQueue,
             PartnerOnboardingInvite,
+            EvolutionInstance,
+            EvolutionMessage,
+            SystemSetting,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,
@@ -151,6 +158,7 @@ import { AcafAssociationModule } from './acaf-association/acaf-association.modul
     NotificationsModule,
     SupportModule,
     AcafAssociationModule,
+    EvolutionModule,
   ],
 })
 export class AppModule {}

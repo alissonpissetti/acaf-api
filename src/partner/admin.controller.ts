@@ -383,7 +383,7 @@ export class AdminController {
   }
 
   @Patch('connect-domain')
-  updateConnectDomain(
+  async updateConnectDomain(
     @Body()
     body: {
       connectFeePercent?: number;
@@ -395,9 +395,12 @@ export class AdminController {
         tierIndex: number;
         description: string;
       }>;
+      evolutionApiBaseUrl?: string;
+      evolutionApiKey?: string;
+      apiPublicBaseUrl?: string;
     },
   ) {
-    return this.admin.updateConnectDomain(body);
+    return await this.admin.updateConnectDomain(body);
   }
 
   @Get('modalities')

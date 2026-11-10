@@ -19,6 +19,12 @@ import { CorporateAccessService } from '../corporate/corporate-access.service';
 import { CorporateCompaniesService } from '../corporate/corporate-companies.service';
 import { CorporateEmployeesService } from '../corporate/corporate-employees.service';
 import type { Company, CompanyStatus } from '../corporate/company.entity';
+import {
+  normalizeEvolutionBaseUrl,
+  SYSTEM_SETTING_KEYS,
+  SystemSettingsService,
+} from '../system-settings/system-settings.service';
+import { EvolutionInstance } from '../evolution/evolution-instance.entity';
 import { getDomain, loadStore, saveDomain, updateStore, updateStoreIf } from './store';
 import type {
   AcafAssociateMeta,
@@ -119,6 +125,9 @@ export class AdminService {
     private readonly payables: Repository<AccountPayable>,
     @InjectRepository(Supplier)
     private readonly suppliers: Repository<Supplier>,
+    @InjectRepository(EvolutionInstance)
+    private readonly evolutionInstances: Repository<EvolutionInstance>,
+    private readonly systemSettings: SystemSettingsService,
   ) {}
 
   private withUnitCount(network: AdminNetwork): AdminNetwork & { unitCount: number } {
@@ -1067,27 +1076,77 @@ export class AdminService {
 
   async getConnectDomain(): Promise<ConnectDomain> {
     const domain = getDomain() as ConnectDomain;
+    const snapshot = await this.systemSettings.getAdminSnapshot();
+    domain.connectFeePercent = snapshot.connectFeePercent;
+    domain.dailyFeePercent = snapshot.dailyFeePercent;
+    domain.evolutionApiBaseUrl = snapshot.evolutionApiBaseUrl;
+    domain.evolutionApiKeySet = snapshot.evolutionApiKeySet;
+    domain.evolutionApiKey = snapshot.evolutionApiKeySet ? '••••••••' : '';
+    domain.apiPublicBaseUrl = snapshot.apiPublicBaseUrl;
+    domain.evolutionWebhookUrl = snapshot.evolutionWebhookUrl;
     domain.modalityCatalog = await this.modalities.listActiveNames();
     return domain;
   }
 
-  updateConnectDomain(body: {
+  async updateConnectDomain(body: {
     connectFeePercent?: number;
     dailyFeePercent?: number;
     connectPlans?: ConnectPlan[];
+    evolutionApiBaseUrl?: string;
+    evolutionApiKey?: string;
+    apiPublicBaseUrl?: string;
   }) {
     const domain = { ...(getDomain() as ConnectDomain) };
+
     if (body.connectFeePercent != null) {
+      await this.systemSettings.set('connectFeePercent', String(body.connectFeePercent));
       domain.connectFeePercent = body.connectFeePercent;
     }
     if (body.dailyFeePercent != null) {
+      await this.systemSettings.set('dailyFeePercent', String(body.dailyFeePercent));
       domain.dailyFeePercent = body.dailyFeePercent;
     }
     if (body.connectPlans) {
       domain.connectPlans = normalizeConnectPlans(body.connectPlans);
     }
-    saveDomain(domain);
-    return domain;
+    if (body.evolutionApiBaseUrl !== undefined) {
+      const value = normalizeEvolutionBaseUrl(String(body.evolutionApiBaseUrl ?? ''));
+      await this.systemSettings.set('evolutionApiBaseUrl', value);
+      domain.evolutionApiBaseUrl = value;
+      await this.evolutionInstances
+        .createQueryBuilder()
+        .update(EvolutionInstance)
+        .set({ baseUrl: value })
+        .execute();
+    }
+    if (body.apiPublicBaseUrl !== undefined) {
+      const raw = String(body.apiPublicBaseUrl ?? '').trim().replace(/\/+$/, '');
+      if (raw) {
+        normalizeEvolutionBaseUrl(raw);
+      }
+      await this.systemSettings.set(SYSTEM_SETTING_KEYS.apiPublicBaseUrl, raw);
+      domain.apiPublicBaseUrl = raw;
+    }
+    if (body.evolutionApiKey !== undefined) {
+      const trimmed = String(body.evolutionApiKey ?? '').trim();
+      if (!trimmed) {
+        throw new BadRequestException('Informe a chave da Evolution API.');
+      }
+      await this.systemSettings.set('evolutionApiKey', trimmed);
+      await this.evolutionInstances
+        .createQueryBuilder()
+        .update(EvolutionInstance)
+        .set({ apiKey: trimmed })
+        .execute();
+    }
+    if (body.connectPlans) {
+      try {
+        saveDomain(domain);
+      } catch {
+        /* planos permanecem no JSON */
+      }
+    }
+    return this.getConnectDomain();
   }
 
   listModalities() {

@@ -1,0 +1,884 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
+import { Department } from '../access-control/department.entity';
+import { User } from '../users/user.entity';
+import { EvolutionInstance } from './evolution-instance.entity';
+import { SystemSettingsService } from '../system-settings/system-settings.service';
+import { normalizeEvolutionBaseUrl } from '../system-settings/system-settings.service';
+import { EVOLUTION_WEBHOOK_EVENTS } from './evolution-webhook.constants';
+
+export type EvolutionInstanceDto = {
+  id: string;
+  name: string;
+  instanceKey: string;
+  shortId: string;
+  baseUrl: string;
+  isDefault: boolean;
+  active: boolean;
+  hasApiKey: boolean;
+  usageMode: 'corporate' | 'operational';
+  usageModeLabel: string;
+  departmentId: string | null;
+  departmentName: string | null;
+  defaultOwnerUserId: string | null;
+  defaultOwnerName: string | null;
+  connectedPhone: string | null;
+  connectionState: string;
+  connected: boolean;
+  autoCreateLeads: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type EvolutionOverviewDto = {
+  apiOnline: boolean;
+  apiMessage: string;
+  evolutionInstanceCount: number;
+  webhookUrl: string | null;
+  instances: EvolutionInstanceDto[];
+};
+
+export type CreateEvolutionInstanceInput = {
+  name: string;
+};
+
+export type UpdateEvolutionInstanceInput = {
+  name?: string;
+  isDefault?: boolean;
+  active?: boolean;
+  usageMode?: 'corporate' | 'operational';
+  departmentId?: string | null;
+  defaultOwnerUserId?: string | null;
+  autoCreateLeads?: boolean;
+};
+
+const USAGE_LABELS: Record<'corporate' | 'operational', string> = {
+  corporate: 'Corporativa',
+  operational: 'Operacional',
+};
+
+@Injectable()
+export class EvolutionInstancesService {
+  constructor(
+    @InjectRepository(EvolutionInstance)
+    private readonly instances: Repository<EvolutionInstance>,
+    @InjectRepository(Department)
+    private readonly departments: Repository<Department>,
+    @InjectRepository(User)
+    private readonly users: Repository<User>,
+    private readonly systemSettings: SystemSettingsService,
+    private readonly config: ConfigService,
+  ) {}
+
+  private evolutionHeaders(apiKey: string): Record<string, string> {
+    return { apikey: apiKey, 'Content-Type': 'application/json' };
+  }
+
+  private async buildEvolutionWebhookPayload(): Promise<Record<string, unknown>> {
+    const url = await this.systemSettings.resolveEvolutionWebhookUrl();
+    if (!url) {
+      throw new BadRequestException(
+        'Configure a URL pública da API em Sistema → Configurações (webhook WhatsApp). ' +
+          'A Evolution precisa desse endereço para enviar eventos ao criar a instância.',
+      );
+    }
+
+    const secret = this.config.get<string>('EVOLUTION_WEBHOOK_SECRET')?.trim();
+    const headers = secret ? { 'x-evolution-webhook-secret': secret } : undefined;
+    return {
+      enabled: true,
+      url,
+      webhookByEvents: false,
+      byEvents: false,
+      webhookBase64: false,
+      base64: false,
+      events: [...EVOLUTION_WEBHOOK_EVENTS],
+      ...(headers ? { headers } : {}),
+    };
+  }
+
+  /** Aplica URL e eventos de mensagem no webhook da instância na Evolution. */
+  private async syncRemoteInstanceWebhook(
+    remote: { baseUrl: string; apiKey: string },
+    instanceKey: string,
+  ): Promise<void> {
+    const webhook = await this.buildEvolutionWebhookPayload();
+    const webhookUrl = String(webhook.url ?? '');
+    const endpoint = `${remote.baseUrl}/webhook/set/${encodeURIComponent(instanceKey)}`;
+    const attempts: Record<string, unknown>[] = [
+      { webhook },
+      {
+        enabled: true,
+        url: webhookUrl,
+        webhookByEvents: false,
+        byEvents: false,
+        webhookBase64: false,
+        base64: false,
+        events: webhook.events,
+        ...(webhook.headers ? { headers: webhook.headers } : {}),
+      },
+    ];
+
+    let lastError = '';
+    for (const body of attempts) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: this.evolutionHeaders(remote.apiKey),
+          body: JSON.stringify(body),
+        });
+        if (response.ok) return;
+        lastError = await response.text();
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    throw new BadRequestException(
+      `Não foi possível registrar o webhook na Evolution para «${instanceKey}»: ${lastError.slice(0, 200)}`,
+    );
+  }
+
+  private extractRemoteInstanceNames(payload: unknown): string[] {
+    const names: string[] = [];
+    const pushName = (value: unknown) => {
+      if (typeof value !== 'string' || !value.trim()) return;
+      names.push(value.trim());
+    };
+
+    const visit = (node: unknown) => {
+      if (!node) return;
+      if (Array.isArray(node)) {
+        for (const item of node) visit(item);
+        return;
+      }
+      if (typeof node !== 'object') return;
+      const record = node as Record<string, unknown>;
+      pushName(record.instanceName);
+      pushName(record.name);
+      if (record.instance && typeof record.instance === 'object') {
+        const inst = record.instance as Record<string, unknown>;
+        pushName(inst.instanceName);
+        pushName(inst.name);
+      }
+    };
+
+    visit(payload);
+    return [...new Set(names)];
+  }
+
+  private responseImpliesExistingInstance(status: number, body: string): boolean {
+    if (status === 409) return true;
+    const normalized = body.toLowerCase();
+    return (
+      normalized.includes('already exists') ||
+      normalized.includes('já existe') ||
+      normalized.includes('already in use') ||
+      (normalized.includes('instance') && normalized.includes('exist'))
+    );
+  }
+
+  private formatEvolutionHttpError(status: number, body: string): string {
+    const snippet = body.trim().slice(0, 220);
+    return snippet
+      ? `Evolution respondeu ${status}: ${snippet}`
+      : `Evolution respondeu ${status}.`;
+  }
+
+  private async remoteInstanceExists(
+    remote: { baseUrl: string; apiKey: string },
+    instanceKey: string,
+  ): Promise<boolean> {
+    const headers = { apikey: remote.apiKey };
+    try {
+      const stateUrl = `${remote.baseUrl}/instance/connectionState/${encodeURIComponent(instanceKey)}`;
+      const stateRes = await fetch(stateUrl, { headers });
+      if (stateRes.ok) return true;
+      if (stateRes.status !== 404) {
+        const listUrl = `${remote.baseUrl}/instance/fetchInstances`;
+        const listRes = await fetch(listUrl, { headers });
+        if (listRes.ok) {
+          const payload = (await listRes.json()) as unknown;
+          return this.extractRemoteInstanceNames(payload).includes(instanceKey);
+        }
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }
+
+  private async createRemoteInstance(
+    remote: { baseUrl: string; apiKey: string },
+    instanceKey: string,
+  ): Promise<void> {
+    const exists = await this.remoteInstanceExists(remote, instanceKey);
+    const webhookBlock = await this.buildEvolutionWebhookPayload();
+
+    if (!exists) {
+      const body: Record<string, unknown> = {
+        instanceName: instanceKey,
+        integration: 'WHATSAPP-BAILEYS',
+        qrcode: false,
+      };
+      if (webhookBlock) {
+        body.webhook = webhookBlock;
+      }
+
+      const url = `${remote.baseUrl}/instance/create`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: this.evolutionHeaders(remote.apiKey),
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok && response.status !== 201) {
+        const text = await response.text();
+        if (!this.responseImpliesExistingInstance(response.status, text)) {
+          if (response.status === 400 && text.toLowerCase().includes('integration')) {
+            const legacy = await fetch(url, {
+              method: 'POST',
+              headers: this.evolutionHeaders(remote.apiKey),
+              body: JSON.stringify({
+                instanceName: instanceKey,
+                qrcode: false,
+                ...(webhookBlock ? { webhook: webhookBlock } : {}),
+              }),
+            });
+            if (legacy.ok || legacy.status === 201) {
+              await this.syncRemoteInstanceWebhook(remote, instanceKey);
+              return;
+            }
+            const legacyText = await legacy.text();
+            if (this.responseImpliesExistingInstance(legacy.status, legacyText)) {
+              await this.syncRemoteInstanceWebhook(remote, instanceKey);
+              return;
+            }
+            throw new BadRequestException(this.formatEvolutionHttpError(legacy.status, legacyText));
+          }
+          throw new BadRequestException(this.formatEvolutionHttpError(response.status, text));
+        }
+      }
+    }
+
+    await this.syncRemoteInstanceWebhook(remote, instanceKey);
+  }
+
+  private async deleteRemoteInstance(
+    remote: { baseUrl: string; apiKey: string },
+    instanceKey: string,
+  ): Promise<void> {
+    const url = `${remote.baseUrl}/instance/delete/${encodeURIComponent(instanceKey)}`;
+    try {
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: { apikey: remote.apiKey },
+      });
+      if (response.ok || response.status === 404) return;
+    } catch {
+      // Mantém exclusão local mesmo se a Evolution estiver indisponível.
+    }
+  }
+
+  private async resolvePlatformApi(): Promise<{ baseUrl: string; apiKey: string }> {
+    const platform = await this.systemSettings.readEvolutionPlatformConfig();
+    const baseUrl = normalizeEvolutionBaseUrl(platform.baseUrl || '');
+    const apiKey = String(platform.apiKey || '').trim();
+    if (!baseUrl) {
+      throw new BadRequestException('Configure a URL base da Evolution em Sistema → Configurações.');
+    }
+    if (!apiKey) {
+      throw new BadRequestException('Configure a chave da Evolution em Sistema → Configurações.');
+    }
+    return { baseUrl, apiKey };
+  }
+
+  private async resolveRemoteApi(
+    row: EvolutionInstance,
+  ): Promise<{ baseUrl: string; apiKey: string }> {
+    const platform = await this.systemSettings.readEvolutionPlatformConfig();
+    const baseUrl = normalizeEvolutionBaseUrl(platform.baseUrl || row.baseUrl || '');
+    const apiKey = String(platform.apiKey || row.apiKey || '').trim();
+    if (!apiKey) {
+      throw new BadRequestException('Configure a chave da Evolution em Sistema → Configurações.');
+    }
+    return { baseUrl, apiKey };
+  }
+
+  /** Testa apenas reachability + chave global (não exige instância WhatsApp conectada). */
+  async testPlatformConnection(): Promise<{ ok: boolean; message?: string }> {
+    let remote: { baseUrl: string; apiKey: string };
+    try {
+      remote = await this.resolvePlatformApi();
+    } catch (err) {
+      const message =
+        err instanceof BadRequestException
+          ? String(err.message)
+          : 'Configure URL e chave da Evolution em Sistema → Configurações.';
+      return { ok: false, message };
+    }
+
+    const headers = { apikey: remote.apiKey };
+    const paths = ['/instance/fetchInstances', '/'];
+
+    for (let index = 0; index < paths.length; index += 1) {
+      const path = paths[index];
+      const url = path === '/' ? remote.baseUrl : `${remote.baseUrl}${path}`;
+      try {
+        const response = await fetch(url, { headers });
+        if (response.status === 401 || response.status === 403) {
+          return { ok: false, message: 'Evolution acessível, mas a chave API foi recusada.' };
+        }
+        if (response.ok) {
+          return { ok: true, message: 'Servidor Evolution acessível com a chave configurada.' };
+        }
+        const body = await response.text();
+        const isLast = index === paths.length - 1;
+        if (!isLast && (response.status === 404 || response.status === 405)) {
+          continue;
+        }
+        return {
+          ok: false,
+          message: `Evolution respondeu ${response.status}: ${body.slice(0, 160)}`,
+        };
+      } catch (err) {
+        const isLast = index === paths.length - 1;
+        if (!isLast) continue;
+        return {
+          ok: false,
+          message: err instanceof Error ? err.message : 'Falha ao contactar a Evolution API.',
+        };
+      }
+    }
+
+    return { ok: false, message: 'Falha ao contactar a Evolution API.' };
+  }
+
+  private normalizeKey(key: string): string {
+    const trimmed = key.trim();
+    if (!trimmed) throw new BadRequestException('Informe o nome da instância na Evolution API.');
+    if (!/^[a-zA-Z0-9._-]+$/.test(trimmed)) {
+      throw new BadRequestException(
+        'O nome da instância só pode conter letras, números, ponto, hífen e sublinhado.',
+      );
+    }
+    return trimmed;
+  }
+
+  private shortId(id: string): string {
+    return `wa-${id.replace(/-/g, '').slice(0, 8)}`;
+  }
+
+  private isConnectedState(state: string | null | undefined): boolean {
+    const normalized = String(state ?? '').toLowerCase();
+    return normalized === 'open' || normalized === 'connected' || normalized === 'online';
+  }
+
+  private extractStateFromPayload(payload: Record<string, unknown>): string {
+    const read = (value: unknown): string | null => {
+      if (typeof value === 'string' && value.trim()) return value.trim().toLowerCase();
+      if (value && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        const nested = record.state ?? record.status;
+        if (typeof nested === 'string' && nested.trim()) return nested.trim().toLowerCase();
+      }
+      return null;
+    };
+
+    const instance = payload.instance as Record<string, unknown> | undefined;
+    return (
+      read(instance?.state) ??
+      read(instance?.status) ??
+      read(instance?.connectionStatus) ??
+      read(payload.state) ??
+      read(payload.status) ??
+      read(payload.connectionStatus) ??
+      'unknown'
+    );
+  }
+
+  private formatPhoneFromOwner(raw: unknown): string | null {
+    if (raw == null || raw === '') return null;
+    const digits = String(raw).replace(/\D/g, '');
+    if (digits.length < 10) return null;
+    if (digits.length >= 12 && digits.startsWith('55')) return `+${digits}`;
+    return `+55${digits}`;
+  }
+
+  private flattenFetchInstances(payload: unknown): Record<string, unknown>[] {
+    if (Array.isArray(payload)) {
+      return payload.filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    }
+    if (!payload || typeof payload !== 'object') return [];
+    const record = payload as Record<string, unknown>;
+    for (const key of ['instances', 'instance', 'data', 'response']) {
+      const nested = record[key];
+      if (Array.isArray(nested)) {
+        return nested.filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+      }
+    }
+    return [];
+  }
+
+  private remoteInstanceName(item: Record<string, unknown>): string {
+    return String(item.instanceName ?? item.name ?? '').trim();
+  }
+
+  private async fetchRemoteInstanceMeta(
+    remote: { baseUrl: string; apiKey: string },
+    instanceKey: string,
+  ): Promise<{ ownerJid?: string; profileName?: string; status?: string } | null> {
+    try {
+      const url = `${remote.baseUrl}/instance/fetchInstances`;
+      const response = await fetch(url, { headers: { apikey: remote.apiKey } });
+      if (!response.ok) return null;
+      const payload = (await response.json()) as unknown;
+      const match = this.flattenFetchInstances(payload).find(
+        (row) => this.remoteInstanceName(row) === instanceKey,
+      );
+      if (!match) return null;
+      const statusRaw = match.connectionStatus ?? match.status ?? match.state;
+      return {
+        ownerJid: String(match.ownerJid ?? match.owner ?? match.number ?? '') || undefined,
+        profileName: String(match.profileName ?? '') || undefined,
+        status: typeof statusRaw === 'string' ? statusRaw : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Atualiza estado e número a partir da Evolution (connectionState + fetchInstances). */
+  private async refreshConnectionRow(
+    row: EvolutionInstance,
+    persist: boolean,
+  ): Promise<{ ok: boolean; state?: string; message?: string }> {
+    const remote = await this.resolveRemoteApi(row);
+    const url = `${remote.baseUrl}/instance/connectionState/${encodeURIComponent(row.instanceKey)}`;
+
+    try {
+      const response = await fetch(url, { headers: { apikey: remote.apiKey } });
+      if (!response.ok) {
+        const body = await response.text();
+        return {
+          ok: false,
+          message: `Evolution respondeu ${response.status}: ${body.slice(0, 160)}`,
+        };
+      }
+
+      const payload = (await response.json()) as Record<string, unknown>;
+      let state = this.extractStateFromPayload(payload);
+
+      let owner =
+        (payload.instance as Record<string, unknown> | undefined)?.owner ??
+        payload.owner ??
+        (payload.instance as Record<string, unknown> | undefined)?.ownerJid ??
+        payload.ownerJid;
+
+      const meta = await this.fetchRemoteInstanceMeta(remote, row.instanceKey);
+      if (meta?.status && state === 'unknown') {
+        state = meta.status.toLowerCase();
+      }
+      if (!owner && meta?.ownerJid) owner = meta.ownerJid;
+
+      if (persist) {
+        const phone = this.formatPhoneFromOwner(owner);
+        const patch: Partial<EvolutionInstance> = { connectionState: state };
+        if (phone) patch.connectedPhone = phone;
+        await this.instances.update(row.id, patch);
+        row.connectionState = state;
+        if (phone) row.connectedPhone = phone;
+      }
+
+      return { ok: true, state };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : 'Falha ao contactar a Evolution API.',
+      };
+    }
+  }
+
+  private async syncActiveInstancesFromEvolution(): Promise<void> {
+    const rows = await this.instances.find({
+      where: { active: true },
+      select: ['id'],
+    });
+    await Promise.all(
+      rows.map(async (stub) => {
+        try {
+          const row = await this.findWithSecret(stub.id);
+          await this.refreshConnectionRow(row, true);
+        } catch {
+          // ignora instância removida ou indisponível
+        }
+      }),
+    );
+  }
+
+  private toDto(
+    row: EvolutionInstance,
+    context?: { departmentName?: string | null; ownerName?: string | null },
+  ): EvolutionInstanceDto {
+    return {
+      id: row.id,
+      name: row.name,
+      instanceKey: row.instanceKey,
+      shortId: this.shortId(row.id),
+      baseUrl: row.baseUrl,
+      isDefault: row.isDefault,
+      active: row.active,
+      hasApiKey: Boolean(row.apiKey),
+      usageMode: row.usageMode,
+      usageModeLabel: USAGE_LABELS[row.usageMode] ?? row.usageMode,
+      departmentId: row.departmentId,
+      departmentName: context?.departmentName ?? null,
+      defaultOwnerUserId: row.defaultOwnerUserId,
+      defaultOwnerName: context?.ownerName ?? null,
+      connectedPhone: row.connectedPhone,
+      connectionState: row.connectionState,
+      connected: row.active && this.isConnectedState(row.connectionState),
+      autoCreateLeads: row.autoCreateLeads,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private async relationMaps(rows: EvolutionInstance[]) {
+    const departmentIds = [...new Set(rows.map((row) => row.departmentId).filter(Boolean))] as string[];
+    const ownerIds = [...new Set(rows.map((row) => row.defaultOwnerUserId).filter(Boolean))] as string[];
+
+    const departmentRows = departmentIds.length
+      ? await this.departments.find({ where: { id: In(departmentIds) }, select: ['id', 'name'] })
+      : [];
+    const ownerRows = ownerIds.length
+      ? await this.users.find({ where: { id: In(ownerIds) }, select: ['id', 'name'] })
+      : [];
+
+    const departmentMap = new Map(departmentRows.map((row) => [row.id, row.name]));
+    const ownerMap = new Map(ownerRows.map((row) => [row.id, row.name]));
+
+    return { departmentMap, ownerMap };
+  }
+
+  private async mapToDtos(rows: EvolutionInstance[]): Promise<EvolutionInstanceDto[]> {
+    const { departmentMap, ownerMap } = await this.relationMaps(rows);
+    return rows.map((row) =>
+      this.toDto(row, {
+        departmentName: row.departmentId ? departmentMap.get(row.departmentId) ?? null : null,
+        ownerName: row.defaultOwnerUserId ? ownerMap.get(row.defaultOwnerUserId) ?? null : null,
+      }),
+    );
+  }
+
+  private listSelect(): (keyof EvolutionInstance)[] {
+    return [
+      'id',
+      'name',
+      'instanceKey',
+      'baseUrl',
+      'isDefault',
+      'active',
+      'apiKey',
+      'usageMode',
+      'departmentId',
+      'defaultOwnerUserId',
+      'connectedPhone',
+      'connectionState',
+      'autoCreateLeads',
+      'createdAt',
+      'updatedAt',
+    ];
+  }
+
+  private slugFromName(name: string): string {
+    const slug = name
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48);
+    return slug || 'instancia';
+  }
+
+  private async allocateInstanceKey(name: string): Promise<string> {
+    const base = this.slugFromName(name);
+    let candidate = `wa-${base}`;
+    let suffix = 1;
+
+    while (await this.instances.findOne({ where: { instanceKey: candidate }, select: ['id'] })) {
+      suffix += 1;
+      candidate = `wa-${base}-${suffix}`;
+      if (suffix > 99) {
+        candidate = `wa-${base}-${Math.random().toString(36).slice(2, 8)}`;
+        break;
+      }
+    }
+
+    this.normalizeKey(candidate);
+    return candidate;
+  }
+
+  private async clearOtherDefaults(exceptId?: string) {
+    const rows = await this.instances.find({ where: { isDefault: true } });
+    for (const row of rows) {
+      if (exceptId && row.id === exceptId) continue;
+      row.isDefault = false;
+      await this.instances.save(row);
+    }
+  }
+
+  async getConnectionStatus(): Promise<{
+    hasConnected: boolean;
+    connectedCount: number;
+    activeCount: number;
+  }> {
+    await this.syncActiveInstancesFromEvolution();
+    const rows = await this.instances.find({
+      where: { active: true },
+      select: ['id', 'connectionState'],
+    });
+    const connectedCount = rows.filter((row) => this.isConnectedState(row.connectionState)).length;
+    return {
+      hasConnected: connectedCount > 0,
+      connectedCount,
+      activeCount: rows.length,
+    };
+  }
+
+  async list(all = false): Promise<EvolutionInstanceDto[]> {
+    const rows = await this.instances.find({
+      where: all ? {} : { active: true },
+      order: { isDefault: 'DESC', name: 'ASC' },
+      select: this.listSelect(),
+    });
+    return this.mapToDtos(rows);
+  }
+
+  async overview(): Promise<EvolutionOverviewDto> {
+    const test = await this.testPlatformConnection();
+    if (test.ok) {
+      await this.syncActiveInstancesFromEvolution();
+    }
+    const instances = await this.list(true);
+    const activeCount = instances.filter((row) => row.active).length;
+    const baseMessage =
+      test.message ??
+      (test.ok ? 'Servidor Evolution acessível.' : 'Falha ao contactar a Evolution API.');
+    const apiMessage =
+      test.ok && activeCount > 0
+        ? `${baseMessage} · ${activeCount} instância(s) cadastrada(s).`
+        : baseMessage;
+
+  const webhookUrl = await this.systemSettings.resolveEvolutionWebhookUrl();
+
+    return {
+      apiOnline: test.ok,
+      apiMessage,
+      evolutionInstanceCount: activeCount,
+      webhookUrl,
+      instances,
+    };
+  }
+
+  async getById(id: string): Promise<EvolutionInstanceDto> {
+    const row = await this.instances.findOne({
+      where: { id },
+      select: this.listSelect(),
+    });
+    if (!row) throw new NotFoundException('Instância não encontrada.');
+    const [dto] = await this.mapToDtos([row]);
+    return dto;
+  }
+
+  private async findWithSecret(id: string): Promise<EvolutionInstance> {
+    const row = await this.instances.findOne({
+      where: { id },
+      select: [
+        'id',
+        'name',
+        'instanceKey',
+        'baseUrl',
+        'apiKey',
+        'isDefault',
+        'active',
+        'usageMode',
+        'departmentId',
+        'defaultOwnerUserId',
+        'connectedPhone',
+        'connectionState',
+        'autoCreateLeads',
+        'createdAt',
+        'updatedAt',
+      ],
+    });
+    if (!row) throw new NotFoundException('Instância não encontrada.');
+    return row;
+  }
+
+  async create(body: CreateEvolutionInstanceInput): Promise<EvolutionInstanceDto> {
+    const name = body.name?.trim();
+    if (!name) throw new BadRequestException('Informe um nome amigável para a instância.');
+
+    const remote = await this.resolvePlatformApi();
+    const instanceKey = await this.allocateInstanceKey(name);
+    await this.createRemoteInstance(remote, instanceKey);
+    const baseUrl = remote.baseUrl;
+
+    const instance = this.instances.create({
+      name,
+      instanceKey,
+      baseUrl,
+      apiKey: remote.apiKey,
+      isDefault: false,
+      active: true,
+      usageMode: 'corporate',
+      departmentId: null,
+      defaultOwnerUserId: null,
+      autoCreateLeads: true,
+    });
+
+    const saved = await this.instances.save(instance);
+    if (saved.isDefault) await this.clearOtherDefaults(saved.id);
+    return this.getById(saved.id);
+  }
+
+  async update(id: string, body: UpdateEvolutionInstanceInput): Promise<EvolutionInstanceDto> {
+    const row = await this.findWithSecret(id);
+
+    if (body.name !== undefined) {
+      const name = body.name.trim();
+      if (!name) throw new BadRequestException('Informe um nome para a instância.');
+      row.name = name;
+    }
+    if (body.active !== undefined) row.active = body.active;
+    if (body.isDefault !== undefined) row.isDefault = body.isDefault;
+    if (body.usageMode !== undefined) row.usageMode = body.usageMode;
+    if (body.departmentId !== undefined) row.departmentId = body.departmentId;
+    if (body.defaultOwnerUserId !== undefined) row.defaultOwnerUserId = body.defaultOwnerUserId;
+    if (body.autoCreateLeads !== undefined) row.autoCreateLeads = body.autoCreateLeads;
+
+    await this.instances.save(row);
+    if (row.isDefault) await this.clearOtherDefaults(row.id);
+    return this.getById(id);
+  }
+
+  async remove(id: string): Promise<{ ok: true }> {
+    const row = await this.findWithSecret(id);
+    const remote = await this.resolveRemoteApi(row);
+    await this.deleteRemoteInstance(remote, row.instanceKey);
+    await this.instances.remove(row);
+    return { ok: true };
+  }
+
+  async testConnection(
+    id: string,
+    options?: { persist?: boolean },
+  ): Promise<{ ok: boolean; state?: string; message?: string }> {
+    const row = await this.findWithSecret(id);
+    return this.refreshConnectionRow(row, options?.persist !== false);
+  }
+
+  async refreshConnection(id: string): Promise<EvolutionInstanceDto> {
+    const row = await this.findWithSecret(id);
+    const remote = await this.resolveRemoteApi(row);
+    await this.syncRemoteInstanceWebhook(remote, row.instanceKey);
+    const result = await this.testConnection(id, { persist: true });
+    if (!result.ok) {
+      throw new BadRequestException(result.message ?? 'Não foi possível atualizar o status da instância.');
+    }
+    return this.getById(id);
+  }
+
+  async connect(
+    id: string,
+  ): Promise<{
+    ok: boolean;
+    pairingCode?: string;
+    code?: string;
+    qrPayload?: string;
+    qrcode?: string;
+    message?: string;
+  }> {
+    const row = await this.findWithSecret(id);
+    const remote = await this.resolveRemoteApi(row);
+    await this.createRemoteInstance(remote, row.instanceKey);
+    const url = `${remote.baseUrl}/instance/connect/${encodeURIComponent(row.instanceKey)}`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { apikey: remote.apiKey },
+      });
+
+      const body = await response.text();
+      if (!response.ok) {
+        return {
+          ok: false,
+          message: `Evolution respondeu ${response.status}: ${body.slice(0, 200)}`,
+        };
+      }
+
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = JSON.parse(body) as Record<string, unknown>;
+      } catch {
+        return { ok: true, message: body.slice(0, 200) };
+      }
+
+      const nestedQr = payload.qrcode;
+      const nestedRecord =
+        nestedQr && typeof nestedQr === 'object' ? (nestedQr as Record<string, unknown>) : null;
+
+      const qrImageCandidate = [
+        payload.base64,
+        nestedRecord?.base64,
+        typeof nestedQr === 'string' && nestedQr.startsWith('data:image') ? nestedQr : null,
+        typeof nestedQr === 'string' &&
+        !nestedQr.startsWith('2@') &&
+        /^[A-Za-z0-9+/=]+$/.test(nestedQr.slice(0, 64))
+          ? nestedQr
+          : null,
+      ].find((value) => typeof value === 'string' && value.trim().length > 0);
+      const qrImageRaw = qrImageCandidate ? String(qrImageCandidate) : '';
+
+      const whatsappPayload = String(nestedRecord?.code ?? payload.code ?? '');
+      const numericPairing = String(
+        nestedRecord?.pairingCode ?? payload.pairingCode ?? '',
+      ).trim();
+
+      const isWhatsAppQrPayload = (value: string) =>
+        value.startsWith('2@') || (value.includes('/') && value.length > 40);
+
+      const qrPayload = isWhatsAppQrPayload(whatsappPayload) ? whatsappPayload : undefined;
+      const pairingCode =
+        numericPairing && numericPairing !== whatsappPayload
+          ? numericPairing
+          : isWhatsAppQrPayload(whatsappPayload)
+            ? undefined
+            : whatsappPayload || numericPairing || undefined;
+
+      await this.refreshConnectionRow(row, true);
+
+      return {
+        ok: true,
+        qrcode: qrImageRaw || undefined,
+        qrPayload,
+        code: qrPayload ?? pairingCode,
+        pairingCode,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : 'Falha ao solicitar conexão.',
+      };
+    }
+  }
+}

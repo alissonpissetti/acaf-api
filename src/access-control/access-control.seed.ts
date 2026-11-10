@@ -127,6 +127,13 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
         sortOrder: 2,
         permissionKey: 'comercial.funis',
       },
+      {
+        slug: 'whatsapp',
+        label: 'Conversas WhatsApp',
+        route: '/m/comercial/whatsapp',
+        sortOrder: 3,
+        permissionKey: 'comercial.leads',
+      },
     ],
   },
   {
@@ -249,15 +256,15 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
   },
   {
     slug: 'associacao',
-    name: 'Associação movly.',
-    description: 'Gestão de parceiros associados à movly. (somente cadastro de associados)',
+    name: 'Associações',
+    description: 'Portais de associações parceiras (links externos)',
     icon: 'Users',
     sortOrder: 8,
     items: [
       {
         slug: 'parceiros-acaf',
-        label: 'Parceiros associados',
-        route: '/m/associacao/parceiros',
+        label: 'ACAF',
+        route: 'https://acaf.sejamovly.com',
         sortOrder: 1,
         permissionKey: 'associacao.acaf.parceiros',
       },

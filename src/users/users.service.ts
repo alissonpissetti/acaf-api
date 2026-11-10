@@ -571,8 +571,9 @@ export class UsersService implements OnModuleInit {
     const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('Usuário não encontrado.');
 
-    const { publicUrl } = await this.storage.uploadUserAvatar(userId, file);
+    const { publicUrl, path } = await this.storage.uploadUserAvatar(userId, file);
     user.avatarUrl = publicUrl;
+    user.avatarStoragePath = path;
     await this.users.save(user);
     return this.toSafeUserDetailed(user);
   }
@@ -585,7 +586,9 @@ export class UsersService implements OnModuleInit {
     const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('Usuário não encontrado.');
 
+    await this.storage.deleteUserAvatarForUser(userId, user.avatarStoragePath);
     user.avatarUrl = null;
+    user.avatarStoragePath = null;
     await this.users.save(user);
     return this.toSafeUserDetailed(user);
   }

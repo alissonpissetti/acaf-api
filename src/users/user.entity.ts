@@ -49,6 +49,10 @@ export class User {
   @Column({ name: 'avatar_url', type: 'varchar', length: 512, nullable: true })
   avatarUrl: string | null;
 
+  /** Caminho relativo no Nextcloud (ex.: acaf/user-avatars/{id}.jpg). */
+  @Column({ name: 'avatar_storage_path', type: 'varchar', length: 512, nullable: true })
+  avatarStoragePath: string | null;
+
   @Column({ name: 'avatar_color', type: 'varchar', length: 32, nullable: true })
   avatarColor: string | null;
 

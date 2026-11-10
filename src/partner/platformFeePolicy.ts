@@ -1,10 +1,8 @@
-import { getDomain } from './store';
+import {
+  getConnectFeePercentFromMemory,
+  getDailyFeePercentFromMemory,
+} from '../system-settings/system-settings.service';
 import type { AdminNetwork, ApiStore, GymUnit } from './types';
-
-type DomainFees = {
-  connectFeePercent?: number;
-  dailyFeePercent?: number;
-};
 
 export function clampPlatformFeePercent(raw: unknown): number {
   const n = typeof raw === 'number' ? raw : Number(raw);
@@ -13,16 +11,11 @@ export function clampPlatformFeePercent(raw: unknown): number {
 }
 
 export function domainConnectFeePercent(): number {
-  const d = getDomain() as DomainFees;
-  return clampPlatformFeePercent(d.connectFeePercent ?? 20);
+  return clampPlatformFeePercent(getConnectFeePercentFromMemory());
 }
 
 export function domainDailyFeePercent(): number {
-  const d = getDomain() as DomainFees;
-  if (d.dailyFeePercent != null && Number.isFinite(d.dailyFeePercent)) {
-    return clampPlatformFeePercent(d.dailyFeePercent);
-  }
-  return domainConnectFeePercent();
+  return clampPlatformFeePercent(getDailyFeePercentFromMemory());
 }
 
 function networkById(store: ApiStore, networkId: string): AdminNetwork | undefined {

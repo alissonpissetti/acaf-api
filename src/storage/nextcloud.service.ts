@@ -65,6 +65,11 @@ export class NextcloudService {
     }
   }
 
+  private ocsShareRows<T>(data: T[] | T | undefined | null): T[] {
+    if (data == null) return [];
+    return Array.isArray(data) ? data : [data];
+  }
+
   private async findPublicShareUrl(relativePath: string): Promise<string | null> {
     const path = this.sharePath(relativePath);
     const url = `${this.baseUrl}/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json&path=${encodeURIComponent(path)}`;
@@ -78,9 +83,9 @@ export class NextcloudService {
     if (!response.ok) return null;
 
     const payload = (await response.json()) as {
-      ocs?: { data?: Array<{ url?: string }> };
+      ocs?: { data?: Array<{ url?: string }> | { url?: string } };
     };
-    const share = payload.ocs?.data?.[0];
+    const share = this.ocsShareRows(payload.ocs?.data)[0];
     return share?.url ? `${share.url}/download` : null;
   }
 
@@ -224,7 +229,104 @@ export class NextcloudService {
     }
 
     const publicUrl = await this.createPublicShareUrl(relativePath);
+    await this.deleteUserAvatarFiles(userId, relativePath);
     return { path: relativePath, publicUrl };
+  }
+
+  private async listDavEntryNames(folderRelativePath: string): Promise<string[]> {
+    const response = await fetch(this.davUrl(folderRelativePath), {
+      method: 'PROPFIND',
+      headers: {
+        Authorization: this.authHeader(),
+        Depth: '1',
+        'Content-Type': 'application/xml; charset=utf-8',
+      },
+      body: `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop><d:displayname/></d:prop>
+</d:propfind>`,
+    });
+
+    if (response.status === 404) return [];
+    if (!response.ok) return [];
+
+    const xml = await response.text();
+    const names = new Set<string>();
+    const hrefPattern = /<(?:[a-zA-Z0-9]+:)?href[^>]*>([^<]+)<\/(?:[a-zA-Z0-9]+:)?href>/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = hrefPattern.exec(xml)) !== null) {
+      const href = decodeURIComponent(match[1]);
+      const segment = href.split('/').filter(Boolean).pop();
+      if (!segment || segment === 'user-avatars') continue;
+      names.add(segment);
+    }
+
+    return [...names];
+  }
+
+  private async deletePublicSharesForPath(relativePath: string): Promise<void> {
+    const path = this.sharePath(relativePath);
+    const url = `${this.baseUrl}/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json&path=${encodeURIComponent(path)}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: this.authHeader(),
+        'OCS-APIRequest': 'true',
+      },
+    });
+
+    if (!response.ok) return;
+
+    const payload = (await response.json()) as {
+      ocs?: { data?: Array<{ id?: number | string }> | { id?: number | string } };
+    };
+
+    for (const share of this.ocsShareRows(payload.ocs?.data)) {
+      if (share.id == null) continue;
+      await fetch(
+        `${this.baseUrl}/ocs/v2.php/apps/files_sharing/api/v1/shares/${share.id}?format=json`,
+        {
+          method: 'DELETE',
+          headers: {
+            Authorization: this.authHeader(),
+            'OCS-APIRequest': 'true',
+          },
+        },
+      );
+    }
+  }
+
+  /** Remove avatar do usuário: caminho salvo no banco + varredura por id no storage. */
+  async deleteUserAvatarForUser(userId: string, storedPath?: string | null): Promise<void> {
+    const path = storedPath?.trim();
+    if (path) {
+      await this.deletePublicSharesForPath(path);
+      await this.deleteFile(path, { skipTrash: true });
+    }
+    await this.deleteUserAvatarFiles(userId);
+  }
+
+  /** Remove todos os arquivos de avatar do usuário no storage (e links públicos associados). */
+  async deleteUserAvatarFiles(userId: string, exceptRelativePath?: string): Promise<void> {
+    const folder = `${this.rootFolder}/user-avatars`;
+    const pathsToDelete = new Set<string>();
+
+    for (const ext of [...new Set(Object.values(IMAGE_EXT))]) {
+      pathsToDelete.add(`${folder}/${userId}${ext}`);
+    }
+
+    const listed = await this.listDavEntryNames(folder);
+    for (const name of listed) {
+      if (name === userId || name.startsWith(`${userId}.`)) {
+        pathsToDelete.add(`${folder}/${name}`);
+      }
+    }
+
+    for (const relativePath of pathsToDelete) {
+      if (exceptRelativePath && relativePath === exceptRelativePath) continue;
+      await this.deletePublicSharesForPath(relativePath);
+      await this.deleteFile(relativePath, { skipTrash: true });
+    }
   }
 
   private safeFileName(name: string) {
@@ -321,13 +423,19 @@ export class NextcloudService {
     return { path: relativePath, publicUrl };
   }
 
-  async deleteFile(relativePath: string): Promise<void> {
+  async deleteFile(relativePath: string, options?: { skipTrash?: boolean }): Promise<void> {
+    const headers: Record<string, string> = { Authorization: this.authHeader() };
+    if (options?.skipTrash) {
+      headers['X-NC-Skip-Trashbin'] = '1';
+    }
+
     const response = await fetch(this.davUrl(relativePath), {
       method: 'DELETE',
-      headers: { Authorization: this.authHeader() },
+      headers,
     });
 
-    if (response.status !== 204 && response.status !== 404) {
+    const ok = [200, 202, 204, 404].includes(response.status);
+    if (!ok) {
       const body = await response.text();
       throw new InternalServerErrorException(
         `Falha ao remover arquivo (${response.status}): ${body.slice(0, 120)}`,

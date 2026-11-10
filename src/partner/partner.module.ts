@@ -22,6 +22,8 @@ import { AcafAssociatesImportService } from './acaf-associates-import.service';
 import { PartnerStorePersistenceService } from './partner-store-persistence.service';
 import { PartnerAuthModule } from '../partner-auth/partner-auth.module';
 import { AssociateRepasseDailyScheduler } from './associate-repasse-daily.scheduler';
+import { SystemSettingsModule } from '../system-settings/system-settings.module';
+import { EvolutionInstance } from '../evolution/evolution-instance.entity';
 
 @Module({
   imports: [
@@ -33,6 +35,7 @@ import { AssociateRepasseDailyScheduler } from './associate-repasse-daily.schedu
       AccountPayable,
       AccountReceivable,
       Supplier,
+      EvolutionInstance,
     ]),
     AddressesModule,
     StorageModule,
@@ -40,6 +43,7 @@ import { AssociateRepasseDailyScheduler } from './associate-repasse-daily.schedu
     UsersModule,
     ModalitiesModule,
     CorporateModule,
+    SystemSettingsModule,
   ],
   controllers: [PartnerController, SharedController, AdminController],
   providers: [
