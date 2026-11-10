@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "816766a2-7d23-432a-9bb4-a8f792d91b3f",
+      "commitSha": "f7a4a024419d855777e52ce785b5fbf7dd73c88b",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-10T17:42:25-03:00",
+      "title": "Sincroniza changelog após deploy inbox",
+      "summary": null,
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "ef40712c-68e8-4769-9d5d-1eda39c4c9e0",
       "commitSha": "0b3046e229f07dfbf295917dacb049a8c2adf6ab",
       "repository": "api",
