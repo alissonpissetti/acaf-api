@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "00736e6b-0e39-4c15-b74a-a5eff9471c6a",
+      "commitSha": "36a9ab5abff30de7411b45b034e42c17fc432996",
+      "committedAt": "2026-11-10T10:29:58-03:00",
+      "title": "Sincroniza changelog.json após hook do commit",
+      "summary": null,
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [
+        "Remove entrada de teste e mantém registro automático do deploy de changelog"
+      ],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "e0ad54ac-ec3c-4a39-9c8e-90a2ea89eb47",
       "commitSha": "64aafcfffc6548fa38fd0efa75e9a9dd8a4be792",
       "committedAt": "2026-11-10T10:29:41-03:00",
