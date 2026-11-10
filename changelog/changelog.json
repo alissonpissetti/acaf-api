@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "ef40712c-68e8-4769-9d5d-1eda39c4c9e0",
+      "commitSha": "0b3046e229f07dfbf295917dacb049a8c2adf6ab",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-10T17:42:09-03:00",
+      "title": "Inbox WhatsApp sync, citacoes e midia",
+      "summary": null,
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "8bfcb5f6-fa61-446f-b2a9-ad0d6fd0bc2c",
       "commitSha": "632681e7ddc188857ee70bb7a9a4d6dec8a07f7b",
       "committedAt": "2026-11-10T10:30:17-03:00",
