@@ -16,6 +16,7 @@ import {
   normalizeChangelogAreaId,
   normalizeChangelogAreaIds,
 } from './changelog-environments';
+import { ChangelogGitService } from './changelog-git.service';
 
 const CATEGORY_LABELS: Record<ChangelogCategory, string> = {
   feature: 'Novidade',
@@ -41,7 +42,10 @@ export class ChangelogService {
   private cachePayload: ChangelogFile | null = null;
   private readonly cacheMs = 4_000;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly gitChangelog: ChangelogGitService,
+  ) {}
 
   list(query: ChangelogListQuery = {}): {
     entries: ChangelogEntryDto[];
@@ -54,7 +58,9 @@ export class ChangelogService {
     const store = this.loadFile();
     const audience = query.audience ?? 'internal';
 
-    let rows = store.entries.filter((row) => row.published !== false);
+    let rows = this.mergeWithGit(store.entries);
+
+    rows = rows.filter((row) => row.published !== false);
     if (audience === 'partner') {
       rows = rows.filter((row) => (row.audience ?? 'internal') !== 'internal');
     } else if (audience === 'client') {
@@ -126,7 +132,42 @@ export class ChangelogService {
       author: row.author?.trim() || null,
       audience: row.audience ?? 'internal',
       published: row.published !== false,
+      repository: row.repository?.trim() || row.areas?.[0] || null,
+      source: row.source === 'git' ? 'git' : 'changelog',
     };
+  }
+
+  syncFromGit(): { added: number; total: number } {
+    const filePath = this.resolveFilePath();
+    if (!filePath) {
+      return { added: 0, total: 0 };
+    }
+    const store = this.loadFile(true);
+    const outcome = this.gitChangelog.syncMissingToFile(filePath, store.entries);
+    this.cachePayload = { version: 1, entries: outcome.entries };
+    this.cacheAt = Date.now();
+    return { added: outcome.added, total: outcome.entries.length };
+  }
+
+  private mergeWithGit(entries: ChangelogEntryRaw[]): ChangelogEntryRaw[] {
+    const fromGit = this.gitChangelog.collectMissingFromGit(entries);
+    if (!fromGit.length) return entries;
+
+    const seen = new Set(
+      entries.map((row) => `${String(row.repository ?? '').trim()}:${String(row.commitSha ?? '').trim()}`),
+    );
+
+    const merged = [...entries];
+    for (const row of fromGit) {
+      const key = `${String(row.repository ?? '').trim()}:${String(row.commitSha ?? '').trim()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(row);
+    }
+
+    return merged.sort(
+      (a, b) => new Date(b.committedAt).getTime() - new Date(a.committedAt).getTime(),
+    );
   }
 
   private normalizeCategory(value: string | undefined): ChangelogCategory {
@@ -139,9 +180,9 @@ export class ChangelogService {
     return changelogEnvironmentsCatalog();
   }
 
-  private loadFile(): ChangelogFile {
+  private loadFile(force = false): ChangelogFile {
     const now = Date.now();
-    if (this.cachePayload && now - this.cacheAt < this.cacheMs) {
+    if (!force && this.cachePayload && now - this.cacheAt < this.cacheMs) {
       return this.cachePayload;
     }
 

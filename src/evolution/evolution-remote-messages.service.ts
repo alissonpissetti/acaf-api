@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { normalizeEvolutionBaseUrl, SystemSettingsService } from '../system-settings/system-settings.service';
 import { EvolutionInstance } from './evolution-instance.entity';
-import { collectEvolutionMessageRows } from './evolution-message.parser';
+import { collectEvolutionMessageRows, readEvolutionRowMessageAt } from './evolution-message.parser';
 
 @Injectable()
 export class EvolutionRemoteMessagesService {
@@ -17,6 +17,7 @@ export class EvolutionRemoteMessagesService {
     instanceId: string,
     remoteJid: string,
     limit = 60,
+    options?: { since?: Date },
   ): Promise<unknown> {
     const jid = String(remoteJid ?? '').trim();
     if (!jid) return { messages: [] };
@@ -33,12 +34,26 @@ export class EvolutionRemoteMessagesService {
     const encoded = encodeURIComponent(row.instanceKey);
     const endpoint = `${remote.baseUrl}/chat/findMessages/${encoded}`;
     const safeLimit = Math.min(Math.max(limit, 10), 120);
+    const sinceMs =
+      options?.since && !Number.isNaN(options.since.getTime())
+        ? Math.max(0, options.since.getTime() - 120_000)
+        : null;
+    const sinceSec = sinceMs != null ? Math.floor(sinceMs / 1000) : null;
+
+    const whereBase: Record<string, unknown> = { key: { remoteJid: jid } };
+    if (sinceSec != null) {
+      whereBase.messageTimestamp = { gt: sinceSec };
+    }
 
     const bodies: Record<string, unknown>[] = [
-      { where: { key: { remoteJid: jid } }, limit: safeLimit, sort: { messageTimestamp: -1 } },
-      { where: { remoteJid: jid }, limit: safeLimit, sort: { messageTimestamp: -1 } },
-      { where: { remoteJid: jid }, limit: safeLimit },
-      { where: { key: { remoteJid: jid } }, limit: safeLimit },
+      { where: whereBase, limit: safeLimit, sort: { messageTimestamp: -1 } },
+      {
+        where: sinceSec != null ? { remoteJid: jid, messageTimestamp: { gt: sinceSec } } : { remoteJid: jid },
+        limit: safeLimit,
+        sort: { messageTimestamp: -1 },
+      },
+      { where: sinceSec != null ? { remoteJid: jid, messageTimestamp: { gt: sinceSec } } : { remoteJid: jid }, limit: safeLimit },
+      { where: whereBase, limit: safeLimit },
     ];
 
     const merged: unknown[] = [];
@@ -66,6 +81,10 @@ export class EvolutionRemoteMessagesService {
           const id = String(key.id ?? item.id ?? '').trim();
           const sig = id || JSON.stringify(item).slice(0, 160);
           if (seen.has(sig)) continue;
+          if (sinceMs != null) {
+            const at = readEvolutionRowMessageAt(item);
+            if (at && at.getTime() < sinceMs) continue;
+          }
           seen.add(sig);
           merged.push(item);
         }

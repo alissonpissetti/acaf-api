@@ -2,6 +2,8 @@ export type ChangelogCategory = 'feature' | 'fix' | 'improvement' | 'docs' | 'ma
 
 export type ChangelogAudience = 'internal' | 'partner' | 'client';
 
+export type ChangelogEntrySource = 'changelog' | 'git';
+
 export type ChangelogEntryRaw = {
   id: string;
   commitSha?: string | null;
@@ -14,6 +16,8 @@ export type ChangelogEntryRaw = {
   author?: string | null;
   audience?: ChangelogAudience;
   published?: boolean;
+  repository?: string | null;
+  source?: ChangelogEntrySource;
 };
 
 export type ChangelogFile = {
@@ -36,4 +40,6 @@ export type ChangelogEntryDto = {
   author: string | null;
   audience: ChangelogAudience;
   published: boolean;
+  repository: string | null;
+  source: ChangelogEntrySource;
 };

@@ -11,6 +11,8 @@ import {
 
 @Injectable()
 export class EvolutionRemoteMediaService {
+  private readonly disabledMediaNamespacesByBaseUrl = new Map<string, Set<string>>();
+
   constructor(
     @InjectRepository(EvolutionInstance)
     private readonly instances: Repository<EvolutionInstance>,
@@ -39,16 +41,31 @@ export class EvolutionRemoteMediaService {
     }
 
     const remote = await this.resolveRemoteApi(row);
+    const encodedKey = encodeURIComponent(row.instanceKey);
     const paths = [
-      `/chat/getBase64FromMediaMessage/${encodeURIComponent(row.instanceKey)}`,
-      `/message/getBase64FromMediaMessage/${encodeURIComponent(row.instanceKey)}`,
-      `/chat/downloadMediaMessage/${encodeURIComponent(row.instanceKey)}`,
-      `/message/downloadMediaMessage/${encodeURIComponent(row.instanceKey)}`,
+      `/chat/getBase64FromMediaMessage/${encodedKey}`,
+      `/chat/downloadMediaMessage/${encodedKey}`,
     ];
+    const tryMessageRoutes = String(process.env.EVOLUTION_MEDIA_TRY_MESSAGE_ROUTES ?? 'true')
+      .trim()
+      .toLowerCase();
+    const disabledNs =
+      this.disabledMediaNamespacesByBaseUrl.get(remote.baseUrl) ?? new Set<string>();
+    const allowMessageNs = tryMessageRoutes !== '0' && tryMessageRoutes !== 'false';
+    if (allowMessageNs && !disabledNs.has('message')) {
+      paths.push(
+        `/message/getBase64FromMediaMessage/${encodedKey}`,
+        `/message/downloadMediaMessage/${encodedKey}`,
+      );
+    }
 
     const requests = this.buildMediaDownloadRequests(messagePayload, input.kind);
     let lastError = '';
+    const disabledNamespaces = new Set<string>(disabledNs);
     for (const path of paths) {
+      const namespace = path.split('/').filter(Boolean)[0] ?? '';
+      if (disabledNamespaces.has(namespace)) continue;
+
       for (const body of requests) {
         try {
           const response = await fetch(`${remote.baseUrl}${path}`, {
@@ -58,10 +75,17 @@ export class EvolutionRemoteMediaService {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(body),
+            signal: AbortSignal.timeout(120_000),
           });
           const text = await response.text();
           if (!response.ok) {
             lastError = `${response.status}: ${text.slice(0, 240)}`;
+            if (response.status === 404 && /cannot\s+post/i.test(text)) {
+              if (namespace) disabledNamespaces.add(namespace);
+            }
+            if ([400, 401, 403, 404, 410, 422].includes(response.status)) {
+              continue;
+            }
             continue;
           }
           let json: Record<string, unknown> = {};
@@ -80,8 +104,22 @@ export class EvolutionRemoteMediaService {
       }
     }
 
+    this.disabledMediaNamespacesByBaseUrl.set(remote.baseUrl, disabledNamespaces);
+
+    const resolvedError =
+      lastError ||
+      (disabledNamespaces.size >= 2
+        ? 'rotas de mídia não disponíveis nesta Evolution'
+        : 'nenhum endpoint retornou base64 da mídia (pode ter expirado no WhatsApp)');
+    const permanent =
+      /\b(400|401|403|404|410|422)\b/.test(resolvedError) ||
+      /cannot\s+post/i.test(resolvedError) ||
+      /nenhum endpoint retornou base64/i.test(resolvedError) ||
+      /Evolution não retornou base64/i.test(resolvedError);
     throw new BadRequestException(
-      `Não foi possível baixar a mídia na Evolution (${lastError || 'erro desconhecido'}).`,
+      permanent
+        ? `MEDIA_PERMANENT: Não foi possível baixar a mídia na Evolution (${resolvedError}).`
+        : `Não foi possível baixar a mídia na Evolution (${resolvedError}).`,
     );
   }
 

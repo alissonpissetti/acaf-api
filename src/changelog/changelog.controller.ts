@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ChangelogService, type ChangelogListQuery } from './changelog.service';
@@ -32,5 +32,10 @@ export class ChangelogController {
       q,
     };
     return this.changelog.list(query);
+  }
+
+  @Post('sync')
+  syncFromGit() {
+    return this.changelog.syncFromGit();
   }
 }

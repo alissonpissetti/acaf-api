@@ -8,6 +8,7 @@ import { EvolutionMessage } from './evolution-message.entity';
 import { EvolutionInboxRead } from './evolution-inbox-read.entity';
 import { EvolutionInboxDeviceRead } from './evolution-inbox-device-read.entity';
 import { EvolutionInboxThreadArchive } from './evolution-inbox-thread-archive.entity';
+import { EvolutionInboxSyncState } from './evolution-inbox-sync-state.entity';
 import {
   collectEvolutionChatRows,
   extractArchiveHintsFromPayload,
@@ -28,6 +29,7 @@ import {
   groupLabelFromKey,
   isGroupContactKey,
   evolutionGroupSubjectTitle,
+  isGenericInboxLabel,
   isGenericGroupThreadName,
   isLikelyParticipantName,
   isPlausibleGroupTitle,
@@ -113,6 +115,21 @@ export type EvolutionInboxThreadDto = {
   isArchived: boolean;
 };
 
+export type EvolutionInboxThreadsPageDto = {
+  threads: EvolutionInboxThreadDto[];
+  hasMore: boolean;
+  limit: number;
+  offset: number;
+};
+
+const INBOX_THREADS_PAGE_DEFAULT = 45;
+const INBOX_THREADS_PAGE_MAX = 100;
+const INBOX_WEBHOOK_HEALTH_MS = 25 * 60_000;
+const INBOX_THREAD_PULL_THROTTLE_MS = 90_000;
+const INBOX_THREAD_PULL_THROTTLE_HEALTHY_MS = 12 * 60_000;
+const INBOX_DELTA_OVERLAP_MS = 2 * 60_000;
+const INBOX_CHAT_READ_SYNC_MS = 90_000;
+
 export type EvolutionInboxMessageReactionDto = {
   emoji: string;
   senderName: string | null;
@@ -152,6 +169,7 @@ export class EvolutionInboxService {
     { at: number; titles: Map<string, string> }
   >();
   private readonly chatArchiveSyncAt = new Map<string, number>();
+  private readonly chatReadSyncAt = new Map<string, number>();
   private readonly threadRemotePullAt = new Map<string, number>();
   private readonly backgroundMaintenanceAt = new Map<string, number>();
   private readonly connectBootstrapAt = new Map<string, number>();
@@ -166,6 +184,8 @@ export class EvolutionInboxService {
     private readonly deviceReads: Repository<EvolutionInboxDeviceRead>,
     @InjectRepository(EvolutionInboxThreadArchive)
     private readonly threadArchives: Repository<EvolutionInboxThreadArchive>,
+    @InjectRepository(EvolutionInboxSyncState)
+    private readonly inboxSyncState: Repository<EvolutionInboxSyncState>,
     @InjectRepository(EvolutionInstance)
     private readonly instances: Repository<EvolutionInstance>,
     @InjectRepository(EvolutionContactProfile)
@@ -185,7 +205,7 @@ export class EvolutionInboxService {
   ) {}
 
   private queueMessageMediaPersist(messageId: string, options?: { force?: boolean }) {
-    void this.messageMediaStorage.persistMessageMedia(messageId, options).catch(() => {});
+    this.messageMediaStorage.enqueuePersistMessageMedia(messageId, options);
   }
 
   async ingestFromInstance(
@@ -349,7 +369,89 @@ export class EvolutionInboxService {
       (await this.rekeyThreadToPhoneIfKnown(instance.id, parsed.contactKey, parsed.mediaPayload)) ??
       parsed.contactKey;
     await this.publishInboxActivity(instance.id, threadKey, saved.id, true);
+    void this.bumpLocalMessageWatermark(instance.id, parsed.messageAt);
     return { leadId, created, messageId: saved.id, ingested: true };
+  }
+
+  private inboxSyncStateReady(): boolean {
+    try {
+      void this.inboxSyncState.metadata.tableName;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async recordWebhookDelivery(instanceId: string): Promise<void> {
+    const id = String(instanceId ?? '').trim();
+    if (!id || !this.inboxSyncStateReady()) return;
+    const now = new Date();
+    let state = await this.inboxSyncState.findOne({ where: { instanceId: id } });
+    if (!state) {
+      state = this.inboxSyncState.create({ instanceId: id, lastWebhookAt: now });
+    } else {
+      state.lastWebhookAt = now;
+    }
+    await this.inboxSyncState.save(state);
+  }
+
+  async getInstanceLatestMessageAt(instanceId: string): Promise<Date | null> {
+    const row = await this.messages
+      .createQueryBuilder('m')
+      .select('MAX(m.message_at)', 'maxAt')
+      .where('m.instance_id = :instanceId', { instanceId })
+      .getRawOne<{ maxAt: Date | string | null }>();
+    const raw = row?.maxAt;
+    if (!raw) return null;
+    const at = raw instanceof Date ? raw : new Date(raw);
+    return Number.isNaN(at.getTime()) ? null : at;
+  }
+
+  async isInstanceWebhookHealthy(instanceId: string): Promise<boolean> {
+    if (!this.inboxSyncStateReady()) return false;
+    try {
+      const state = await this.inboxSyncState.findOne({
+        where: { instanceId },
+        select: ['lastWebhookAt'],
+      });
+      if (!state?.lastWebhookAt) return false;
+      return Date.now() - state.lastWebhookAt.getTime() < INBOX_WEBHOOK_HEALTH_MS;
+    } catch {
+      return false;
+    }
+  }
+
+  private async bumpLocalMessageWatermark(instanceId: string, messageAt: Date): Promise<void> {
+    const at = messageAt instanceof Date && !Number.isNaN(messageAt.getTime()) ? messageAt : null;
+    if (!at || !this.inboxSyncStateReady()) return;
+    let state = await this.inboxSyncState.findOne({ where: { instanceId } });
+    if (!state) {
+      state = this.inboxSyncState.create({
+        instanceId,
+        lastLocalMessageAt: at,
+      });
+    } else if (!state.lastLocalMessageAt || at > state.lastLocalMessageAt) {
+      state.lastLocalMessageAt = at;
+    }
+    await this.inboxSyncState.save(state).catch(() => {});
+  }
+
+  private async latestMessageAtForContactKeys(
+    instanceId: string,
+    contactKeys: string[],
+  ): Promise<Date | null> {
+    const keys = [...new Set(contactKeys.map((k) => String(k ?? '').trim()).filter(Boolean))];
+    if (!keys.length) return null;
+    const row = await this.messages
+      .createQueryBuilder('m')
+      .select('MAX(m.message_at)', 'maxAt')
+      .where('m.instance_id = :instanceId', { instanceId })
+      .andWhere('m.contact_phone IN (:...keys)', { keys })
+      .getRawOne<{ maxAt: Date | string | null }>();
+    const raw = row?.maxAt;
+    if (!raw) return null;
+    const at = raw instanceof Date ? raw : new Date(raw);
+    return Number.isNaN(at.getTime()) ? null : at;
   }
 
   private quoteDtoForRow(
@@ -394,11 +496,18 @@ export class EvolutionInboxService {
     }
 
     if (!body) {
-      body = preview.mediaKind
-        ? { image: '[imagem]', video: '[vídeo]', audio: '[áudio]', document: '[documento]', sticker: '[figurinha]' }[
+      if (preview.mediaKind) {
+        body =
+          { image: '[imagem]', video: '[vídeo]', audio: '[áudio]', document: '[documento]', sticker: '[figurinha]' }[
             preview.mediaKind
-          ] ?? '[mídia]'
-        : '(mensagem)';
+          ] ?? '[mídia]';
+      } else if (target) {
+        body = '(mensagem)';
+      } else if (preview.externalId) {
+        body = 'Mensagem citada';
+      } else {
+        body = '(mensagem)';
+      }
     }
 
     return {
@@ -761,7 +870,21 @@ export class EvolutionInboxService {
           Boolean(row.reactionTargetExternalId?.trim()) ||
           isReactionPlaceholderBody(row.body);
         if (!hideReactionRow) {
-          message = this.mapMessageRowToDto(row);
+          const siblings = await this.messages.find({
+            where: { instanceId, contactPhone: row.contactPhone },
+            order: { messageAt: 'DESC' },
+            take: 160,
+          });
+          const siblingsByExternalId = new Map<string, EvolutionMessage>();
+          for (const sibling of siblings) {
+            const externalId = String(sibling.externalId ?? '').trim();
+            if (externalId) siblingsByExternalId.set(externalId, sibling);
+          }
+          message = this.mapMessageRowToDto(
+            row,
+            [],
+            this.quoteDtoForRow(row, siblingsByExternalId),
+          );
         } else {
           const targetExternalId = this.reactionTargetExternalIdFromRow(row);
           if (targetExternalId) {
@@ -1005,10 +1128,13 @@ export class EvolutionInboxService {
   private async pullRemoteMessagesForThreadIfDue(
     instanceId: string,
     contactKey: string,
+    options?: { force?: boolean },
   ): Promise<void> {
     const throttleKey = `${instanceId}:${contactKey}`;
     const last = this.threadRemotePullAt.get(throttleKey) ?? 0;
-    if (Date.now() - last < 45_000) return;
+    const webhookHealthy = await this.isInstanceWebhookHealthy(instanceId);
+    const throttleMs = webhookHealthy ? INBOX_THREAD_PULL_THROTTLE_HEALTHY_MS : INBOX_THREAD_PULL_THROTTLE_MS;
+    if (!options?.force && Date.now() - last < throttleMs) return;
     this.threadRemotePullAt.set(throttleKey, Date.now());
 
     const instance = await this.instances.findOne({
@@ -1018,6 +1144,10 @@ export class EvolutionInboxService {
     if (!instance) return;
 
     const keys = await this.resolveThreadContactKeys(instanceId, contactKey);
+    const localWatermark = await this.latestMessageAtForContactKeys(instanceId, keys);
+    const deltaSince = localWatermark
+      ? new Date(localWatermark.getTime() - INBOX_DELTA_OVERLAP_MS)
+      : null;
     let remoteJid = await this.resolveRemoteJidForContact(instanceId, contactKey);
     if (!remoteJid) {
       for (const alias of keys) {
@@ -1038,21 +1168,55 @@ export class EvolutionInboxService {
       if (lid) jidCandidates.add(`${lid}@lid`);
     }
 
+    const fetchLimit = deltaSince ? 55 : localWatermark ? 40 : 80;
     const parsedMap = new Map<string, ParsedEvolutionMessage>();
     for (const jid of jidCandidates) {
-      const payload = await this.remoteMessages.fetchMessagesForJid(instanceId, jid, 40);
+      const payload = await this.remoteMessages.fetchMessagesForJid(instanceId, jid, fetchLimit, {
+        since: deltaSince ?? undefined,
+      });
       for (const message of parseEvolutionMessagePayload(payload)) {
+        if (deltaSince && message.messageAt.getTime() < deltaSince.getTime()) continue;
         const sig = `${message.externalId}:${message.contactKey}`;
         if (!parsedMap.has(sig)) parsedMap.set(sig, message);
       }
     }
     const parsed = [...parsedMap.values()];
-    if (!parsed.length) return;
+    if (!parsed.length) {
+      if (this.inboxSyncStateReady()) {
+        const pullAt = new Date();
+        let emptyState = await this.inboxSyncState.findOne({ where: { instanceId } });
+        if (!emptyState) {
+          emptyState = this.inboxSyncState.create({ instanceId, lastIncrementalPullAt: pullAt });
+        } else {
+          emptyState.lastIncrementalPullAt = pullAt;
+        }
+        await this.inboxSyncState.save(emptyState).catch(() => {});
+      }
+      return;
+    }
 
     const ownerUserId = await this.resolveOwnerUserId(instance);
     for (const message of parsed) {
       await this.ingestFromInstance(instance, { ownerUserId, parsed: message });
     }
+
+    if (this.inboxSyncStateReady()) {
+      const pullAt = new Date();
+      let syncState = await this.inboxSyncState.findOne({ where: { instanceId } });
+      if (!syncState) {
+        syncState = this.inboxSyncState.create({ instanceId, lastIncrementalPullAt: pullAt });
+      } else {
+        syncState.lastIncrementalPullAt = pullAt;
+      }
+      await this.inboxSyncState.save(syncState).catch(() => {});
+    }
+    void this.bumpLocalMessageWatermark(
+      instanceId,
+      parsed.reduce(
+        (max, row) => (row.messageAt > max ? row.messageAt : max),
+        parsed[0]!.messageAt,
+      ),
+    );
 
     await this.rekeyThreadToPhoneIfKnown(
       instanceId,
@@ -1249,6 +1413,43 @@ export class EvolutionInboxService {
       this.inboxRealtime.notifyThreadsUpdated(instanceId);
     }
     return updated;
+  }
+
+  async syncDeviceReadStatesFromRemote(instanceId: string): Promise<number> {
+    const id = String(instanceId ?? '').trim();
+    if (!id) return 0;
+
+    let chats: Awaited<ReturnType<typeof this.remoteChats.fetchChats>>;
+    try {
+      chats = await this.remoteChats.fetchChats(id);
+    } catch {
+      return 0;
+    }
+
+    let updated = 0;
+    for (const chat of chats) {
+      if (chat.unreadCount !== 0) continue;
+      const readAt = await this.resolveDeviceReadAtForContact(id, chat.contactKey, null);
+      const readChanged = await this.upsertDeviceReadAt(id, chat.contactKey, readAt);
+      if (readChanged) updated += 1;
+    }
+    if (updated > 0) {
+      this.inboxRealtime.notifyThreadsUpdated(id);
+    }
+    return updated;
+  }
+
+  private scheduleDeviceReadSync(instanceIds: string[]): void {
+    const unique = [...new Set(instanceIds.map((value) => String(value ?? '').trim()).filter(Boolean))].slice(
+      0,
+      4,
+    );
+    for (const instanceId of unique) {
+      const last = this.chatReadSyncAt.get(instanceId) ?? 0;
+      if (Date.now() - last < INBOX_CHAT_READ_SYNC_MS) continue;
+      this.chatReadSyncAt.set(instanceId, Date.now());
+      void this.syncDeviceReadStatesFromRemote(instanceId).catch(() => 0);
+    }
   }
 
   async syncChatArchiveFromRemote(instanceId: string): Promise<number> {
@@ -1529,6 +1730,16 @@ export class EvolutionInboxService {
   ): Promise<number> {
     const keys = await this.resolveThreadContactKeys(instanceId, contactKey);
     const since = await this.effectiveReadSince(userId, instanceId, contactKey);
+    return this.countUnreadWithSince(instanceId, keys, since);
+  }
+
+  private async countUnreadWithSince(
+    instanceId: string,
+    contactKeys: string[],
+    since: Date | null,
+  ): Promise<number> {
+    const keys = [...new Set(contactKeys.map((key) => String(key ?? '').trim()).filter(Boolean))];
+    if (!keys.length) return 0;
 
     const qb = this.messages
       .createQueryBuilder('m')
@@ -1542,6 +1753,72 @@ export class EvolutionInboxService {
     }
 
     return qb.getCount();
+  }
+
+  private async buildReadStampIndex(
+    userId: string,
+    instanceIds: string[],
+  ): Promise<Map<string, Date>> {
+    const uniqueIds = [...new Set(instanceIds.map((id) => String(id ?? '').trim()).filter(Boolean))];
+    if (!userId || !uniqueIds.length) return new Map();
+
+    const [userReads, deviceReads] = await Promise.all([
+      this.inboxReads.find({
+        where: { userId, instanceId: In(uniqueIds) },
+        select: ['instanceId', 'contactKey', 'lastReadAt'],
+      }),
+      this.deviceReads.find({
+        where: { instanceId: In(uniqueIds) },
+        select: ['instanceId', 'contactKey', 'readAt'],
+      }),
+    ]);
+
+    const index = new Map<string, Date>();
+    const upsert = (instanceId: string, contactKey: string, at: Date) => {
+      const key = `${instanceId}:${String(contactKey ?? '').trim()}`;
+      const prev = index.get(key);
+      if (!prev || at > prev) index.set(key, at);
+    };
+    for (const row of userReads) {
+      if (row.lastReadAt) upsert(row.instanceId, row.contactKey, row.lastReadAt);
+    }
+    for (const row of deviceReads) {
+      if (row.readAt) upsert(row.instanceId, row.contactKey, row.readAt);
+    }
+    return index;
+  }
+
+  private readSinceFromIndex(
+    index: Map<string, Date>,
+    instanceId: string,
+    contactKeys: string[],
+  ): Date | null {
+    let max: Date | null = null;
+    for (const contactKey of contactKeys) {
+      const stamp = index.get(`${instanceId}:${String(contactKey ?? '').trim()}`);
+      if (stamp && (!max || stamp > max)) max = stamp;
+    }
+    return max;
+  }
+
+  private async loadArchivedKeysSet(instanceIds: string[]): Promise<Set<string>> {
+    const uniqueIds = [...new Set(instanceIds.map((id) => String(id ?? '').trim()).filter(Boolean))];
+    if (!uniqueIds.length) return new Set();
+    const rows = await this.threadArchives.find({
+      where: { instanceId: In(uniqueIds), isArchived: true },
+      select: ['instanceId', 'contactKey'],
+    });
+    return new Set(
+      rows.map((row) => `${row.instanceId}:${String(row.contactKey ?? '').trim()}`).filter(Boolean),
+    );
+  }
+
+  private threadIsArchived(
+    archivedSet: Set<string>,
+    instanceId: string,
+    contactKeys: string[],
+  ): boolean {
+    return contactKeys.some((key) => archivedSet.has(`${instanceId}:${String(key ?? '').trim()}`));
   }
 
   /** Nomes, avatares, LID e arquivados — disparado em background ao listar conversas (throttle ~5 min). */
@@ -1594,11 +1871,23 @@ export class EvolutionInboxService {
 
   async listThreads(
     userId: string,
-    filters?: { instanceId?: string; view?: 'active' | 'archived' | 'all'; light?: boolean },
-  ): Promise<EvolutionInboxThreadDto[]> {
+    filters?: {
+      instanceId?: string;
+      view?: 'active' | 'archived' | 'all';
+      light?: boolean;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<EvolutionInboxThreadsPageDto> {
     const instanceId = filters?.instanceId?.trim();
     const view = filters?.view ?? 'active';
     const light = Boolean(filters?.light);
+    const pageLimit = Math.min(
+      INBOX_THREADS_PAGE_MAX,
+      Math.max(1, filters?.limit ?? INBOX_THREADS_PAGE_DEFAULT),
+    );
+    const pageOffset = Math.max(0, filters?.offset ?? 0);
+    const fetchLimit = pageLimit + 1;
     let remoteGroupTitles = new Map<string, string>();
     if (instanceId && !light) {
       const archiveSyncAt = this.chatArchiveSyncAt.get(instanceId) ?? 0;
@@ -1624,8 +1913,6 @@ export class EvolutionInboxService {
       }
       remoteGroupTitles = await this.remoteGroupTitlesForInstance(instanceId);
       this.queueBackgroundMaintenance([instanceId]);
-    } else if (instanceId) {
-      remoteGroupTitles = await this.remoteGroupTitlesForInstance(instanceId);
     }
 
     const latestSub = this.messages
@@ -1643,6 +1930,8 @@ export class EvolutionInboxService {
       latestSub.andWhere('lm.instance_id = :instanceId', { instanceId: filters.instanceId });
     }
 
+    latestSub.orderBy('maxAt', 'DESC').offset(pageOffset).limit(fetchLimit);
+
     const qb = this.messages
       .createQueryBuilder('m')
       .leftJoinAndSelect('m.instance', 'inst')
@@ -1657,7 +1946,9 @@ export class EvolutionInboxService {
       qb.andWhere('m.instance_id = :instanceId', { instanceId: filters.instanceId });
     }
 
-    const rows = this.collapseMessageRowsByRemoteJid(await qb.getMany());
+    const rawMessageRows = await qb.getMany();
+    const hasMore = rawMessageRows.length >= fetchLimit;
+    const rows = this.collapseMessageRowsByRemoteJid(rawMessageRows);
     const draftThreads: EvolutionInboxThreadDto[] = [];
 
     const leadIds = [...new Set(rows.map((row) => row.leadId).filter(Boolean))] as string[];
@@ -1670,40 +1961,117 @@ export class EvolutionInboxService {
     const leadById = new Map(leadRows.map((lead) => [lead.id, lead]));
 
     const instanceIds = [...new Set(rows.map((row) => row.instanceId))];
+    if (instanceIds.length) {
+      this.scheduleDeviceReadSync(instanceId ? [instanceId] : instanceIds);
+    }
     if (!light && !instanceId && instanceIds.length) {
       this.queueBackgroundMaintenance(instanceIds);
     }
     const profileRows = instanceIds.length
       ? await this.contactProfiles.find({ where: { instanceId: In(instanceIds) } })
       : [];
-    const profileByKey = new Map(
-      profileRows.map((row) => [`${row.instanceId}:${row.contactKey}`, row]),
-    );
+    const localGroupTitles = new Map<string, string>();
+    for (const profile of profileRows) {
+      if (!isGroupContactKey(profile.contactKey)) continue;
+      const title = this.pickAuthoritativeGroupTitle(profile.displayName, profile.contactKey);
+      if (title) localGroupTitles.set(`${profile.instanceId}:${profile.contactKey}`, title);
+    }
 
+    for (const id of instanceIds) {
+      const cached = this.remoteGroupTitleCache.get(id);
+      if (cached?.titles) {
+        for (const [groupKey, title] of cached.titles) {
+          if (!remoteGroupTitles.has(groupKey)) remoteGroupTitles.set(groupKey, title);
+        }
+      }
+    }
+    this.scheduleGroupTitleRefreshForInstances(instanceIds, light);
+
+    const threadNameHints = await this.loadBestContactNamesForThreads(rows);
+
+    const groupPayloadJobs: Array<{ instanceId: string; contactKey: string }> = [];
     for (const latest of rows) {
       const contactPhone = String(latest.contactPhone ?? '').trim();
-      if (!contactPhone || contactPhone === 'unknown') continue;
-
-      const threadKey = `${latest.instanceId}:${contactPhone}`;
-      const lead = latest.leadId ? leadById.get(latest.leadId) ?? null : null;
-      const leadTitle = lead?.title ?? null;
-      const profile = this.findContactProfileForAvatar(
+      if (!isGroupContactKey(contactPhone)) continue;
+      const composite = `${latest.instanceId}:${contactPhone}`;
+      const profile = this.findContactProfileForDisplay(
         latest.instanceId,
         contactPhone,
         profileRows,
         latest.leadId,
       );
+      const hasTitle = Boolean(
+        localGroupTitles.get(composite) ??
+          remoteGroupTitles.get(contactPhone) ??
+          this.pickAuthoritativeGroupTitle(profile?.displayName, contactPhone),
+      );
+      if (!hasTitle) {
+        groupPayloadJobs.push({ instanceId: latest.instanceId, contactKey: contactPhone });
+      }
+    }
+    const payloadGroupTitles = await this.loadGroupTitlesFromStoredPayloads(groupPayloadJobs);
+
+    const readIndex = userId ? await this.buildReadStampIndex(userId, instanceIds) : new Map<string, Date>();
+    const archivedSet = await this.loadArchivedKeysSet(instanceIds);
+
+    const contactKeysByRow = await Promise.all(
+      rows.map(async (latest) => {
+        const contactPhone = String(latest.contactPhone ?? '').trim();
+        if (!contactPhone || contactPhone === 'unknown') return [];
+        return light
+          ? [contactPhone]
+          : await this.resolveThreadContactKeys(latest.instanceId, contactPhone);
+      }),
+    );
+
+    const unreadCounts = await Promise.all(
+      rows.map(async (latest, rowIndex) => {
+        const contactPhone = String(latest.contactPhone ?? '').trim();
+        if (!userId || !contactPhone || contactPhone === 'unknown') return 0;
+        const contactKeys = contactKeysByRow[rowIndex] ?? [];
+        const since = this.readSinceFromIndex(readIndex, latest.instanceId, contactKeys);
+        return this.countUnreadWithSince(latest.instanceId, contactKeys, since);
+      }),
+    );
+
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const latest = rows[rowIndex]!;
+      const contactPhone = String(latest.contactPhone ?? '').trim();
+      if (!contactPhone || contactPhone === 'unknown') continue;
+
+      const contactKeys = contactKeysByRow[rowIndex] ?? [contactPhone];
+
+      const threadKey = `${latest.instanceId}:${contactPhone}`;
+      const lead = latest.leadId ? leadById.get(latest.leadId) ?? null : null;
+      const leadTitle = lead?.title ?? null;
+      const profile = this.findContactProfileForDisplay(
+        latest.instanceId,
+        contactPhone,
+        profileRows,
+        latest.leadId,
+      );
+      const avatarProfile = this.findContactProfileForAvatar(
+        latest.instanceId,
+        contactPhone,
+        profileRows,
+        latest.leadId,
+      );
+      const threadHintKey = `${latest.instanceId}:${contactPhone}`;
       const profileGroupTitle = isGroupContactKey(contactPhone)
         ? this.pickAuthoritativeGroupTitle(profile?.displayName, contactPhone)
         : null;
       const remoteGroupTitle = isGroupContactKey(contactPhone)
-        ? remoteGroupTitles.get(contactPhone) ?? null
+        ? localGroupTitles.get(threadHintKey) ??
+          payloadGroupTitles.get(threadHintKey) ??
+          remoteGroupTitles.get(contactPhone) ??
+          null
         : null;
       const messageNames = isGroupContactKey(contactPhone)
-        ? [remoteGroupTitle, profileGroupTitle, profile?.displayName]
+        ? [remoteGroupTitle, profileGroupTitle, profile?.displayName, threadNameHints.get(threadHintKey)]
         : [
-            latest.direction === 'in' ? latest.contactName : null,
-            latest.direction === 'in' ? latest.senderName : null,
+            threadNameHints.get(threadHintKey),
+            latest.contactName,
+            latest.senderName,
             profile?.displayName,
             lead?.contactName,
             lead?.title,
@@ -1733,14 +2101,14 @@ export class EvolutionInboxService {
             contactPhoneLabel,
             contactDisplayName,
           );
-      const avatarStored = Boolean(profile?.avatarStoragePath);
+      const avatarStored = Boolean(avatarProfile?.avatarStoragePath);
       const proxyPath = avatarStored
         ? `/api/admin/evolution/inbox/threads/${latest.instanceId}/${encodeURIComponent(contactPhone)}/avatar`
         : null;
       const avatarUrl = avatarStored
         ? proxyPath
-        : profile?.avatarUrl?.startsWith('http')
-          ? profile.avatarUrl
+        : avatarProfile?.avatarUrl?.startsWith('http')
+          ? avatarProfile.avatarUrl
           : null;
 
       draftThreads.push({
@@ -1764,29 +2132,40 @@ export class EvolutionInboxService {
         lastMessageAt: latest.messageAt.toISOString(),
         lastMessagePreview: this.threadLastMessagePreview(latest),
         lastDirection: latest.direction,
-        unreadCount: userId
-          ? await this.countUnreadMessages(userId, latest.instanceId, contactPhone)
-          : 0,
-        isArchived: false,
+        unreadCount: unreadCounts[rowIndex] ?? 0,
+        isArchived: this.threadIsArchived(archivedSet, latest.instanceId, contactKeys),
       });
     }
 
     const merged = this.mergeInboxThreads(draftThreads);
-    const archiveFlags = await Promise.all(
-      merged.map((thread) => this.isContactArchived(thread.instanceId, thread.contactPhone)),
-    );
-    const withArchive = merged.map((thread, index) => ({
-      ...thread,
-      isArchived: archiveFlags[index] ?? false,
-    }));
+    let threads = merged;
 
     if (view === 'archived') {
-      return withArchive.filter((thread) => thread.isArchived);
+      threads = threads.filter((thread) => thread.isArchived);
+    } else if (view === 'active') {
+      threads = threads.filter((thread) => !thread.isArchived);
     }
-    if (view === 'active') {
-      return withArchive.filter((thread) => !thread.isArchived);
-    }
-    return withArchive;
+
+    return {
+      threads,
+      hasMore,
+      limit: pageLimit,
+      offset: pageOffset,
+    };
+  }
+
+  private async queryThreadMessageRows(
+    instanceId: string,
+    contactKeys: string[],
+    limit: number,
+  ): Promise<EvolutionMessage[]> {
+    const keys = [...new Set(contactKeys.map((key) => String(key ?? '').trim()).filter(Boolean))];
+    if (!keys.length) return [];
+    return this.messages.find({
+      where: { instanceId, contactPhone: In(keys) },
+      order: { messageAt: 'DESC' },
+      take: limit,
+    });
   }
 
   async listThreadMessages(
@@ -1794,7 +2173,7 @@ export class EvolutionInboxService {
     instanceId: string,
     contactPhone: string,
     limit = 300,
-    options?: { syncRemote?: boolean },
+    options?: { syncRemote?: boolean | 'auto' },
   ): Promise<EvolutionInboxMessageDto[]> {
     const contactKey = String(contactPhone ?? '').trim();
     if (!contactKey) throw new NotFoundException('Conversa não encontrada.');
@@ -1802,35 +2181,51 @@ export class EvolutionInboxService {
     const instance = await this.instances.findOne({ where: { id: instanceId }, select: ['id'] });
     if (!instance) throw new NotFoundException('Instância não encontrada.');
 
-    if (userId) {
-      await this.markThreadRead(userId, instanceId, contactKey);
-    }
+    const syncMode = options?.syncRemote ?? 'auto';
+    const contactKeys = await this.resolveThreadContactKeys(instanceId, contactKey);
+    const localMax = await this.latestMessageAtForContactKeys(instanceId, contactKeys);
 
-    if (options?.syncRemote !== false) {
-      try {
-        await this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey);
-      } catch {
-        /* Evolution indisponível: exibe histórico local */
+    const markReadPromise = userId ? this.markThreadRead(userId, instanceId, contactKey) : Promise.resolve();
+
+    let pullBlocking = false;
+    let pullBackground = false;
+    if (syncMode === true) {
+      pullBlocking = true;
+    } else if (syncMode === 'auto') {
+      pullBlocking = !localMax;
+      if (localMax) {
+        const webhookHealthy = await this.isInstanceWebhookHealthy(instanceId);
+        pullBackground = !webhookHealthy;
       }
     }
 
-    const contactKeys = await this.resolveThreadContactKeys(instanceId, contactKey);
-    const rows = await this.messages.find({
-      where: { instanceId, contactPhone: In(contactKeys) },
-      order: { messageAt: 'DESC' },
-      take: limit,
-    });
+    if (pullBlocking) {
+      try {
+        await this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey, {
+          force: syncMode === true,
+        });
+      } catch {
+        /* Evolution indisponível: exibe histórico local */
+      }
+    } else if (pullBackground) {
+      void this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey).catch(() => {});
+    }
 
-    await this.repairReactionMessages(instanceId, Math.max(limit, 400), contactKeys);
+    const skipRepair = syncMode === false;
+    const take = Math.max(1, Math.min(limit, 500));
 
-    const refreshed = await this.messages.find({
-      where: { instanceId, contactPhone: In(contactKeys) },
-      order: { messageAt: 'DESC' },
-      take: limit,
-    });
+    const [, initialRows] = await Promise.all([
+      markReadPromise,
+      this.queryThreadMessageRows(instanceId, contactKeys, take),
+    ]);
 
-    const chronological = [...refreshed].reverse();
+    let rows = initialRows;
+    if (!skipRepair) {
+      await this.repairReactionMessages(instanceId, Math.max(take, 400), contactKeys);
+      rows = await this.queryThreadMessageRows(instanceId, contactKeys, take);
+    }
 
+    const chronological = [...rows].reverse();
     return this.buildThreadMessageList(chronological);
   }
 
@@ -1907,6 +2302,116 @@ export class EvolutionInboxService {
         phoneLabel: formatPhoneLenient(contactKey),
         remoteJid: (await this.loadLatestRemoteJids(instanceId)).get(contactKey) ?? null,
       });
+    }
+  }
+
+  private findContactProfileForDisplay(
+    instanceId: string,
+    contactKey: string,
+    profileRows: EvolutionContactProfile[],
+    leadId?: string | null,
+  ): EvolutionContactProfile | null {
+    const forInstance = profileRows.filter((row) => row.instanceId === instanceId);
+    const hasGoodName = (row: EvolutionContactProfile) => {
+      const name = String(row.displayName ?? '').trim();
+      return Boolean(name) && !isGenericInboxLabel(name) && !isGenericGroupThreadName(name, row.contactKey);
+    };
+
+    const exactNamed = forInstance.find((row) => row.contactKey === contactKey && hasGoodName(row));
+    if (exactNamed) return exactNamed;
+
+    const resolvedNamed = this.resolveContactProfile(forInstance, instanceId, contactKey);
+    if (resolvedNamed && hasGoodName(resolvedNamed)) return resolvedNamed;
+
+    if (leadId) {
+      const byLead = forInstance.find((row) => row.leadId === leadId && hasGoodName(row));
+      if (byLead) return byLead;
+    }
+
+    return (
+      forInstance.find((row) => row.contactKey === contactKey) ??
+      resolvedNamed ??
+      (leadId ? forInstance.find((row) => row.leadId === leadId) ?? null : null)
+    );
+  }
+
+  private async loadBestContactNamesForThreads(
+    rows: EvolutionMessage[],
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (!rows.length) return map;
+
+    const instanceIds = [...new Set(rows.map((row) => row.instanceId))];
+    const contactPhones = [...new Set(rows.map((row) => String(row.contactPhone ?? '').trim()).filter(Boolean))];
+    if (!contactPhones.length) return map;
+
+    const nameRows = await this.messages
+      .createQueryBuilder('m')
+      .select('m.instance_id', 'instanceId')
+      .addSelect('m.contact_phone', 'contactPhone')
+      .addSelect('m.contact_name', 'contactName')
+      .addSelect('m.sender_name', 'senderName')
+      .where('m.instance_id IN (:...instanceIds)', { instanceIds })
+      .andWhere('m.contact_phone IN (:...contactPhones)', { contactPhones })
+      .andWhere("(TRIM(COALESCE(m.contact_name, '')) <> '' OR TRIM(COALESCE(m.sender_name, '')) <> '')")
+      .orderBy('m.message_at', 'DESC')
+      .getRawMany<{
+        instanceId: string;
+        contactPhone: string;
+        contactName: string | null;
+        senderName: string | null;
+      }>();
+
+    for (const row of nameRows) {
+      const key = `${row.instanceId}:${String(row.contactPhone ?? '').trim()}`;
+      if (map.has(key)) continue;
+      for (const raw of [row.contactName, row.senderName]) {
+        const value = String(raw ?? '').trim();
+        if (!isHumanContactName(value) || isGenericInboxLabel(value)) continue;
+        if (isGroupContactKey(row.contactPhone) && isLikelyParticipantName(value)) continue;
+        map.set(key, value);
+        break;
+      }
+    }
+
+    return map;
+  }
+
+  private async loadGroupTitlesFromStoredPayloads(
+    items: Array<{ instanceId: string; contactKey: string }>,
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const unique: Array<{ instanceId: string; contactKey: string }> = [];
+    const seen = new Set<string>();
+    for (const item of items) {
+      const key = `${item.instanceId}:${item.contactKey}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(item);
+    }
+
+    const chunkSize = 8;
+    for (let offset = 0; offset < unique.length; offset += chunkSize) {
+      const chunk = unique.slice(offset, offset + chunkSize);
+      await Promise.all(
+        chunk.map(async ({ instanceId, contactKey }) => {
+          const title = await this.bestGroupTitleFromStoredPayloads(instanceId, contactKey);
+          if (title) out.set(`${instanceId}:${contactKey}`, title);
+        }),
+      );
+    }
+    return out;
+  }
+
+  private scheduleGroupTitleRefreshForInstances(instanceIds: string[], light: boolean): void {
+    const ttlMs = light ? 12 * 60_000 : 2 * 60_000;
+    for (const id of instanceIds) {
+      const last = this.groupTitleRefreshAt.get(id) ?? 0;
+      if (Date.now() - last < ttlMs) continue;
+      this.groupTitleRefreshAt.set(id, Date.now());
+      void this.backfillGroupThreadNames(id)
+        .then(() => this.refreshRemoteGroupTitleCache(id))
+        .catch(() => {});
     }
   }
 
@@ -2350,7 +2855,7 @@ export class EvolutionInboxService {
     displayName: string | null | undefined,
     contactKey: string,
   ): string | null {
-    const auth = evolutionGroupSubjectTitle(displayName);
+    const auth = evolutionGroupSubjectTitle(displayName, { trustRemote: true });
     if (auth && !isLikelyParticipantName(stripEmojiForNameHeuristic(displayName ?? ''))) {
       return auth;
     }
@@ -2383,7 +2888,7 @@ export class EvolutionInboxService {
         const payload = JSON.parse(row.mediaPayload) as Record<string, unknown>;
         const subject = extractGroupSubjectFromRecord(payload);
         const title =
-          evolutionGroupSubjectTitle(subject) ??
+          evolutionGroupSubjectTitle(subject, { trustRemote: true }) ??
           (subject && isPlausibleGroupTitle(subject) ? subject : null);
         if (!title) continue;
         if (!best || title.length > best.length) best = title;
@@ -2643,6 +3148,44 @@ export class EvolutionInboxService {
       map.set(row.contactPhone, jid);
     }
     return map;
+  }
+
+  async readContactAvatarsBatch(
+    items: Array<{ instanceId: string; contactPhone: string }>,
+  ): Promise<{
+    items: Array<{ threadKey: string; mime: string; base64: string } | { threadKey: string; missing: true }>;
+  }> {
+    const unique = new Map<string, { instanceId: string; contactPhone: string }>();
+    for (const raw of items ?? []) {
+      const instanceId = String(raw?.instanceId ?? '').trim();
+      const contactPhone = String(raw?.contactPhone ?? '').trim();
+      if (!instanceId || !contactPhone) continue;
+      unique.set(`${instanceId}:${contactPhone}`, { instanceId, contactPhone });
+    }
+
+    const list = [...unique.values()].slice(0, 48);
+    const results: Array<
+      { threadKey: string; mime: string; base64: string } | { threadKey: string; missing: true }
+    > = [];
+
+    const chunkSize = 6;
+    for (let offset = 0; offset < list.length; offset += chunkSize) {
+      const chunk = list.slice(offset, offset + chunkSize);
+      const chunkResults = await Promise.all(
+        chunk.map(async (item) => {
+          const threadKey = `${item.instanceId}:${item.contactPhone}`;
+          try {
+            const { buffer, mime } = await this.streamContactAvatar(item.instanceId, item.contactPhone);
+            return { threadKey, mime, base64: buffer.toString('base64') };
+          } catch {
+            return { threadKey, missing: true as const };
+          }
+        }),
+      );
+      results.push(...chunkResults);
+    }
+
+    return { items: results };
   }
 
   async streamContactAvatar(

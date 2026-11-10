@@ -165,6 +165,8 @@ export class EvolutionInboundService {
       results.push(outcome);
     }
 
+    await this.inbox.recordWebhookDelivery(instance.id);
+
     return { ok: true, kind: 'messages', results };
   }
 

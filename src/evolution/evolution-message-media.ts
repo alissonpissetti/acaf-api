@@ -30,6 +30,7 @@ export function unwrapWhatsAppMessageNode(message: Record<string, unknown>): Rec
   if (!message || typeof message !== 'object') return {};
 
   const wrappers = [
+    'deviceSentMessage',
     'ephemeralMessage',
     'viewOnceMessage',
     'viewOnceMessageV2',
@@ -167,7 +168,15 @@ const MEDIA_FALLBACK_LABELS: Record<string, string> = {
 
 function contextInfoWithQuote(core: Record<string, unknown>): Record<string, unknown> | null {
   const direct = core.contextInfo as Record<string, unknown> | undefined;
-  if (direct?.quotedMessage) return direct;
+  if (
+    direct &&
+    (direct.quotedMessage ||
+      direct.stanzaId ||
+      direct.quotedStanzaId ||
+      direct.quotedMessageTimestamp)
+  ) {
+    return direct;
+  }
 
   const carriers = [
     'extendedTextMessage',
@@ -184,9 +193,36 @@ function contextInfoWithQuote(core: Record<string, unknown>): Record<string, unk
   for (const field of carriers) {
     const part = core[field] as Record<string, unknown> | undefined;
     const ctx = part?.contextInfo as Record<string, unknown> | undefined;
-    if (ctx?.quotedMessage) return ctx;
+    if (
+      ctx &&
+      (ctx.quotedMessage ||
+        ctx.stanzaId ||
+        ctx.quotedStanzaId ||
+        ctx.quotedMessageTimestamp)
+    ) {
+      return ctx;
+    }
+  }
+  const msgContext = core.messageContextInfo as Record<string, unknown> | undefined;
+  if (
+    msgContext &&
+    (msgContext.quotedMessage ||
+      msgContext.stanzaId ||
+      msgContext.quotedStanzaId)
+  ) {
+    return msgContext;
   }
   return null;
+}
+
+function quotedMessageHasContent(raw: Record<string, unknown> | undefined): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const core = unwrapWhatsAppMessageNode(raw);
+  if (bodyTextFromWhatsAppMessage(core) || bodyTextFromWhatsAppMessage(raw)) return true;
+  for (const { field } of MEDIA_FIELDS) {
+    if (core[field]) return true;
+  }
+  return Object.keys(core).length > 0;
 }
 
 export function extractWhatsAppQuotedPreview(
@@ -198,14 +234,26 @@ export function extractWhatsAppQuotedPreview(
   if (!contextInfo) return null;
 
   const quotedRaw = contextInfo.quotedMessage as Record<string, unknown> | undefined;
-  if (!quotedRaw || typeof quotedRaw !== 'object') return null;
+  const hasQuotedPayload = quotedMessageHasContent(quotedRaw);
 
-  const quotedCore = unwrapWhatsAppMessageNode(quotedRaw);
+  const externalId = String(
+    contextInfo.stanzaId ??
+      contextInfo.quotedStanzaId ??
+      (contextInfo.quotedMessage as Record<string, unknown> | undefined)?.stanzaId ??
+      '',
+  ).trim();
+
+  if (!hasQuotedPayload && !externalId) return null;
+
+  const quotedCore =
+    quotedRaw && typeof quotedRaw === 'object' ? unwrapWhatsAppMessageNode(quotedRaw) : {};
   let body =
-    bodyTextFromWhatsAppMessage(quotedCore) || bodyTextFromWhatsAppMessage(quotedRaw);
+    quotedRaw && typeof quotedRaw === 'object'
+      ? bodyTextFromWhatsAppMessage(quotedCore) || bodyTextFromWhatsAppMessage(quotedRaw)
+      : '';
   let mediaKind: string | null = null;
 
-  if (!body) {
+  if (!body && quotedRaw && typeof quotedRaw === 'object') {
     for (const { kind, field } of MEDIA_FIELDS) {
       if (quotedCore[field]) {
         mediaKind = kind;
@@ -214,14 +262,6 @@ export function extractWhatsAppQuotedPreview(
       }
     }
   }
-  if (!body) body = '(mensagem)';
-
-  const externalId = String(
-    contextInfo.stanzaId ??
-      contextInfo.quotedStanzaId ??
-      (contextInfo.quotedMessage as Record<string, unknown> | undefined)?.stanzaId ??
-      '',
-  ).trim();
 
   const participant = String(contextInfo.participant ?? '').trim();
 
@@ -241,7 +281,17 @@ export function extractQuotedPreviewFromStoredPayload(
     const payload = JSON.parse(payloadJson) as Record<string, unknown>;
     const key = (payload.key ?? {}) as Record<string, unknown>;
     const { inner, rawMessage } = resolveMessageEnvelope(payload, key);
-    return extractWhatsAppQuotedPreview(inner) || extractWhatsAppQuotedPreview(rawMessage);
+    const candidates: Record<string, unknown>[] = [inner, rawMessage];
+    const topMessage = payload.message;
+    if (topMessage && typeof topMessage === 'object') {
+      candidates.push(topMessage as Record<string, unknown>);
+      candidates.push(unwrapWhatsAppMessageNode(topMessage as Record<string, unknown>));
+    }
+    for (const candidate of candidates) {
+      const hit = extractWhatsAppQuotedPreview(candidate);
+      if (hit) return hit;
+    }
+    return null;
   } catch {
     return null;
   }

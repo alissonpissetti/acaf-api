@@ -64,6 +64,7 @@ import { EvolutionContactProfile } from './evolution/evolution-contact-profile.e
 import { EvolutionInboxRead } from './evolution/evolution-inbox-read.entity';
 import { EvolutionInboxDeviceRead } from './evolution/evolution-inbox-device-read.entity';
 import { EvolutionInboxThreadArchive } from './evolution/evolution-inbox-thread-archive.entity';
+import { EvolutionInboxSyncState } from './evolution/evolution-inbox-sync-state.entity';
 import { SystemSetting } from './system-settings/system-setting.entity';
 import { ChangelogModule } from './changelog/changelog.module';
 
@@ -130,6 +131,7 @@ import { ChangelogModule } from './changelog/changelog.module';
             EvolutionInboxRead,
             EvolutionInboxDeviceRead,
             EvolutionInboxThreadArchive,
+            EvolutionInboxSyncState,
             SystemSetting,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',

@@ -27,8 +27,10 @@ import { EvolutionInboxRealtimeService } from './evolution-inbox-realtime.servic
 import { EvolutionInboxRead } from './evolution-inbox-read.entity';
 import { EvolutionInboxDeviceRead } from './evolution-inbox-device-read.entity';
 import { EvolutionInboxThreadArchive } from './evolution-inbox-thread-archive.entity';
+import { EvolutionInboxSyncState } from './evolution-inbox-sync-state.entity';
 import { EvolutionRemoteChatsService } from './evolution-remote-chats.service';
 import { EvolutionRemoteMessagesService } from './evolution-remote-messages.service';
+import { EvolutionInboxJobsScheduler } from './evolution-inbox-jobs.scheduler';
 
 @Module({
   imports: [
@@ -40,6 +42,7 @@ import { EvolutionRemoteMessagesService } from './evolution-remote-messages.serv
       EvolutionInboxRead,
       EvolutionInboxDeviceRead,
       EvolutionInboxThreadArchive,
+      EvolutionInboxSyncState,
       Department,
       User,
       CommercialLead,
@@ -63,6 +66,7 @@ import { EvolutionRemoteMessagesService } from './evolution-remote-messages.serv
     EvolutionInboxGateway,
     EvolutionRemoteChatsService,
     EvolutionRemoteMessagesService,
+    EvolutionInboxJobsScheduler,
   ],
   exports: [EvolutionInstancesService],
 })

@@ -7,11 +7,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { loadEnvironmentsManifest, mergeAreaIds } from './changelog-environments.mjs';
+import {
+  detectRepoEnvironmentId,
+  loadEnvironmentsManifest,
+  mergeAreaIds,
+  resolveChangelogFilePath,
+} from './changelog-environments.mjs';
 
 const ROOT = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
-const CHANGELOG_PATH = path.join(ROOT, 'changelog/changelog.json');
+const CHANGELOG_PATH = resolveChangelogFilePath(ROOT);
 const ENV_MANIFEST = loadEnvironmentsManifest(ROOT);
+const REPO_ENV_ID = detectRepoEnvironmentId(ROOT, ENV_MANIFEST);
 
 function git(format, extra = '') {
   return execSync(`git log -1 --format=${format} ${extra}`.trim(), {
@@ -105,11 +111,16 @@ function main() {
   const category = parseCategory(subject);
   const title = humanizeSubject(subject);
   const highlights = extractHighlights(body);
-  const areas = mergeAreaIds({ files, subject, body }, ENV_MANIFEST);
+  const areas = mergeAreaIds(
+    { files, subject, body, repoEnvId: REPO_ENV_ID },
+    ENV_MANIFEST,
+  );
 
   const entry = {
     id: randomUUID(),
     commitSha: sha,
+    repository: REPO_ENV_ID,
+    source: 'changelog',
     committedAt,
     title,
     summary: highlights.length ? null : body.split('\n').find((l) => l.trim() && !/^changelog\s*:/i.test(l))?.trim() || null,

@@ -217,6 +217,14 @@ export function parseEvolutionMessageRow(row: unknown): ParsedEvolutionMessage |
   };
 }
 
+export function readEvolutionRowMessageAt(row: unknown): Date | null {
+  if (!row || typeof row !== 'object') return null;
+  const item = row as Record<string, unknown>;
+  const key = (item.key ?? {}) as Record<string, unknown>;
+  const at = messageTimestamp(item, key);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
 export function parseEvolutionMessagePayload(data: unknown): ParsedEvolutionMessage[] {
   return collectEvolutionMessageRows(data)
     .map((row) => parseEvolutionMessageRow(row))

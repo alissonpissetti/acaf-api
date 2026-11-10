@@ -28,17 +28,37 @@ export class EvolutionInboxController {
     @Query('instanceId') instanceId?: string,
     @Query('view') view?: 'active' | 'archived' | 'all',
     @Query('light') light?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     const userId = req.user?.userId ?? '';
     const safeView =
       view === 'archived' || view === 'all' || view === 'active' ? view : 'active';
     const lightList = light === '1' || light === 'true';
-    return this.inbox.listThreads(
-      userId,
-      instanceId
-        ? { instanceId, view: safeView, light: lightList }
-        : { view: safeView, light: lightList },
-    );
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
+    const parsedOffset = offset ? Number.parseInt(offset, 10) : undefined;
+    const pageLimit =
+      parsedLimit != null && Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? parsedLimit
+        : undefined;
+    const pageOffset =
+      parsedOffset != null && Number.isFinite(parsedOffset) && parsedOffset >= 0
+        ? parsedOffset
+        : undefined;
+    const filters = {
+      view: safeView,
+      light: lightList,
+      limit: pageLimit,
+      offset: pageOffset,
+      ...(instanceId ? { instanceId } : {}),
+    };
+    return this.inbox.listThreads(userId, filters);
+  }
+
+  @Post('avatars/batch')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  batchAvatars(@Body() body: { items?: Array<{ instanceId: string; contactPhone: string }> }) {
+    return this.inbox.readContactAvatarsBatch(body?.items ?? []);
   }
 
   @Get('threads/:instanceId/:contactPhone/avatar')
@@ -50,7 +70,7 @@ export class EvolutionInboxController {
   ): Promise<StreamableFile> {
     const { buffer, mime } = await this.inbox.streamContactAvatar(instanceId, decodeURIComponent(contactPhone));
     res.setHeader('Content-Type', mime);
-    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('Cache-Control', 'private, max-age=86400, stale-while-revalidate=604800');
     return new StreamableFile(buffer);
   }
 
@@ -114,7 +134,12 @@ export class EvolutionInboxController {
   ) {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : 200;
     const userId = req.user?.userId ?? null;
-    const syncRemote = remote !== '0' && remote !== 'false';
+    const remoteFlag = String(remote ?? '')
+      .trim()
+      .toLowerCase();
+    let syncRemote: boolean | 'auto' = 'auto';
+    if (remoteFlag === '0' || remoteFlag === 'false') syncRemote = false;
+    else if (remoteFlag === '1' || remoteFlag === 'true') syncRemote = true;
     return this.inbox.listThreadMessages(
       userId,
       instanceId,

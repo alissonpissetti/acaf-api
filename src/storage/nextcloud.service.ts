@@ -331,6 +331,56 @@ export class NextcloudService {
     return '.bin';
   }
 
+  private isRetryableDavStatus(status: number): boolean {
+    return [408, 423, 429, 499, 502, 503, 504].includes(status);
+  }
+
+  private async putDavFileWithRetry(
+    relativePath: string,
+    buffer: Buffer,
+    contentType: string,
+    errorLabel: string,
+  ): Promise<void> {
+    let lastError = 'erro desconhecido';
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const response = await fetch(this.davUrl(relativePath), {
+          method: 'PUT',
+          headers: {
+            Authorization: this.authHeader(),
+            'Content-Type': contentType,
+          },
+          body: new Uint8Array(buffer),
+          signal: AbortSignal.timeout(240_000),
+        });
+
+        if (response.ok) return;
+
+        const body = await response.text();
+        lastError = `${response.status}: ${body.slice(0, 120)}`;
+        if (this.isRetryableDavStatus(response.status)) {
+          await this.waitForStorageBackoff(attempt);
+          continue;
+        }
+
+        throw new InternalServerErrorException(`${errorLabel} (${response.status}): ${body.slice(0, 120)}`);
+      } catch (err) {
+        if (err instanceof InternalServerErrorException) throw err;
+        const message = err instanceof Error ? err.message : String(err);
+        const timedOut = err instanceof Error && err.name === 'TimeoutError';
+        if (timedOut || /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(message)) {
+          lastError = timedOut ? 'timeout' : message;
+          await this.waitForStorageBackoff(attempt);
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw new InternalServerErrorException(`${errorLabel} (${lastError})`);
+  }
+
   async uploadWhatsappMessageMedia(
     instanceId: string,
     messageId: string,
@@ -345,21 +395,13 @@ export class NextcloudService {
 
     await this.ensureFolder(folder);
 
-    const response = await fetch(this.davUrl(relativePath), {
-      method: 'PUT',
-      headers: {
-        Authorization: this.authHeader(),
-        'Content-Type': mimeType?.split(';')[0]?.trim() || 'application/octet-stream',
-      },
-      body: new Uint8Array(buffer),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new InternalServerErrorException(
-        `Falha ao enviar mídia WhatsApp (${response.status}): ${body.slice(0, 120)}`,
-      );
-    }
+    const contentType = mimeType?.split(';')[0]?.trim() || 'application/octet-stream';
+    await this.putDavFileWithRetry(
+      relativePath,
+      buffer,
+      contentType,
+      'Falha ao enviar mídia WhatsApp',
+    );
 
     return { path: relativePath };
   }

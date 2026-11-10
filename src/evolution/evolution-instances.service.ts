@@ -14,7 +14,7 @@ import { normalizeEvolutionBaseUrl } from '../system-settings/system-settings.se
 import { EVOLUTION_WEBHOOK_EVENTS } from './evolution-webhook.constants';
 import { EvolutionInboundService } from './evolution-inbound.service';
 import { EvolutionInboxService } from './evolution-inbox.service';
-import { collectEvolutionMessageRows } from './evolution-message.parser';
+import { collectEvolutionMessageRows, readEvolutionRowMessageAt } from './evolution-message.parser';
 
 export type EvolutionInstanceDto = {
   id: string;
@@ -919,7 +919,8 @@ export class EvolutionInstancesService {
       return { ok: false, imported: 0, total: 0, webhookUrl, message };
     }
 
-    const payload = await this.fetchRemoteChatMessages(remote, row.instanceKey);
+    const watermark = await this.inbox.getInstanceLatestMessageAt(row.id);
+    const payload = await this.fetchRemoteChatMessages(remote, row.instanceKey, watermark);
     const rowCount = collectEvolutionMessageRows(payload).length;
     if (!rowCount) {
       return {
@@ -948,7 +949,11 @@ export class EvolutionInstancesService {
       avatarsStored,
       mediaStored,
       message: [
-        rowCount > 0 ? `${rowCount} mensagem(ns) analisada(s) na Evolution (inclui grupos e retroativo).` : null,
+        rowCount > 0
+          ? watermark
+            ? `${rowCount} mensagem(ns) nova(s) ou alterada(s) desde o último histórico local.`
+            : `${rowCount} mensagem(ns) analisada(s) na Evolution (inclui grupos e retroativo).`
+          : null,
         mediaPatched > 0 ? `${mediaPatched} mensagem(ns) com mídia atualizada.` : null,
         mediaStored.stored > 0
           ? `${mediaStored.stored} mídia(s) copiada(s) para o Nextcloud (exibição sem depender do WhatsApp).`
@@ -965,6 +970,23 @@ export class EvolutionInstancesService {
         .filter(Boolean)
         .join(' '),
     };
+  }
+
+  /** Reparo automático: só mensagens mais novas que o watermark local (sem sync manual). */
+  async repairInboxIncremental(id: string): Promise<number> {
+    const row = await this.findWithSecret(id);
+    try {
+      const remote = await this.resolveRemoteApi(row);
+      const watermark = await this.inbox.getInstanceLatestMessageAt(row.id);
+      const payload = await this.fetchRemoteChatMessages(remote, row.instanceKey, watermark);
+      const rowCount = collectEvolutionMessageRows(payload).length;
+      if (!rowCount) return 0;
+      const { imported } = await this.inbound.ingestMessagePayload(row.id, payload);
+      await this.inbox.applyPushNamesFromPayload(row.id, payload).catch(() => 0);
+      return imported;
+    } catch {
+      return 0;
+    }
   }
 
   async syncMessageMedia(id: string): Promise<{
@@ -1026,10 +1048,15 @@ export class EvolutionInstancesService {
   private async fetchRemoteChatMessages(
     remote: { baseUrl: string; apiKey: string },
     instanceKey: string,
+    localWatermark?: Date | null,
   ): Promise<unknown> {
     const endpoint = `${remote.baseUrl}/chat/findMessages/${encodeURIComponent(instanceKey)}`;
     const pageSize = 100;
-    const maxPages = 20;
+    const deltaSince =
+      localWatermark && !Number.isNaN(localWatermark.getTime())
+        ? new Date(localWatermark.getTime() - 120_000)
+        : null;
+    const maxPages = deltaSince ? 6 : 20;
     const merged: unknown[] = [];
     const seenIds = new Set<string>();
     let lastError = '';
@@ -1037,6 +1064,10 @@ export class EvolutionInstancesService {
     const mergeRows = (data: unknown) => {
       for (const row of collectEvolutionMessageRows(data)) {
         if (!row || typeof row !== 'object') continue;
+        if (deltaSince) {
+          const at = readEvolutionRowMessageAt(row);
+          if (at && at.getTime() < deltaSince.getTime()) continue;
+        }
         const key = ((row as Record<string, unknown>).key ?? {}) as Record<string, unknown>;
         const id = String(key.id ?? (row as Record<string, unknown>).id ?? '').trim();
         const dedupeKey = id || JSON.stringify(row).slice(0, 120);

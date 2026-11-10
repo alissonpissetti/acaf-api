@@ -11,9 +11,27 @@ chmod +x scripts/install-git-hooks.sh scripts/changelog-record-commit.mjs .githo
 ./scripts/install-git-hooks.sh
 ```
 
+**Vários repositórios** (`acaf-adm`, `acaf-api`, `acaf-partner`, … na mesma pasta pai):
+
+```bash
+./scripts/install-changelog-hooks-all.sh
+```
+
+Cada commit em qualquer repo grava no **mesmo** `acaf-api/changelog/changelog.json` e marca o ambiente pelo nome da pasta (`acaf-adm` → `adm`).
+
 O repositório da API guarda `changelog/` na raiz deste projeto (caminho usado em deploy).
 
-2. A cada `git commit`, o hook acrescenta uma entrada (exceto se a mensagem contiver `[skip changelog]`).
+2. A cada `git commit`, o hook acrescenta uma entrada (exceto se a mensagem contiver `[skip changelog]`). Lembre de commitar o `changelog.json` atualizado em seguida (ou use **Importar do Git** no admin).
+
+## Leitura direta do Git (API)
+
+Se faltar entrada no JSON, a API pode **mesclar commits do Git** ao listar:
+
+- Descobre clones em `../acaf-*` (mesmo nível da API).
+- Ou configure `CHANGELOG_GIT_REPOS=adm=/srv/acaf-adm,api=/srv/acaf-api`.
+- Desative com `CHANGELOG_GIT_READ=0`.
+
+No admin: **Importar do Git** (`POST /api/admin/changelog/sync`) grava as entradas faltantes no `changelog.json`.
 
 ### Mensagem de commit recomendada
 

@@ -16,14 +16,41 @@ const FALLBACK = {
   legacyAreaIds: { parceiro: 'partner', corporativo: 'corporate' },
 };
 
-export function loadEnvironmentsManifest(root) {
-  const filePath = path.join(root, 'changelog/environments.json');
-  if (!fs.existsSync(filePath)) return FALLBACK;
-  try {
-    return { ...FALLBACK, ...JSON.parse(fs.readFileSync(filePath, 'utf8')) };
-  } catch {
-    return FALLBACK;
+export function resolveChangelogFilePath(gitRoot) {
+  const fromEnv = process.env.CHANGELOG_FILE?.trim();
+  if (fromEnv) return path.resolve(fromEnv);
+
+  const local = path.join(gitRoot, 'changelog/changelog.json');
+  if (fs.existsSync(local)) return local;
+
+  const siblingApi = path.join(gitRoot, '..', 'acaf-api', 'changelog', 'changelog.json');
+  if (fs.existsSync(siblingApi)) return siblingApi;
+
+  return local;
+}
+
+export function loadEnvironmentsManifest(gitRoot) {
+  const candidates = [
+    path.join(gitRoot, 'changelog/environments.json'),
+    path.join(gitRoot, '..', 'acaf-api', 'changelog/environments.json'),
+  ];
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      return { ...FALLBACK, ...JSON.parse(fs.readFileSync(filePath, 'utf8')) };
+    } catch {
+      break;
+    }
   }
+  return FALLBACK;
+}
+
+export function detectRepoEnvironmentId(gitRoot, manifest) {
+  const folder = path.basename(gitRoot);
+  for (const env of manifest.environments ?? []) {
+    if (env.folder === folder) return env.id;
+  }
+  return null;
 }
 
 export function normalizeAreaId(rawId, manifest) {
@@ -82,8 +109,9 @@ export function extractAmbientesFromBody(body) {
   return [...ids];
 }
 
-export function mergeAreaIds({ files, subject, body }, manifest) {
+export function mergeAreaIds({ files, subject, body, repoEnvId = null }, manifest) {
   const merged = new Set();
+  if (repoEnvId) merged.add(repoEnvId);
   for (const id of detectAreasFromFiles(files, manifest)) merged.add(id);
   for (const token of parseCommitScopes(subject)) {
     const id = resolveAreaFromToken(token, manifest);
