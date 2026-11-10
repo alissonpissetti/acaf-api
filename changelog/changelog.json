@@ -2,13 +2,37 @@
   "version": 1,
   "entries": [
     {
+      "id": "e0ad54ac-ec3c-4a39-9c8e-90a2ea89eb47",
+      "commitSha": "64aafcfffc6548fa38fd0efa75e9a9dd8a4be792",
+      "committedAt": "2026-11-10T10:29:41-03:00",
+      "title": "Changelog no admin, ambientes e melhorias WhatsApp inbox",
+      "summary": null,
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [
+        "API de changelog lendo changelog.json com filtro por ambiente (adm, api, partner, app, corporate, site)",
+        "Hook post-commit e scripts para registrar cada commit automaticamente",
+        "Citações, tempo real em grupos e sync pós-conexão no inbox Evolution"
+      ],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "bootstrap-changelog",
       "commitSha": null,
       "committedAt": "2026-11-10T10:30:00.000-03:00",
       "title": "Histórico de novidades no painel admin",
       "summary": "Acompanhe as mudanças do projeto em um só lugar, no time e no futuro com clientes e parceiros.",
       "category": "feature",
-      "areas": ["adm", "api", "plataforma"],
+      "areas": [
+        "adm",
+        "api",
+        "plataforma"
+      ],
       "highlights": [
         "Página «Atualizações» no módulo Sistema",
         "Registro automático a cada commit (com o hook do Git configurado)",
