@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "79b69405-353e-4ea7-8647-73595bb0e263",
+      "commitSha": "cfffffa168ea6ef8a3c9983d5fcdf0edf9e8258e",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-11T15:48:08-03:00",
+      "title": "Atualiza changelog após feat site e comercial",
+      "summary": null,
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "0252d178-4d9d-47b5-9fd7-ca4813865f78",
       "commitSha": "50211bc6ad1f0aa1599c94992a42b95cbcdd2b0d",
       "repository": "api",
