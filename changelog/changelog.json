@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "0252d178-4d9d-47b5-9fd7-ca4813865f78",
+      "commitSha": "50211bc6ad1f0aa1599c94992a42b95cbcdd2b0d",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-11T15:48:00-03:00",
+      "title": "Site público, comercial, convites e inbox WhatsApp",
+      "summary": "Expõe endpoint de contato do site com leads no funil padrão; adiciona origens, motivos de perda e auditoria de leads. Melhora convites corporate (e-mail/logo), SMS Comtele, mídia/citações no inbox Evolution e integração WhatsApp por lead.",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "74d42b83-7274-4c7c-ad50-c74460f8b26f",
       "commitSha": "7fb4c7de153ab55b178b73c8fa4999654ed15175",
       "repository": "api",
