@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "f169ba0d-b401-439d-bbee-89324898bd09",
+      "commitSha": "31a5af65d6245faf18d19606c2c0c65ecfaecf3e",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-11T18:16:19-03:00",
+      "title": "Changelog persistido no banco com seed e sync",
+      "summary": "Fonte de verdade em produção na tabela acaf_changelog_entries; bootstrap",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "98be3bde-fb75-41ad-bf0c-ae24e97cf151",
       "commitSha": "467716a09487488c3a0fcc9bae01743a32ab0322",
       "repository": "api",
