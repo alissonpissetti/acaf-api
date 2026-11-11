@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "98be3bde-fb75-41ad-bf0c-ae24e97cf151",
+      "commitSha": "467716a09487488c3a0fcc9bae01743a32ab0322",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-11T18:04:12-03:00",
+      "title": "Leads WhatsApp, ignore de contatos e sync inbox",
+      "summary": "Deduplicação de leads por chave de contato, lista de ignore na Evolution,",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "a35572fd-52b3-48f4-a38f-6aebd9c78f63",
       "commitSha": "6d174f2bc787c4184ee63ded72661dc54681c9ee",
       "repository": "api",
