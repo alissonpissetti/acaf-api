@@ -71,6 +71,7 @@ import { EvolutionInboxSyncState } from './evolution/evolution-inbox-sync-state.
 import { EvolutionLeadIgnoreContact } from './evolution/evolution-lead-ignore-contact.entity';
 import { SystemSetting } from './system-settings/system-setting.entity';
 import { ChangelogModule } from './changelog/changelog.module';
+import { ChangelogEntry } from './changelog/changelog-entry.entity';
 
 @Module({
   imports: [
@@ -140,6 +141,7 @@ import { ChangelogModule } from './changelog/changelog.module';
             EvolutionInboxSyncState,
             EvolutionLeadIgnoreContact,
             SystemSetting,
+            ChangelogEntry,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,

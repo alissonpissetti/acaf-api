@@ -27,6 +27,8 @@ COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/shared ./shared
+# changelog/ — seed inicial (bootstrap) e hooks locais; listagem/admin usa o banco
+COPY --from=builder /app/changelog ./changelog
 
 RUN mkdir -p data \
   && chown -R node:node /app

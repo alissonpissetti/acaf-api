@@ -92,24 +92,6 @@ export class ChangelogGitService {
     return collected;
   }
 
-  syncMissingToFile(
-    filePath: string,
-    persisted: ChangelogEntryRaw[],
-    options?: { limitPerRepo?: number },
-  ): { added: number; entries: ChangelogEntryRaw[] } {
-    const missing = this.collectMissingFromGit(persisted, options);
-    if (!missing.length) return { added: 0, entries: persisted };
-
-    const merged = [...missing, ...persisted].sort(
-      (a, b) => new Date(b.committedAt).getTime() - new Date(a.committedAt).getTime(),
-    );
-
-    const payload = { version: 1, entries: merged };
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-    return { added: missing.length, entries: merged };
-  }
-
   private buildKnownKeys(rows: ChangelogEntryRaw[]): Set<string> {
     const keys = new Set<string>();
     for (const row of rows) {

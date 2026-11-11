@@ -1,6 +1,10 @@
 # Changelog do projeto (ACAF / Movly)
 
-Arquivo versionado: `changelog.json`. A API do admin lê este arquivo e a página **Sistema → Atualizações** exibe o histórico para o time.
+**Fonte de verdade em produção:** tabela `acaf_changelog_entries` no banco (compartilhada entre réplicas/containers).
+
+O arquivo versionado `changelog.json` continua útil para hooks locais e **seed** na primeira subida da API (tabela vazia).
+
+A página **Sistema → Atualizações** (admin) consulta `GET /api/admin/changelog`.
 
 ## Registro automático por commit
 
@@ -19,19 +23,30 @@ chmod +x scripts/install-git-hooks.sh scripts/changelog-record-commit.mjs .githo
 
 Cada commit em qualquer repo grava no **mesmo** `acaf-api/changelog/changelog.json` e marca o ambiente pelo nome da pasta (`acaf-adm` → `adm`).
 
-O repositório da API guarda `changelog/` na raiz deste projeto (caminho usado em deploy).
+2. A cada `git commit`, o hook acrescenta uma entrada (exceto se a mensagem contiver `[skip changelog]`). Commit o `changelog.json` atualizado no repositório.
 
-2. A cada `git commit`, o hook acrescenta uma entrada (exceto se a mensagem contiver `[skip changelog]`). Lembre de commitar o `changelog.json` atualizado em seguida (ou use **Importar do Git** no admin).
+## Produção (Docker / Coolify)
 
-## Leitura direta do Git (API)
+- **Listagem:** sempre do banco — não depende mais de arquivo gravável no container.
+- **Bootstrap:** na primeira subida, se a tabela estiver vazia, a API importa `changelog/changelog.json` da imagem (`CHANGELOG_FILE` opcional).
+- **Após deploy:** use **Importar do Git** no admin (`POST /api/admin/changelog/sync`) ou confie no bootstrap + sync. O sync faz *upsert* no banco a partir do JSON versionado **e** de commits Git quando disponível.
+- **Histórico perdido / tabela parcial:** `POST /api/admin/changelog/seed-from-file` (permissão `sistema.changelog`) ou `node scripts/seed-changelog.mjs` no host com `DATABASE_URL` — reimporta só o `changelog.json` sem duplicar (id ou `repository`+`commit_sha`).
+- A pasta `changelog/` na imagem Docker serve só para seed e documentação (ver `Dockerfile`).
 
-Se faltar entrada no JSON, a API pode **mesclar commits do Git** ao listar:
+`DB_SYNC=true` (padrão) cria a tabela automaticamente. Com `DB_SYNC=false`, rode `scripts/sql/changelog-entries.sql`.
 
-- Descobre clones em `../acaf-*` (mesmo nível da API).
+## Importação Git (API)
+
+`POST /api/admin/changelog/sync`:
+
+1. Mescla entradas do `changelog.json` (se existir no servidor) no banco.
+2. Acrescenta commits recentes dos repositórios Git configurados.
+
+- Descobre clones em `../acaf-*` (mesmo nível da API), se houver `.git`.
 - Ou configure `CHANGELOG_GIT_REPOS=adm=/srv/acaf-adm,api=/srv/acaf-api`.
-- Desative com `CHANGELOG_GIT_READ=0`.
+- Desative leitura Git com `CHANGELOG_GIT_READ=0`.
 
-No admin: **Importar do Git** (`POST /api/admin/changelog/sync`) grava as entradas faltantes no `changelog.json`.
+Duplicatas são evitadas por *upsert* em `(repository, commit_sha)` quando houver SHA.
 
 ### Mensagem de commit recomendada
 
@@ -65,8 +80,9 @@ Lista canônica: `changelog/environments.json` (usada pelo hook e pela API).
 
 ## Público (futuro)
 
-No JSON, cada entrada pode usar `audience`: `internal` | `partner` | `client` e `published: true` para filtrar o que for compartilhável fora do time.
+Cada entrada pode usar `audience`: `internal` | `partner` | `client` e `published: true` para filtrar o que for compartilhável fora do time.
 
-## Variável de ambiente (API)
+## Variáveis de ambiente (API)
 
-`CHANGELOG_FILE` — caminho absoluto alternativo para `changelog.json` (opcional).
+- `CHANGELOG_FILE` — caminho absoluto alternativo para `changelog.json` (seed/sync).
+- `CHANGELOG_GIT_REPOS` / `CHANGELOG_GIT_READ` — ver acima.

@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { Repository } from 'typeorm';
 import type {
   ChangelogAreaDto,
   ChangelogCategory,
@@ -17,6 +19,12 @@ import {
   normalizeChangelogAreaIds,
 } from './changelog-environments';
 import { ChangelogGitService } from './changelog-git.service';
+import { ChangelogEntry } from './changelog-entry.entity';
+import {
+  applyRawToChangelogEntity,
+  changelogEntryToRaw,
+  rawToChangelogEntity,
+} from './changelog-persistence';
 
 const CATEGORY_LABELS: Record<ChangelogCategory, string> = {
   feature: 'Novidade',
@@ -36,31 +44,32 @@ export type ChangelogListQuery = {
 };
 
 @Injectable()
-export class ChangelogService {
+export class ChangelogService implements OnModuleInit {
   private readonly logger = new Logger(ChangelogService.name);
-  private cacheAt = 0;
-  private cachePayload: ChangelogFile | null = null;
-  private readonly cacheMs = 4_000;
 
   constructor(
     private readonly config: ConfigService,
     private readonly gitChangelog: ChangelogGitService,
+    @InjectRepository(ChangelogEntry)
+    private readonly entries: Repository<ChangelogEntry>,
   ) {}
 
-  list(query: ChangelogListQuery = {}): {
+  async onModuleInit() {
+    await this.seedFromJsonFileIfEmpty();
+  }
+
+  async list(query: ChangelogListQuery = {}): Promise<{
     entries: ChangelogEntryDto[];
     total: number;
     areas: ChangelogAreaDto[];
     environments: ChangelogAreaDto[];
     categories: Array<{ id: ChangelogCategory; label: string }>;
-  } {
+  }> {
     const manifest = loadChangelogEnvironments();
-    const store = this.loadFile();
     const audience = query.audience ?? 'internal';
 
-    let rows = this.mergeWithGit(store.entries);
+    let rows = (await this.loadAllRaw()).filter((row) => row.published !== false);
 
-    rows = rows.filter((row) => row.published !== false);
     if (audience === 'partner') {
       rows = rows.filter((row) => (row.audience ?? 'internal') !== 'internal');
     } else if (audience === 'client') {
@@ -112,6 +121,30 @@ export class ChangelogService {
     };
   }
 
+  /** Reimporta todas as entradas do changelog.json (upsert por id ou repository+commit). */
+  async seedFromJsonFile(): Promise<{ fromFile: number; added: number; total: number }> {
+    const fromFile = this.readJsonFileEntries();
+    const added = fromFile.length ? await this.upsertMany(fromFile) : 0;
+    const total = await this.entries.count();
+    return { fromFile: fromFile.length, added, total };
+  }
+
+  async syncFromGit(): Promise<{ added: number; total: number }> {
+    let added = 0;
+
+    const fileSeed = await this.seedFromJsonFile();
+    added += fileSeed.added;
+
+    const persisted = await this.loadAllRaw();
+    const fromGit = this.gitChangelog.collectMissingFromGit(persisted);
+    if (fromGit.length) {
+      added += await this.upsertMany(fromGit);
+    }
+
+    const total = await this.entries.count();
+    return { added, total };
+  }
+
   private mapEntry(row: ChangelogEntryRaw, manifest = loadChangelogEnvironments()): ChangelogEntryDto {
     const category = this.normalizeCategory(row.category);
     const areaIds = normalizeChangelogAreaIds(row.areas, manifest);
@@ -137,39 +170,6 @@ export class ChangelogService {
     };
   }
 
-  syncFromGit(): { added: number; total: number } {
-    const filePath = this.resolveFilePath();
-    if (!filePath) {
-      return { added: 0, total: 0 };
-    }
-    const store = this.loadFile(true);
-    const outcome = this.gitChangelog.syncMissingToFile(filePath, store.entries);
-    this.cachePayload = { version: 1, entries: outcome.entries };
-    this.cacheAt = Date.now();
-    return { added: outcome.added, total: outcome.entries.length };
-  }
-
-  private mergeWithGit(entries: ChangelogEntryRaw[]): ChangelogEntryRaw[] {
-    const fromGit = this.gitChangelog.collectMissingFromGit(entries);
-    if (!fromGit.length) return entries;
-
-    const seen = new Set(
-      entries.map((row) => `${String(row.repository ?? '').trim()}:${String(row.commitSha ?? '').trim()}`),
-    );
-
-    const merged = [...entries];
-    for (const row of fromGit) {
-      const key = `${String(row.repository ?? '').trim()}:${String(row.commitSha ?? '').trim()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      merged.push(row);
-    }
-
-    return merged.sort(
-      (a, b) => new Date(b.committedAt).getTime() - new Date(a.committedAt).getTime(),
-    );
-  }
-
   private normalizeCategory(value: string | undefined): ChangelogCategory {
     const key = String(value ?? '').trim() as ChangelogCategory;
     if (key in CATEGORY_LABELS) return key;
@@ -180,28 +180,93 @@ export class ChangelogService {
     return changelogEnvironmentsCatalog();
   }
 
-  private loadFile(force = false): ChangelogFile {
-    const now = Date.now();
-    if (!force && this.cachePayload && now - this.cacheAt < this.cacheMs) {
-      return this.cachePayload;
+  private async seedFromJsonFileIfEmpty(): Promise<void> {
+    const count = await this.entries.count();
+    if (count > 0) return;
+
+    const { fromFile, added } = await this.seedFromJsonFile();
+    if (!fromFile) return;
+
+    this.logger.log(
+      `Changelog: tabela vazia — importadas ${fromFile} entradas do changelog.json (${added} novas)`,
+    );
+  }
+
+  private async loadAllRaw(): Promise<ChangelogEntryRaw[]> {
+    const rows = await this.entries.find({
+      order: { sortOrder: 'DESC', committedAt: 'DESC' },
+    });
+    return rows.map((row) => changelogEntryToRaw(row));
+  }
+
+  private async upsertMany(rows: ChangelogEntryRaw[]): Promise<number> {
+    let added = 0;
+    for (const raw of rows) {
+      const created = await this.upsertOne(raw);
+      if (created) added += 1;
+    }
+    return added;
+  }
+
+  private async upsertOne(raw: ChangelogEntryRaw): Promise<boolean> {
+    const existing = await this.findExisting(raw);
+    if (existing) {
+      applyRawToChangelogEntity(existing, raw);
+      await this.entries.save(existing);
+      return false;
     }
 
+    const entity = rawToChangelogEntity(raw);
+    try {
+      await this.entries.save(entity);
+      return true;
+    } catch (err) {
+      const dup = await this.findExisting(raw);
+      if (dup) {
+        applyRawToChangelogEntity(dup, raw);
+        await this.entries.save(dup);
+        return false;
+      }
+      this.logger.warn(
+        `Falha ao gravar changelog ${raw.id}: ${err instanceof Error ? err.message : 'erro'}`,
+      );
+      return false;
+    }
+  }
+
+  private async findExisting(raw: ChangelogEntryRaw): Promise<ChangelogEntry | null> {
+    const sha = String(raw.commitSha ?? '').trim();
+    const repo = String(raw.repository ?? '').trim();
+
+    if (sha) {
+      if (repo) {
+        const hit = await this.entries.findOne({ where: { commitSha: sha, repository: repo } });
+        if (hit) return hit;
+      }
+      const bySha = await this.entries.findOne({ where: { commitSha: sha } });
+      if (bySha) return bySha;
+    }
+
+    const id = String(raw.id ?? '').trim();
+    if (id) {
+      return this.entries.findOne({ where: { id } });
+    }
+
+    return null;
+  }
+
+  private readJsonFileEntries(): ChangelogEntryRaw[] {
     const filePath = this.resolveFilePath();
     if (!filePath || !fs.existsSync(filePath)) {
-      this.logger.warn(`Changelog não encontrado (${filePath ?? 'sem caminho'})`);
-      return { version: 1, entries: [] };
+      return [];
     }
 
     try {
-      const raw = fs.readFileSync(filePath, 'utf8');
-      const parsed = JSON.parse(raw) as ChangelogFile;
-      const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
-      this.cachePayload = { version: parsed.version ?? 1, entries };
-      this.cacheAt = now;
-      return this.cachePayload;
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as ChangelogFile;
+      return Array.isArray(parsed.entries) ? parsed.entries : [];
     } catch (err) {
-      this.logger.error(`Falha ao ler changelog: ${err instanceof Error ? err.message : 'erro'}`);
-      return { version: 1, entries: [] };
+      this.logger.error(`Falha ao ler changelog.json: ${err instanceof Error ? err.message : 'erro'}`);
+      return [];
     }
   }
 
@@ -211,13 +276,13 @@ export class ChangelogService {
 
     const cwd = process.cwd();
     const candidates = [
-      path.resolve(cwd, '../changelog/changelog.json'),
       path.resolve(cwd, 'changelog/changelog.json'),
+      path.resolve(cwd, '../changelog/changelog.json'),
       path.resolve(cwd, '../../changelog/changelog.json'),
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) return candidate;
     }
-    return candidates[0] ?? null;
+    return candidates[1] ?? null;
   }
 }
