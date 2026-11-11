@@ -20,8 +20,17 @@ import { CommercialLeadInteraction } from './commercial-lead-interaction.entity'
 import { CommercialLeadContact } from './commercial-lead-contact.entity';
 import { CommercialLeadOwner } from './commercial-lead-owner.entity';
 import { CommercialFunnelsService } from './commercial-funnels.service';
+import { CommercialLossReasonsService } from './commercial-loss-reasons.service';
+import { CommercialLeadAuditService } from './commercial-lead-audit.service';
+import type { CommercialLeadAuditChange } from './commercial-lead-audit.entity';
 import { CommercialFunnelStage } from './commercial-funnel-stage.entity';
 import { CommercialFunnel } from './commercial-funnel.entity';
+import {
+  type CommercialLeadSource,
+  inferCommercialLeadSource,
+  isCommercialLeadSource,
+  leadSourceMeta,
+} from './commercial-lead-source';
 import { UserRole, userHasRole } from '../users/user.entity';
 
 type LeadOwnerDto = {
@@ -61,6 +70,10 @@ type LeadDto = {
   title: string;
   type: CommercialLeadType | null;
   typeLabel: string | null;
+  source: CommercialLeadSource;
+  sourceLabel: string;
+  sourceColor: string;
+  sourceSoft: string;
   temperature: CommercialLeadTemperature;
   temperatureLabel: string;
   legalName: string | null;
@@ -83,6 +96,8 @@ type LeadDto = {
   sortOrder: number;
   lastInteractionAt: string | null;
   latestInteractionContent: string | null;
+  lossReasonId: string | null;
+  lossReasonLabel: string | null;
   stageEnteredAt: string | null;
   stageExpiredAt: string | null;
   stageExpired: boolean;
@@ -123,6 +138,8 @@ export class CommercialLeadsService {
     @InjectRepository(CommercialFunnelStage)
     private readonly stages: Repository<CommercialFunnelStage>,
     private readonly funnelService: CommercialFunnelsService,
+    private readonly lossReasons: CommercialLossReasonsService,
+    private readonly audit: CommercialLeadAuditService,
     private readonly users: UsersService,
     private readonly admin: AdminService,
   ) {}
@@ -321,6 +338,8 @@ export class CommercialLeadsService {
       title: string;
       type?: CommercialLeadType | null;
       funnelId?: string;
+      stageId?: string;
+      source?: CommercialLeadSource;
       legalName?: string;
       cnpj?: string;
       email?: string;
@@ -350,10 +369,24 @@ export class CommercialLeadsService {
       : await this.funnelService.getDefaultFunnel();
 
     if (!funnel) {
-      throw new BadRequestException('Nenhum funil comercial configurado.');
+      throw new BadRequestException(
+        'Nenhum funil comercial ativo. Marque um funil como padrão para novos leads no administrativo.',
+      );
     }
 
-    const firstStage = funnel.stages.find((stage) => stage.outcome === 'pipeline' && stage.active);
+    let firstStage: CommercialFunnelStage | null = null;
+    const requestedStageId = input.stageId?.trim();
+    if (requestedStageId) {
+      const stage = funnel.stages.find(
+        (row) => row.id === requestedStageId && row.active && row.outcome === 'pipeline',
+      );
+      if (!stage) {
+        throw new BadRequestException('Etapa inicial do funil inválida.');
+      }
+      firstStage = stage;
+    } else {
+      firstStage = this.funnelService.getFirstPipelineStage(funnel);
+    }
     if (!firstStage) {
       throw new BadRequestException('Funil sem etapa inicial de pipeline.');
     }
@@ -384,11 +417,21 @@ export class CommercialLeadsService {
     this.validateContactInputs(normalizedContacts);
     const primaryContact = normalizedContacts.find((contact) => contact.isPrimary) ?? normalizedContacts[0];
 
+    let source: CommercialLeadSource = 'manual';
+    if (input.source != null && String(input.source).trim()) {
+      const raw = String(input.source).trim();
+      if (!isCommercialLeadSource(raw)) {
+        throw new BadRequestException('Origem do lead inválida.');
+      }
+      source = raw;
+    }
+
     const now = new Date();
     const saved = await this.leads.save(
       this.leads.create({
         title,
         type,
+        source,
         temperature: parseTemperature(input.temperature),
         funnelId: funnel.id,
         stageId: firstStage.id,
@@ -410,6 +453,15 @@ export class CommercialLeadsService {
     if (normalizedContacts.length) {
       await this.syncLeadContacts(saved.id, normalizedContacts);
     }
+
+    await this.audit.record(saved.id, createdByUserId, [
+      {
+        field: 'create',
+        label: 'Lead criado',
+        from: null,
+        to: saved.title,
+      },
+    ]);
 
     const stage = await this.stages.findOne({ where: { id: saved.stageId } });
     const ownersMap = await this.loadOwnersMap([saved]);
@@ -440,11 +492,17 @@ export class CommercialLeadsService {
       ownerUserIds?: string[];
       temperature?: CommercialLeadTemperature;
       sortOrder?: number;
+      lossReasonId?: string;
+      lossReasonCustom?: string;
     },
     actingUserId?: string,
   ) {
     const lead = await this.leads.findOne({ where: { id } });
     if (!lead) throw new NotFoundException('Lead não encontrado.');
+
+    const auditChanges: CommercialLeadAuditChange[] = [];
+    const ownerIdsBefore = await this.getLeadOwnerUserIds(lead.id, lead.ownerUserId);
+    const stageBefore = await this.stages.findOne({ where: { id: lead.stageId } });
 
     if (lead.convertedNetworkId || lead.convertedCompanyId) {
       if (patch.stageId != null) {
@@ -455,10 +513,19 @@ export class CommercialLeadsService {
     if (patch.title != null) {
       const title = patch.title.trim();
       if (!title) throw new BadRequestException('Informe o nome do lead.');
+      if (title !== lead.title) {
+        auditChanges.push({
+          field: 'title',
+          label: 'Nome do lead',
+          from: lead.title,
+          to: title,
+        });
+      }
       lead.title = title;
     }
 
     if (patch.type !== undefined) {
+      const prevLabel = this.typeAuditLabel(lead.type);
       if (!patch.type) {
         lead.type = null;
       } else if (patch.type !== 'partner' && patch.type !== 'corporate') {
@@ -466,20 +533,50 @@ export class CommercialLeadsService {
       } else {
         lead.type = patch.type;
       }
+      const nextLabel = this.typeAuditLabel(lead.type);
+      if (prevLabel !== nextLabel) {
+        auditChanges.push({ field: 'type', label: 'Tipo', from: prevLabel, to: nextLabel });
+      }
     }
 
     if (patch.temperature !== undefined) {
+      const prev = temperatureLabel(parseTemperature(lead.temperature));
       lead.temperature = parseTemperature(patch.temperature);
+      const next = temperatureLabel(lead.temperature);
+      if (prev !== next) {
+        auditChanges.push({ field: 'temperature', label: 'Temperatura', from: prev, to: next });
+      }
     }
 
     let outcomeResult: Awaited<ReturnType<CommercialLeadsService['applyStageOutcome']>> | null = null;
     let stageChanged = false;
 
     if (patch.stageId != null && patch.stageId !== lead.stageId) {
+      const previousStage = await this.stages.findOne({ where: { id: lead.stageId } });
       const stage = await this.funnelService.getStage(patch.stageId);
       if (stage.funnelId !== lead.funnelId) {
         throw new BadRequestException('Etapa inválida para o funil do lead.');
       }
+
+      const enteringLost =
+        stage.outcome === 'lost' && previousStage?.outcome !== 'lost';
+      let lossReasonLabel: string | null = null;
+      if (enteringLost) {
+        const reasonId = await this.lossReasons.resolveForLost({
+          lossReasonId: patch.lossReasonId,
+          lossReasonCustom: patch.lossReasonCustom,
+        });
+        lead.lossReasonId = reasonId;
+        lossReasonLabel = await this.lossReasons.getLabel(reasonId);
+      }
+
+      auditChanges.push({
+        field: 'stage',
+        label: 'Etapa do funil',
+        from: stageBefore?.name ?? '—',
+        to: stage.name,
+      });
+
       lead.stageId = patch.stageId;
       stageChanged = true;
       outcomeResult = await this.applyStageOutcome(lead, stage, actingUserId ?? lead.ownerUserId);
@@ -491,15 +588,39 @@ export class CommercialLeadsService {
       }
       this.resetStageTimer(lead);
       this.touchLastInteraction(lead);
+
+      if (lossReasonLabel && actingUserId) {
+        await this.addInteraction(
+          lead.id,
+          actingUserId,
+          `Motivo da perda: ${lossReasonLabel}`,
+        );
+      } else if (lossReasonLabel) {
+        await this.addInteraction(lead.id, lead.ownerUserId, `Motivo da perda: ${lossReasonLabel}`);
+      }
     }
 
     if (patch.legalName !== undefined) {
-      lead.legalName = patch.legalName?.trim() || null;
+      const next = patch.legalName?.trim() || null;
+      if ((lead.legalName ?? '') !== (next ?? '')) {
+        auditChanges.push({
+          field: 'legalName',
+          label: 'Razão social',
+          from: lead.legalName,
+          to: next,
+        });
+      }
+      lead.legalName = next;
     }
 
     if (patch.cnpj !== undefined) {
       const cnpj = patch.cnpj ? normalizeCnpj(patch.cnpj) : null;
       if (cnpj && !isValidCnpj(cnpj)) throw new BadRequestException('CNPJ inválido.');
+      const prev = lead.cnpj ? formatCnpj(lead.cnpj) : null;
+      const next = cnpj ? formatCnpj(cnpj) : null;
+      if (prev !== next) {
+        auditChanges.push({ field: 'cnpj', label: 'CNPJ', from: prev, to: next });
+      }
       lead.cnpj = cnpj;
     }
 
@@ -508,6 +629,12 @@ export class CommercialLeadsService {
       this.validateContactInputs(normalizedContacts);
       await this.syncLeadContacts(lead.id, normalizedContacts);
       this.applyPrimaryContactToLead(lead, normalizedContacts);
+      auditChanges.push({
+        field: 'contacts',
+        label: 'Contatos',
+        from: 'Anterior',
+        to: 'Lista atualizada',
+      });
     } else {
       if (patch.email !== undefined) {
         lead.email = patch.email?.toLowerCase().trim() || null;
@@ -527,12 +654,31 @@ export class CommercialLeadsService {
     }
 
     if (patch.notes !== undefined) {
-      lead.notes = patch.notes?.trim() || null;
+      const next = patch.notes?.trim() || null;
+      if ((lead.notes ?? '') !== (next ?? '')) {
+        auditChanges.push({
+          field: 'notes',
+          label: 'Observações',
+          from: lead.notes?.trim() || null,
+          to: next,
+        });
+      }
+      lead.notes = next;
     }
 
     if (patch.ownerUserIds !== undefined) {
       const ownerUserIds = this.resolveOwnerUserIds(patch.ownerUserIds);
       await this.assertAdminOwners(ownerUserIds);
+      const prevNames = await this.ownerNamesForAudit(ownerIdsBefore);
+      const nextNames = await this.ownerNamesForAudit(ownerUserIds);
+      if (prevNames !== nextNames) {
+        auditChanges.push({
+          field: 'owners',
+          label: 'Responsáveis',
+          from: prevNames || '—',
+          to: nextNames || '—',
+        });
+      }
       lead.ownerUserId = ownerUserIds[0];
       await this.syncLeadOwners(lead.id, ownerUserIds);
     } else if (patch.ownerUserId != null) {
@@ -553,6 +699,7 @@ export class CommercialLeadsService {
     }
 
     const saved = await this.leads.save(lead);
+    await this.audit.record(saved.id, actingUserId, auditChanges);
     const stage = await this.stages.findOne({ where: { id: saved.stageId } });
     await this.syncStageExpiration(saved, stage);
     const latestMap = await this.loadLatestInteractionMap([saved.id]);
@@ -864,6 +1011,15 @@ export class CommercialLeadsService {
     ]);
 
     const deadline = this.buildStageDeadline(lead, resolvedStage);
+    const resolvedSource = inferCommercialLeadSource({
+      stored: lead.source,
+      notes: lead.notes,
+      latestInteraction: latestInteractionContent ?? null,
+    });
+    const sourceMeta = leadSourceMeta(resolvedSource);
+    const lossReasonLabel = lead.lossReasonId
+      ? await this.lossReasons.getLabel(lead.lossReasonId)
+      : null;
 
     return {
       id: lead.id,
@@ -881,6 +1037,10 @@ export class CommercialLeadsService {
           : lead.type === 'corporate'
             ? 'Empresa corporativa'
             : null,
+      source: resolvedSource,
+      sourceLabel: sourceMeta.label,
+      sourceColor: sourceMeta.color,
+      sourceSoft: sourceMeta.soft,
       temperature: parseTemperature(lead.temperature),
       temperatureLabel: temperatureLabel(parseTemperature(lead.temperature)),
       legalName: lead.legalName,
@@ -903,6 +1063,8 @@ export class CommercialLeadsService {
       sortOrder: lead.sortOrder,
       lastInteractionAt: lead.lastInteractionAt?.toISOString() ?? null,
       latestInteractionContent: latestInteractionContent ?? null,
+      lossReasonId: lead.lossReasonId,
+      lossReasonLabel,
       stageEnteredAt: lead.stageEnteredAt?.toISOString() ?? null,
       stageExpiredAt: lead.stageExpiredAt?.toISOString() ?? null,
       stageExpired: Boolean(lead.stageExpiredAt) || this.isPastDeadline(deadline),
@@ -1233,6 +1395,7 @@ export class CommercialLeadsService {
     const lead = await this.create(
       {
         title,
+        source: 'whatsapp',
         phone: digits ?? undefined,
         contactName: input.pushName?.trim() || undefined,
         contacts: digits
@@ -1295,5 +1458,21 @@ export class CommercialLeadsService {
 
   private async enrichLeadFromWhatsApp(leadId: string, pushName?: string | null): Promise<void> {
     await this.enrichLeadFromWhatsAppInbox(leadId, pushName);
+  }
+
+  private typeAuditLabel(type: CommercialLeadType | null): string {
+    if (type === 'partner') return 'Academia parceira';
+    if (type === 'corporate') return 'Empresa corporativa';
+    return '—';
+  }
+
+  private async ownerNamesForAudit(userIds: string[]): Promise<string> {
+    const names = await Promise.all(
+      userIds.map(async (userId) => {
+        const profile = await this.userProfile(userId);
+        return profile.name?.trim() || userId;
+      }),
+    );
+    return names.join(', ');
   }
 }

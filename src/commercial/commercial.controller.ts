@@ -17,9 +17,12 @@ import { RequirePermissions } from '../access-control/require-permissions.decora
 import { PermissionsGuard } from '../access-control/permissions.guard';
 import { CommercialLeadsService } from './commercial-leads.service';
 import { CommercialFunnelsService } from './commercial-funnels.service';
+import { CommercialLossReasonsService } from './commercial-loss-reasons.service';
+import { CommercialLeadAuditService } from './commercial-lead-audit.service';
 import type { CommercialLeadType } from './commercial-lead.entity';
 import type { FunnelOutcomeAction } from './commercial-funnel.entity';
 import type { FunnelStageOutcome } from './commercial-funnel-stage.entity';
+import { COMMERCIAL_LEAD_SOURCES } from './commercial-lead-source';
 
 type AuthRequest = Request & { user: { userId: string } };
 
@@ -31,7 +34,24 @@ export class CommercialController {
   constructor(
     private readonly leads: CommercialLeadsService,
     private readonly funnels: CommercialFunnelsService,
+    private readonly lossReasons: CommercialLossReasonsService,
+    private readonly audit: CommercialLeadAuditService,
   ) {}
+
+  @Get('loss-reasons')
+  @RequirePermissions('comercial.leads')
+  listLossReasons() {
+    return this.lossReasons.listActive();
+  }
+
+  @Get('lead-sources')
+  @RequirePermissions('comercial.leads')
+  listLeadSources() {
+    return Object.entries(COMMERCIAL_LEAD_SOURCES).map(([key, meta]) => ({
+      key,
+      ...meta,
+    }));
+  }
 
   @Get('funnels')
   @RequirePermissions('comercial.funis')
@@ -194,6 +214,8 @@ export class CommercialController {
       ownerUserIds?: string[];
       temperature?: 'cold' | 'warm' | 'hot';
       sortOrder?: number;
+      lossReasonId?: string;
+      lossReasonCustom?: string;
     },
   ) {
     return this.leads.update(id, body, req.user.userId);
@@ -209,6 +231,12 @@ export class CommercialController {
   @RequirePermissions('comercial.leads')
   listLeadInteractions(@Param('id') id: string) {
     return this.leads.listInteractions(id);
+  }
+
+  @Get('leads/:id/audit-logs')
+  @RequirePermissions('comercial.leads')
+  listLeadAuditLogs(@Param('id') id: string) {
+    return this.audit.listForLead(id);
   }
 
   @Post('leads/:id/interactions')

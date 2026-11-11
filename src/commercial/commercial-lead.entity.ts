@@ -5,6 +5,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { CommercialLeadSource } from './commercial-lead-source';
 
 export type CommercialLeadType = 'partner' | 'corporate';
 export type CommercialLeadTemperature = 'cold' | 'warm' | 'hot';
@@ -28,6 +29,12 @@ export class CommercialLead {
 
   @Column({ type: 'varchar', length: 16, default: 'cold' })
   temperature: CommercialLeadTemperature;
+
+  @Column({ type: 'varchar', length: 24, default: 'manual' })
+  source: CommercialLeadSource;
+
+  @Column({ name: 'loss_reason_id', type: 'uuid', nullable: true })
+  lossReasonId: string | null;
 
   @Column({ name: 'legal_name', type: 'varchar', length: 180, nullable: true })
   legalName: string | null;

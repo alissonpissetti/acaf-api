@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -96,6 +97,14 @@ export class CorporateController {
   ) {
     const company = await this.companyFromReq(req);
     return this.employees.updateEmployeeStatus(company.id, id, body.status);
+  }
+
+  @Delete('employees/:id')
+  @UseGuards(CorporateJwtAuthGuard)
+  async removeEmployee(@Req() req: CorpRequest, @Param('id') id: string) {
+    const company = await this.companyFromReq(req);
+    await this.employees.cancelEmployeeInvite(company.id, id);
+    return { ok: true };
   }
 
   @Get('employees/:id/invite-link')

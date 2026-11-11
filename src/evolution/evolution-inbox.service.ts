@@ -42,12 +42,18 @@ import {
 } from './evolution-contact.resolver';
 import {
   parseEvolutionMessagePayload,
+  parseMessageDeliveryUpdates,
   resolveContactFromEvolutionPayload,
 } from './evolution-message.parser';
 import { phoneFromSenderPn } from './evolution-contact.resolver';
 import {
   bodyTextFromWhatsAppMessage,
   extractQuotedPreviewFromStoredPayload,
+  externalMessageIdsMatch,
+  extractDeliveryStatusFromStoredPayload,
+  mergeDeliveryStatusIntoPayload,
+  type MessageDeliveryAck,
+  normalizeWhatsAppDeliveryStatus,
   extractReactionTargetFromPayloadJson,
   isReactionPlaceholderBody,
   reactionEmojiFromPlaceholderBody,
@@ -83,6 +89,7 @@ export type ParsedEvolutionMessage = {
   isReaction?: boolean;
   reactionTargetExternalId?: string | null;
   reactionRemove?: boolean;
+  deliveryStatus?: MessageDeliveryAck | null;
 };
 
 const INBOX_BOOTSTRAP_CHAT_LIMIT = 50;
@@ -159,6 +166,7 @@ export type EvolutionInboxMessageDto = {
   hasMedia: boolean;
   reactions: EvolutionInboxMessageReactionDto[];
   quote: EvolutionInboxMessageQuoteDto | null;
+  deliveryStatus: MessageDeliveryAck | null;
 };
 
 @Injectable()
@@ -289,6 +297,27 @@ export class EvolutionInboxService {
       if (parsed.mediaPayload?.trim()) {
         messagePatch.mediaPayload = parsed.mediaPayload;
       }
+      if (parsed.deliveryStatus) {
+        messagePatch.deliveryStatus = parsed.deliveryStatus;
+        if (parsed.mediaPayload?.trim()) {
+          messagePatch.mediaPayload = mergeDeliveryStatusIntoPayload(
+            parsed.mediaPayload,
+            parsed.deliveryStatus,
+          );
+        } else if (duplicate.mediaPayload?.trim()) {
+          messagePatch.mediaPayload = mergeDeliveryStatusIntoPayload(
+            duplicate.mediaPayload,
+            parsed.deliveryStatus,
+          );
+        }
+      }
+      if (
+        parsed.mediaPayload?.trim() &&
+        extractQuotedPreviewFromStoredPayload(parsed.mediaPayload) &&
+        !messagePatch.mediaPayload
+      ) {
+        messagePatch.mediaPayload = parsed.mediaPayload;
+      }
       if (parsed.mediaKind && parsed.mediaPayload) {
         messagePatch.mediaKind = parsed.mediaKind;
         messagePatch.mediaMimeType = parsed.mediaMimeType;
@@ -349,6 +378,8 @@ export class EvolutionInboxService {
         mediaKind: parsed.mediaKind,
         mediaPayload: parsed.mediaPayload,
         mediaMimeType: parsed.mediaMimeType,
+        deliveryStatus:
+          parsed.deliveryStatus ?? (parsed.fromMe ? 'sent' : null),
       }),
     );
 
@@ -454,26 +485,51 @@ export class EvolutionInboxService {
     return Number.isNaN(at.getTime()) ? null : at;
   }
 
+  private findSiblingForQuotePreview(
+    externalId: string | null | undefined,
+    siblingsByExternalId: Map<string, EvolutionMessage>,
+    siblingRows: EvolutionMessage[],
+  ): EvolutionMessage | null {
+    const hint = String(externalId ?? '').trim();
+    if (!hint) return null;
+    if (siblingsByExternalId.has(hint)) return siblingsByExternalId.get(hint)!;
+    for (const sibling of siblingRows) {
+      if (externalMessageIdsMatch(hint, sibling.externalId)) return sibling;
+    }
+    for (const row of siblingsByExternalId.values()) {
+      if (externalMessageIdsMatch(hint, row.externalId)) return row;
+    }
+    return null;
+  }
+
   private quoteDtoForRow(
     row: EvolutionMessage,
     siblingsByExternalId?: Map<string, EvolutionMessage>,
+    siblingRows?: EvolutionMessage[],
   ): EvolutionInboxMessageQuoteDto | null {
     const preview = extractQuotedPreviewFromStoredPayload(row.mediaPayload);
     if (!preview) return null;
-    return this.enrichQuotePreview(row, preview, siblingsByExternalId ?? new Map());
+    return this.enrichQuotePreview(
+      row,
+      preview,
+      siblingsByExternalId ?? new Map(),
+      siblingRows ?? [...(siblingsByExternalId?.values() ?? [])],
+    );
   }
 
   private enrichQuotePreview(
     row: EvolutionMessage,
     preview: WhatsAppQuotedPreview,
     siblingsByExternalId: Map<string, EvolutionMessage>,
+    siblingRows: EvolutionMessage[],
   ): EvolutionInboxMessageQuoteDto {
     let author: string | null = null;
     let body = preview.body.trim();
-    const target =
-      preview.externalId && siblingsByExternalId.has(preview.externalId)
-        ? siblingsByExternalId.get(preview.externalId)!
-        : null;
+    const target = this.findSiblingForQuotePreview(
+      preview.externalId,
+      siblingsByExternalId,
+      siblingRows,
+    );
 
     if (target) {
       author =
@@ -517,12 +573,26 @@ export class EvolutionInboxService {
     };
   }
 
+  private resolveDeliveryStatusForRow(row: EvolutionMessage): MessageDeliveryAck | null {
+    if (row.direction !== 'out') return null;
+    const stored = row.deliveryStatus
+      ? (normalizeWhatsAppDeliveryStatus(row.deliveryStatus) ?? null)
+      : null;
+    if (stored) return stored;
+    return extractDeliveryStatusFromStoredPayload(row.mediaPayload) ?? 'sent';
+  }
+
   private mapMessageRowToDto(
     row: EvolutionMessage,
     reactions: EvolutionInboxMessageReactionDto[] = [],
     quote: EvolutionInboxMessageQuoteDto | null = null,
+    siblingRows?: EvolutionMessage[],
   ): EvolutionInboxMessageDto {
-    const resolvedQuote = quote ?? this.quoteDtoForRow(row);
+    const resolvedQuote =
+      quote ??
+      (siblingRows?.length
+        ? this.quoteDtoForRow(row, undefined, siblingRows)
+        : this.quoteDtoForRow(row));
     return {
       id: row.id,
       direction: row.direction,
@@ -535,6 +605,7 @@ export class EvolutionInboxService {
       hasMedia: Boolean(row.mediaKind && (row.mediaPayload || row.mediaStoragePath)),
       reactions,
       quote: resolvedQuote,
+      deliveryStatus: this.resolveDeliveryStatusForRow(row),
     };
   }
 
@@ -637,9 +708,61 @@ export class EvolutionInboxService {
       this.mapMessageRowToDto(
         row,
         this.reactionsForMessage(row.externalId, reactionsByTarget),
-        this.quoteDtoForRow(row, siblingsByExternalId),
+        this.quoteDtoForRow(row, siblingsByExternalId, chatRows),
+        chatRows,
       ),
     );
+  }
+
+  async applyMessageDeliveryUpdates(instanceId: string, data: unknown): Promise<number> {
+    const updates = parseMessageDeliveryUpdates(data);
+    if (!updates.length) return 0;
+
+    let changed = 0;
+    for (const update of updates) {
+      if (!update.fromMe) continue;
+      let row = await this.messages.findOne({
+        where: { instanceId, externalId: update.externalId },
+      });
+      if (!row) {
+        const hint = update.externalId;
+        const candidates = await this.messages.find({
+          where: { instanceId, direction: 'out' },
+          order: { messageAt: 'DESC' },
+          take: 400,
+          select: ['id', 'externalId', 'contactPhone', 'mediaPayload', 'deliveryStatus'],
+        });
+        row = candidates.find((item) => externalMessageIdsMatch(hint, item.externalId)) ?? null;
+      }
+      if (!row) continue;
+
+      const rank: Record<MessageDeliveryAck, number> = {
+        pending: 0,
+        sent: 1,
+        delivered: 2,
+        read: 3,
+        played: 4,
+      };
+      const current = row.deliveryStatus
+        ? (normalizeWhatsAppDeliveryStatus(row.deliveryStatus) ?? 'sent')
+        : extractDeliveryStatusFromStoredPayload(row.mediaPayload) ?? 'sent';
+      if (rank[update.status] <= rank[current]) continue;
+
+      const patch: Partial<EvolutionMessage> = { deliveryStatus: update.status };
+      if (row.mediaPayload?.trim()) {
+        patch.mediaPayload = mergeDeliveryStatusIntoPayload(row.mediaPayload, update.status);
+      }
+      await this.messages.update({ id: row.id }, patch);
+      changed += 1;
+      const threadKey =
+        (await this.resolveThreadContactKeys(instanceId, row.contactPhone))[0] ?? row.contactPhone;
+      await this.publishInboxActivity(instanceId, threadKey, row.id, false);
+    }
+
+    if (changed > 0) {
+      this.inboxRealtime.notifyThreadsUpdated(instanceId);
+    }
+    return changed;
   }
 
   async repairReactionMessages(
@@ -1500,7 +1623,7 @@ export class EvolutionInboxService {
         const lastMessage = await this.buildLastMessagePayloadForArchive(instanceId, contactKey);
         if (!lastMessage) {
           syncWarning =
-            'Conversa arquivada no painel; WhatsApp não sincronizado (sem última mensagem para a Evolution).';
+            'Conversa arquivada no painel; WhatsApp não sincronizado (sem última mensagem no servidor).';
         } else {
           const outcome = await this.remoteChats.archiveChat(instanceId, {
             remoteJid,
@@ -3295,5 +3418,154 @@ export class EvolutionInboxService {
 
     this.queueMessageMediaPersist(row.id, { force: true });
     return fetched;
+  }
+
+  private expandPhoneContactKeys(digits: string): string[] {
+    const normalized = normalizeMobilePhone(digits);
+    if (!normalized) return [];
+    const keys = new Set<string>([normalized]);
+    if (normalized.length === 11) keys.add(`55${normalized}`);
+    if (normalized.startsWith('55') && normalized.length >= 12) {
+      keys.add(normalized.slice(2));
+    }
+    return [...keys];
+  }
+
+  private collectLeadPhoneDigits(lead: {
+    phone?: string | null;
+    contacts?: Array<{ phone?: string | null }>;
+  }): string[] {
+    const digits = new Set<string>();
+    if (lead.phone) {
+      const main = normalizeMobilePhone(lead.phone);
+      if (main) digits.add(main);
+    }
+    for (const contact of lead.contacts ?? []) {
+      const phone = normalizeMobilePhone(contact.phone ?? '');
+      if (phone) digits.add(phone);
+    }
+    return [...digits];
+  }
+
+  async linkCommercialLeadToWhatsAppContacts(leadId: string): Promise<void> {
+    const lead = await this.commercialLeads.get(leadId);
+    const phoneDigits = this.collectLeadPhoneDigits(lead);
+    if (!phoneDigits.length) return;
+
+    const contactKeys = new Set<string>();
+    for (const digits of phoneDigits) {
+      for (const key of this.expandPhoneContactKeys(digits)) contactKeys.add(key);
+    }
+
+    const profiles = await this.contactProfiles.find({
+      where: { leadId },
+      select: ['instanceId', 'contactKey'],
+    });
+    for (const profile of profiles) {
+      if (profile.contactKey?.trim()) contactKeys.add(profile.contactKey.trim());
+    }
+
+    const profileRows = contactKeys.size
+      ? await this.contactProfiles.find({
+          where: { contactKey: In([...contactKeys]) },
+        })
+      : [];
+    for (const existingProfile of profileRows) {
+      if (!existingProfile.leadId) {
+        existingProfile.leadId = leadId;
+        await this.contactProfiles.save(existingProfile);
+      }
+    }
+
+    if (contactKeys.size) {
+      await this.messages
+        .createQueryBuilder()
+        .update(EvolutionMessage)
+        .set({ leadId })
+        .where('lead_id IS NULL')
+        .andWhere('contact_phone IN (:...keys)', { keys: [...contactKeys] })
+        .execute();
+    }
+  }
+
+  async listCommercialLeadWhatsAppHistory(leadId: string, limit = 150) {
+    const lead = await this.commercialLeads.get(leadId);
+    await this.linkCommercialLeadToWhatsAppContacts(leadId);
+
+    const phoneDigits = this.collectLeadPhoneDigits(lead);
+    const contactKeys = new Set<string>();
+    for (const digits of phoneDigits) {
+      for (const key of this.expandPhoneContactKeys(digits)) contactKeys.add(key);
+    }
+
+    const profiles = await this.contactProfiles.find({
+      where: { leadId },
+      select: ['instanceId', 'contactKey', 'displayName', 'phoneLabel'],
+    });
+    for (const profile of profiles) {
+      if (profile.contactKey?.trim()) contactKeys.add(profile.contactKey.trim());
+    }
+
+    const qb = this.messages.createQueryBuilder('m').where('m.lead_id = :leadId', { leadId });
+    if (contactKeys.size) {
+      qb.orWhere('m.contact_phone IN (:...contactKeys)', { contactKeys: [...contactKeys] });
+    }
+
+    const take = Math.max(1, Math.min(limit, 300));
+    const rows = await qb.orderBy('m.message_at', 'DESC').take(take).getMany();
+    const instanceIds = [...new Set(rows.map((row) => row.instanceId))];
+    const instances = instanceIds.length
+      ? await this.instances.find({ where: { id: In(instanceIds) } })
+      : [];
+    const instanceNameById = new Map(instances.map((row) => [row.id, row.name]));
+
+    const threadMap = new Map<
+      string,
+      {
+        instanceId: string;
+        instanceName: string;
+        contactPhone: string;
+        contactPhoneLabel: string | null;
+        lastMessageAt: string | null;
+        messageCount: number;
+      }
+    >();
+
+    for (const row of rows) {
+      const threadKey = `${row.instanceId}:${row.contactPhone}`;
+      const current = threadMap.get(threadKey);
+      const label = formatPhoneLenient(row.contactPhone);
+      if (!current) {
+        threadMap.set(threadKey, {
+          instanceId: row.instanceId,
+          instanceName: instanceNameById.get(row.instanceId) ?? 'WhatsApp',
+          contactPhone: row.contactPhone,
+          contactPhoneLabel: label,
+          lastMessageAt: row.messageAt?.toISOString() ?? null,
+          messageCount: 1,
+        });
+      } else {
+        current.messageCount += 1;
+        const at = row.messageAt?.toISOString() ?? null;
+        if (at && (!current.lastMessageAt || at > current.lastMessageAt)) {
+          current.lastMessageAt = at;
+        }
+      }
+    }
+
+    const chronological = [...rows].reverse();
+    const messages = this.buildThreadMessageList(chronological);
+    const threads = [...threadMap.values()].sort(
+      (a, b) =>
+        new Date(b.lastMessageAt ?? 0).getTime() - new Date(a.lastMessageAt ?? 0).getTime(),
+    );
+
+    return {
+      leadId,
+      phones: phoneDigits.map((digits) => formatPhoneLenient(digits)),
+      hasPhone: phoneDigits.length > 0,
+      threads,
+      messages,
+    };
   }
 }

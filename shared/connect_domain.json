@@ -15,28 +15,28 @@
       "name": "Start",
       "pricePerMonth": 39.8,
       "tierIndex": 0,
-      "description": "Plano de entrada na rede."
+      "description": "Plano de entrada com sua academia preferida."
     },
     {
       "id": "connect-plus",
       "name": "Plus",
       "pricePerMonth": 69.9,
       "tierIndex": 1,
-      "description": "Mais flexibilidade dentro da rede."
+      "description": "Mais benefícios para o dia a dia na sua unidade."
     },
     {
       "id": "connect-multi",
       "name": "Multi",
       "pricePerMonth": 129.9,
       "tierIndex": 2,
-      "description": "Para quem treina com frequência em várias unidades."
+      "description": "Para quem treina com frequência na academia preferida."
     },
     {
       "id": "connect-pro",
       "name": "Pro",
       "pricePerMonth": 189.9,
       "tierIndex": 3,
-      "description": "Tier avançado para uso intenso da rede."
+      "description": "Tier avançado para uso intenso do benefício."
     },
     {
       "id": "connect-total",

@@ -45,7 +45,10 @@ import { CommercialLeadContact } from './commercial/commercial-lead-contact.enti
 import { CommercialLeadOwner } from './commercial/commercial-lead-owner.entity';
 import { CommercialFunnel } from './commercial/commercial-funnel.entity';
 import { CommercialFunnelStage } from './commercial/commercial-funnel-stage.entity';
+import { CommercialLossReason } from './commercial/commercial-loss-reason.entity';
+import { CommercialLeadAuditLog } from './commercial/commercial-lead-audit.entity';
 import { MarketingModule } from './marketing/marketing.module';
+import { SiteModule } from './site/site.module';
 import { MarketingCampaign } from './marketing/marketing-campaign.entity';
 import { MarketingCreative } from './marketing/marketing-creative.entity';
 import { MarketingLandingPage } from './marketing/marketing-landing-page.entity';
@@ -116,6 +119,8 @@ import { ChangelogModule } from './changelog/changelog.module';
             CommercialLeadContact,
             CommercialFunnel,
             CommercialFunnelStage,
+            CommercialLossReason,
+            CommercialLeadAuditLog,
             MarketingCampaign,
             MarketingCreative,
             MarketingLandingPage,
@@ -166,6 +171,7 @@ import { ChangelogModule } from './changelog/changelog.module';
     FinanceModule,
     CommercialModule,
     MarketingModule,
+    SiteModule,
     NotificationsModule,
     SupportModule,
     AcafAssociationModule,

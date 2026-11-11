@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "74d42b83-7274-4c7c-ad50-c74460f8b26f",
+      "commitSha": "7fb4c7de153ab55b178b73c8fa4999654ed15175",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-10T17:42:40-03:00",
+      "title": "Registro changelog do commit 3fc55fb",
+      "summary": null,
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "a9a8c1ac-1291-474b-a0ef-ef79f5121cb5",
       "commitSha": "3fc55fb07fadb00d4a86c9348d0ea58ea5ed3aa6",
       "repository": "api",

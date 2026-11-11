@@ -92,12 +92,12 @@ export class EvolutionRemoteMediaService {
           try {
             json = JSON.parse(text) as Record<string, unknown>;
           } catch {
-            lastError = 'Resposta inválida da Evolution.';
+            lastError = 'Resposta inválida do servidor.';
             continue;
           }
           const parsed = this.parseEvolutionMediaResponse(json, input.mimeType, input.kind);
           if (parsed) return parsed;
-          lastError = 'Evolution não retornou base64 da mídia.';
+          lastError = 'O servidor não retornou base64 da mídia.';
         } catch (err) {
           lastError = err instanceof Error ? err.message : String(err);
         }
@@ -109,17 +109,17 @@ export class EvolutionRemoteMediaService {
     const resolvedError =
       lastError ||
       (disabledNamespaces.size >= 2
-        ? 'rotas de mídia não disponíveis nesta Evolution'
+        ? 'rotas de mídia não disponíveis neste servidor'
         : 'nenhum endpoint retornou base64 da mídia (pode ter expirado no WhatsApp)');
     const permanent =
       /\b(400|401|403|404|410|422)\b/.test(resolvedError) ||
       /cannot\s+post/i.test(resolvedError) ||
       /nenhum endpoint retornou base64/i.test(resolvedError) ||
-      /Evolution não retornou base64/i.test(resolvedError);
+      /servidor não retornou base64/i.test(resolvedError);
     throw new BadRequestException(
       permanent
-        ? `MEDIA_PERMANENT: Não foi possível baixar a mídia na Evolution (${resolvedError}).`
-        : `Não foi possível baixar a mídia na Evolution (${resolvedError}).`,
+        ? `MEDIA_PERMANENT: Não foi possível baixar a mídia no servidor (${resolvedError}).`
+        : `Não foi possível baixar a mídia no servidor (${resolvedError}).`,
     );
   }
 
@@ -162,7 +162,7 @@ export class EvolutionRemoteMediaService {
     const baseUrl = normalizeEvolutionBaseUrl(platform.baseUrl || row.baseUrl || '');
     const apiKey = String(platform.apiKey || row.apiKey || '').trim();
     if (!apiKey) {
-      throw new BadRequestException('Configure a chave da Evolution em Sistema → Configurações.');
+      throw new BadRequestException('Configure a chave de integração WhatsApp em Sistema → Configurações.');
     }
     return { baseUrl, apiKey };
   }

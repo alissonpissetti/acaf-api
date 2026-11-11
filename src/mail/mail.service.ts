@@ -1,7 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
+import { NextcloudService } from '../storage/nextcloud.service';
+import {
+  buildEmployeeEnrollmentInviteHtml,
+  buildEmployeeEnrollmentInviteSubject,
+  buildEmployeeEnrollmentInviteText,
+} from './employee-enrollment-invite.template';
+
+const MAIL_LOGO_FILE = 'movly-logo-lime-on-purple.png';
+
+const HOSTINGER_MAIL_API_BASE = 'https://api.mail.hostinger.com';
 
 export type SendMailResult = {
   sent: boolean;
@@ -9,16 +22,203 @@ export type SendMailResult = {
   reason?: string;
 };
 
+type HostingerMailbox = { resourceId: string; address: string };
+
 @Injectable()
-export class MailService {
+export class MailService implements OnModuleInit {
   private readonly logger = new Logger(MailService.name);
   private transporter: Transporter | null = null;
+  private hostingerMailboxId: string | null = null;
+  private mailLogoUrl: string | null = null;
+  private mailLogoReady: Promise<void> | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly storage: NextcloudService,
+  ) {}
+
+  async onModuleInit() {
+    this.mailLogoReady = this.publishMailLogo();
+    await this.mailLogoReady;
+  }
+
+  private mailProvider(): 'hostinger' | 'smtp' | null {
+    const explicit = this.config.get<string>('MAIL_PROVIDER')?.trim().toLowerCase();
+    if (explicit === 'hostinger') return 'hostinger';
+    if (explicit === 'smtp') return 'smtp';
+    if (this.config.get<string>('HOSTINGER_MAIL_API_TOKEN')?.trim()) return 'hostinger';
+    if (this.config.get<string>('SMTP_HOST')?.trim()) return 'smtp';
+    return null;
+  }
+
+  private defaultFromAddress(): string {
+    if (this.mailProvider() === 'hostinger') {
+      return (
+        this.config.get<string>('HOSTINGER_MAIL_FROM')?.trim() ||
+        this.config.get<string>('SMTP_FROM')?.trim() ||
+        this.config.get<string>('SMTP_USER')?.trim() ||
+        'noreply@exemplo.com.br'
+      );
+    }
+    return (
+      this.config.get<string>('SMTP_FROM')?.trim() ||
+      this.config.get<string>('HOSTINGER_MAIL_FROM')?.trim() ||
+      this.config.get<string>('SMTP_USER')?.trim() ||
+      'noreply@exemplo.com.br'
+    );
+  }
+
+  private hostingerDisplayName(): string | undefined {
+    const name = this.config.get<string>('HOSTINGER_MAIL_DISPLAY_NAME')?.trim();
+    return name || undefined;
+  }
+
+  private async resolveHostingerMailboxId(token: string): Promise<string> {
+    if (this.hostingerMailboxId) return this.hostingerMailboxId;
+
+    const forced = this.config.get<string>('HOSTINGER_MAIL_MAILBOX_ID')?.trim();
+    if (forced) {
+      this.hostingerMailboxId = forced;
+      return forced;
+    }
+
+    const response = await fetch(`${HOSTINGER_MAIL_API_BASE}/api/v1/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      data?: { mailboxes?: HostingerMailbox[] };
+      error?: string;
+    };
+
+    if (!response.ok) {
+      const detail = payload.error ?? `HTTP ${response.status}`;
+      throw new Error(`Hostinger Mail API (/me): ${detail}`);
+    }
+
+    const mailboxes = payload.data?.mailboxes ?? [];
+    if (!mailboxes.length) {
+      throw new Error('Token Hostinger sem caixas de e-mail associadas.');
+    }
+
+    const prefer = this.defaultFromAddress().toLowerCase();
+    const match =
+      mailboxes.find((box) => box.address?.toLowerCase() === prefer) ?? mailboxes[0]!;
+
+    this.hostingerMailboxId = match.resourceId;
+    return match.resourceId;
+  }
+
+  private async sendViaHostinger(input: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+  }): Promise<void> {
+    const token = this.config.get<string>('HOSTINGER_MAIL_API_TOKEN')?.trim();
+    if (!token) {
+      throw new Error('HOSTINGER_MAIL_API_TOKEN não configurado.');
+    }
+
+    const mailboxId = await this.resolveHostingerMailboxId(token);
+    const body: Record<string, unknown> = {
+      to: [input.to],
+      subject: input.subject,
+      text: input.text,
+      html: input.html,
+    };
+    const displayName = this.hostingerDisplayName();
+    if (displayName) body.displayName = displayName;
+
+    const response = await fetch(
+      `${HOSTINGER_MAIL_API_BASE}/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/send`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      },
+    );
+
+    if (response.status === 204) return;
+
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    const detail = payload.error ?? `HTTP ${response.status}`;
+    throw new Error(`Hostinger Mail API (send): ${detail}`);
+  }
 
   getConnectAppUrl(): string | null {
     const raw = this.config.get<string>('CONNECT_APP_URL')?.trim();
-    return raw ? raw.replace(/\/$/, '') : null;
+    if (!raw || !/^https?:\/\//i.test(raw)) return null;
+    return raw.replace(/\/$/, '');
+  }
+
+  private localMailLogoPath(): string | null {
+    const candidates = [
+      join(process.cwd(), 'assets/branding', MAIL_LOGO_FILE),
+      join(__dirname, '../../assets/branding', MAIL_LOGO_FILE),
+    ];
+    return candidates.find((path) => existsSync(path)) ?? null;
+  }
+
+  /** HTTPS público no Nextcloud; MAIL_LOGO_URL no .env tem prioridade. */
+  private async publishMailLogo(): Promise<void> {
+    const forced = this.config.get<string>('MAIL_LOGO_URL')?.trim();
+    if (forced && /^https?:\/\//i.test(forced)) {
+      this.mailLogoUrl = forced.replace(/\/$/, '');
+      this.logger.log(`Logo do e-mail: MAIL_LOGO_URL (${this.mailLogoUrl})`);
+      return;
+    }
+
+    const localPath = this.localMailLogoPath();
+    if (!localPath) {
+      this.logger.warn(
+        `Logo local não encontrada (assets/branding/${MAIL_LOGO_FILE}). E-mail usa fallback tipográfico.`,
+      );
+      this.mailLogoUrl = this.legacyBrandLogoUrl();
+      return;
+    }
+
+    try {
+      const buffer = await readFile(localPath);
+      const { publicUrl, path } = await this.storage.ensurePublicBrandAsset(
+        MAIL_LOGO_FILE,
+        buffer,
+        'image/png',
+      );
+      this.mailLogoUrl = publicUrl;
+      this.logger.log(`Logo do e-mail publicada no storage (${path}): ${publicUrl}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Não foi possível publicar a logo no storage: ${message}`);
+      this.mailLogoUrl = this.legacyBrandLogoUrl();
+    }
+  }
+
+  private legacyBrandLogoUrl(): string | null {
+    const base = (
+      this.config.get<string>('BRAND_ASSETS_PUBLIC_URL')?.trim() ||
+      this.config.get<string>('CORPORATE_APP_URL')?.trim() ||
+      ''
+    ).replace(/\/$/, '');
+    if (!base || !/^https?:\/\//i.test(base)) return null;
+    return `${base}/branding/${MAIL_LOGO_FILE}`;
+  }
+
+  private async employeeInviteLogoUrl(): Promise<string | null> {
+    if (!this.mailLogoReady) {
+      this.mailLogoReady = this.publishMailLogo();
+    }
+    await this.mailLogoReady;
+    return this.mailLogoUrl;
+  }
+
+  private friendlySendError(message: string): string {
+    if (/535|authentication failed|invalid login/i.test(message)) {
+      return 'Falha na autenticação do envio de e-mail. Confira MAIL_PROVIDER e as credenciais (token Hostinger ou SMTP). Enquanto isso, use "Copiar código".';
+    }
+    return `Falha ao enviar e-mail: ${message}`;
   }
 
   private getTransporter(): Transporter | null {
@@ -49,62 +249,47 @@ export class MailService {
   }): Promise<SendMailResult> {
     const code = input.enrollmentCode.trim();
     const appUrl = this.getConnectAppUrl();
-    const appSteps = appUrl
-      ? `Baixe o aplicativo (${appUrl}) e abra Minha conta.`
-      : 'Abra o aplicativo e vá em Minha conta.';
+    const inviteContent = {
+      employeeName: input.employeeName,
+      companyName: input.companyName,
+      enrollmentCode: code,
+      appUrl,
+      logoUrl: await this.employeeInviteLogoUrl(),
+    };
 
-    const subject = `Código de adesão — ${input.companyName}`;
-    const body = [
-      `Olá${input.employeeName ? `, ${input.employeeName}` : ''}!`,
-      '',
-      `${input.companyName} liberou o benefício para colaboradores.`,
-      '',
-      'Código de adesão da empresa:',
-      code,
-      '',
-      appSteps,
-      'Informe o código para validar sua empresa e escolher o plano.',
-      '',
-      'Compartilhe este código apenas com colaboradores autorizados.',
-    ].join('\n');
+    const subject = buildEmployeeEnrollmentInviteSubject(input.companyName);
+    const body = buildEmployeeEnrollmentInviteText(inviteContent);
+    const html = buildEmployeeEnrollmentInviteHtml(inviteContent);
 
-    const transporter = this.getTransporter();
-    if (!transporter) {
+    const provider = this.mailProvider();
+    if (!provider) {
       this.logger.warn(
-        `SMTP_HOST não configurado — código não enviado para ${input.to}. Código: ${code}`,
+        `E-mail não configurado — código não enviado para ${input.to}. Código: ${code}`,
       );
       return {
         sent: false,
         enrollmentCode: code,
-        reason: 'SMTP não configurado na API. Use "Copiar código" ou configure SMTP_HOST.',
+        reason:
+          'E-mail não configurado na API (SMTP ou Hostinger Mail API). Use "Copiar código" ou configure MAIL_PROVIDER.',
       };
     }
 
-    const from =
-      this.config.get<string>('SMTP_FROM')?.trim() ||
-      this.config.get<string>('SMTP_USER')?.trim() ||
-      'noreply@exemplo.com.br';
-
-    const htmlAppLine = appUrl
-      ? `<p>Baixe o aplicativo e abra <strong>Minha conta</strong> (<a href="${appUrl}">${appUrl}</a>).</p>`
-      : '<p>Abra o aplicativo e vá em <strong>Minha conta</strong>.</p>';
+    const from = this.defaultFromAddress();
 
     try {
-      await transporter.sendMail({
-        from,
-        to: input.to,
-        subject,
-        text: body,
-        html: [
-          `<p>Olá${input.employeeName ? `, <strong>${input.employeeName}</strong>` : ''}!</p>`,
-          `<p><strong>${input.companyName}</strong> liberou o benefício para colaboradores.</p>`,
-          '<p>Código de adesão da empresa:</p>',
-          `<p style="font-size:20px;font-weight:700;font-family:monospace">${code}</p>`,
-          htmlAppLine,
-          '<p>Informe o código para validar sua empresa e escolher o plano.</p>',
-          '<p style="color:#666;font-size:13px">Compartilhe este código apenas com colaboradores autorizados.</p>',
-        ].join(''),
-      });
+      if (provider === 'hostinger') {
+        await this.sendViaHostinger({ to: input.to, subject, text: body, html });
+      } else {
+        const transporter = this.getTransporter();
+        if (!transporter) {
+          return {
+            sent: false,
+            enrollmentCode: code,
+            reason: 'SMTP_HOST não configurado na API.',
+          };
+        }
+        await transporter.sendMail({ from, to: input.to, subject, text: body, html });
+      }
       this.logger.log(`Código de adesão enviado por e-mail para ${input.to}`);
       return { sent: true, enrollmentCode: code };
     } catch (err) {
@@ -113,7 +298,7 @@ export class MailService {
       return {
         sent: false,
         enrollmentCode: code,
-        reason: `Falha ao enviar e-mail: ${message}`,
+        reason: this.friendlySendError(message),
       };
     }
   }

@@ -8,6 +8,71 @@ const MEDIA_FIELDS: Array<{ kind: EvolutionMediaKind; field: string }> = [
   { kind: 'sticker', field: 'stickerMessage' },
 ];
 
+export type MessageDeliveryAck = 'pending' | 'sent' | 'delivered' | 'read' | 'played';
+
+const DELIVERY_STATUS_BY_NAME: Record<string, MessageDeliveryAck> = {
+  PENDING: 'pending',
+  SERVER_ACK: 'sent',
+  DELIVERY_ACK: 'delivered',
+  READ: 'read',
+  PLAYED: 'played',
+};
+
+export function normalizeWhatsAppDeliveryStatus(raw: unknown): MessageDeliveryAck | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const code = Math.trunc(raw);
+    if (code <= 0 || code > 5) return null;
+    const byNum: MessageDeliveryAck[] = ['pending', 'sent', 'delivered', 'read', 'played'];
+    return byNum[code - 1] ?? null;
+  }
+  const label = String(raw).trim().toUpperCase().replace(/[^A-Z_]/g, '');
+  return DELIVERY_STATUS_BY_NAME[label] ?? null;
+}
+
+export function extractDeliveryStatusFromStoredPayload(
+  payloadJson: string | null | undefined,
+): MessageDeliveryAck | null {
+  if (!payloadJson?.trim()) return null;
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    const key = (payload.key ?? {}) as Record<string, unknown>;
+    return (
+      normalizeWhatsAppDeliveryStatus(payload.status) ??
+      normalizeWhatsAppDeliveryStatus(key.status) ??
+      normalizeWhatsAppDeliveryStatus(
+        (payload.update as Record<string, unknown> | undefined)?.status,
+      )
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function mergeDeliveryStatusIntoPayload(
+  payloadJson: string,
+  status: MessageDeliveryAck,
+): string {
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    payload.status = status;
+    return JSON.stringify(payload);
+  } catch {
+    return payloadJson;
+  }
+}
+
+/** Mesmo critério de reações: IDs do WhatsApp podem vir truncados entre webhook e histórico. */
+export function externalMessageIdsMatch(left: string, right: string): boolean {
+  const a = String(left ?? '').trim();
+  const b = String(right ?? '').trim();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.endsWith(b) || b.endsWith(a)) return true;
+  if (a.includes(b) || b.includes(a)) return true;
+  return false;
+}
+
 export type ParsedEvolutionMedia = {
   kind: EvolutionMediaKind;
   payloadJson: string;
@@ -189,6 +254,10 @@ function contextInfoWithQuote(core: Record<string, unknown>): Record<string, unk
     'listMessage',
     'templateMessage',
     'productMessage',
+    'interactiveMessage',
+    'buttonsResponseMessage',
+    'templateButtonReplyMessage',
+    'pinInChatMessage',
   ];
   for (const field of carriers) {
     const part = core[field] as Record<string, unknown> | undefined;

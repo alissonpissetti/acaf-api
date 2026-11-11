@@ -173,6 +173,51 @@ export class NextcloudService {
     );
   }
 
+  /**
+   * Arquivo fixo de marca (ex.: logo dos e-mails) em `{root}/branding/{fileName}`.
+   * Sobrescreve o conteúdo e reusa o link público se já existir.
+   */
+  async ensurePublicBrandAsset(
+    fileName: string,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<{ path: string; publicUrl: string }> {
+    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!safeName) {
+      throw new BadRequestException('Nome de arquivo de marca inválido.');
+    }
+
+    const folder = `${this.rootFolder}/branding`;
+    const relativePath = `${folder}/${safeName}`;
+    await this.ensureFolder(folder);
+
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'PUT',
+      headers: {
+        Authorization: this.authHeader(),
+        'Content-Type': mimeType || 'application/octet-stream',
+      },
+      body: new Uint8Array(buffer),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao enviar arquivo de marca (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+
+    const shared = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl: this.directPublicFileUrl(shared) };
+  }
+
+  /** URL HTTPS que entrega o arquivo (sem 303), melhor para <img> em e-mail. */
+  private directPublicFileUrl(shareOrDownloadUrl: string): string {
+    const token = shareOrDownloadUrl.match(/\/s\/([^/?#]+)/)?.[1];
+    if (!token) return shareOrDownloadUrl.replace(/^http:\/\//i, 'https://');
+    return `${this.baseUrl}/public.php/dav/files/${encodeURIComponent(token)}`;
+  }
+
   async uploadNetworkLogo(
     networkId: string,
     file: Express.Multer.File,

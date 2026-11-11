@@ -12,7 +12,9 @@ import {
   extractEvolutionMedia,
   extractWhatsAppReaction,
   isReactionPlaceholderBody,
+  normalizeWhatsAppDeliveryStatus,
   resolveMessageEnvelope,
+  type MessageDeliveryAck,
 } from './evolution-message-media';
 
 function extractGroupChatName(
@@ -198,6 +200,11 @@ export function parseEvolutionMessageRow(row: unknown): ParsedEvolutionMessage |
   const payloadJson =
     media?.payloadJson ?? buildEvolutionMediaPayload(envelopeItem, key);
 
+  const deliveryStatus =
+    normalizeWhatsAppDeliveryStatus(item.status) ??
+    normalizeWhatsAppDeliveryStatus(key.status) ??
+    (fromMe ? 'sent' : null);
+
   return {
     fromMe,
     phone: resolved.phone,
@@ -214,7 +221,63 @@ export function parseEvolutionMessageRow(row: unknown): ParsedEvolutionMessage |
     mediaMimeType: media?.mimeType ?? null,
     senderName: senderName ?? null,
     senderJid,
+    deliveryStatus,
   };
+}
+
+export type MessageDeliveryUpdate = {
+  externalId: string;
+  remoteJid: string;
+  fromMe: boolean;
+  status: MessageDeliveryAck;
+};
+
+function readMessageDeliveryUpdate(row: unknown): MessageDeliveryUpdate | null {
+  if (!row || typeof row !== 'object') return null;
+  const item = row as Record<string, unknown>;
+  const key = normalizeEvolutionMessageKey(item);
+  const externalId = String(key.id ?? item.id ?? '').trim();
+  if (!externalId) return null;
+
+  const update =
+    item.update && typeof item.update === 'object'
+      ? (item.update as Record<string, unknown>)
+      : item;
+  const status =
+    normalizeWhatsAppDeliveryStatus(update.status) ??
+    normalizeWhatsAppDeliveryStatus(item.status) ??
+    normalizeWhatsAppDeliveryStatus(key.status);
+  if (!status) return null;
+
+  return {
+    externalId,
+    remoteJid: String(key.remoteJid ?? '').trim(),
+    fromMe: Boolean(key.fromMe),
+    status,
+  };
+}
+
+export function parseMessageDeliveryUpdates(data: unknown): MessageDeliveryUpdate[] {
+  const rows: unknown[] = [];
+  if (Array.isArray(data)) rows.push(...data);
+  else if (data && typeof data === 'object') {
+    const record = data as Record<string, unknown>;
+    if (Array.isArray(record.updates)) rows.push(...record.updates);
+    if (Array.isArray(record.messages)) rows.push(...record.messages);
+    if (record.key || record.update || record.status) rows.push(data);
+    else rows.push(...collectEvolutionMessageRows(data));
+  }
+  const seen = new Set<string>();
+  const updates: MessageDeliveryUpdate[] = [];
+  for (const row of rows) {
+    const parsed = readMessageDeliveryUpdate(row);
+    if (!parsed) continue;
+    const sig = `${parsed.externalId}:${parsed.status}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    updates.push(parsed);
+  }
+  return updates;
 }
 
 export function readEvolutionRowMessageAt(row: unknown): Date | null {

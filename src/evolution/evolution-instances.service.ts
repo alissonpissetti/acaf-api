@@ -90,7 +90,7 @@ export class EvolutionInstancesService {
     if (!url) {
       throw new BadRequestException(
         'Configure a URL pública da API em Sistema → Configurações (webhook WhatsApp). ' +
-          'A Evolution precisa desse endereço para enviar eventos ao criar a instância.',
+          'O servidor de integração precisa desse endereço para enviar eventos ao criar a instância.',
       );
     }
 
@@ -124,13 +124,13 @@ export class EvolutionInstancesService {
       if (response.ok || response.status === 201) return;
       const lastError = await response.text();
       throw new BadRequestException(
-        `Não foi possível registrar o webhook na Evolution para «${instanceKey}»: ${lastError.slice(0, 280)}`,
+        `Não foi possível registrar o webhook no servidor para «${instanceKey}»: ${lastError.slice(0, 280)}`,
       );
     } catch (err) {
       if (err instanceof BadRequestException) throw err;
       const lastError = err instanceof Error ? err.message : String(err);
       throw new BadRequestException(
-        `Não foi possível registrar o webhook na Evolution para «${instanceKey}»: ${lastError.slice(0, 280)}`,
+        `Não foi possível registrar o webhook no servidor para «${instanceKey}»: ${lastError.slice(0, 280)}`,
       );
     }
   }
@@ -177,8 +177,8 @@ export class EvolutionInstancesService {
   private formatEvolutionHttpError(status: number, body: string): string {
     const snippet = body.trim().slice(0, 220);
     return snippet
-      ? `Evolution respondeu ${status}: ${snippet}`
-      : `Evolution respondeu ${status}.`;
+      ? `O servidor respondeu ${status}: ${snippet}`
+      : `O servidor respondeu ${status}.`;
   }
 
   private async remoteInstanceExists(
@@ -284,7 +284,7 @@ export class EvolutionInstancesService {
     } catch (err) {
       return {
         ok: false,
-        message: err instanceof Error ? err.message : 'Falha ao contactar a Evolution API.',
+        message: err instanceof Error ? err.message : 'Falha ao contactar o servidor de integração.',
       };
     }
   }
@@ -294,10 +294,10 @@ export class EvolutionInstancesService {
     const baseUrl = normalizeEvolutionBaseUrl(platform.baseUrl || '');
     const apiKey = String(platform.apiKey || '').trim();
     if (!baseUrl) {
-      throw new BadRequestException('Configure a URL base da Evolution em Sistema → Configurações.');
+      throw new BadRequestException('Configure a URL do servidor WhatsApp em Sistema → Configurações.');
     }
     if (!apiKey) {
-      throw new BadRequestException('Configure a chave da Evolution em Sistema → Configurações.');
+      throw new BadRequestException('Configure a chave de integração WhatsApp em Sistema → Configurações.');
     }
     return { baseUrl, apiKey };
   }
@@ -309,7 +309,7 @@ export class EvolutionInstancesService {
     const baseUrl = normalizeEvolutionBaseUrl(platform.baseUrl || row.baseUrl || '');
     const apiKey = String(platform.apiKey || row.apiKey || '').trim();
     if (!apiKey) {
-      throw new BadRequestException('Configure a chave da Evolution em Sistema → Configurações.');
+      throw new BadRequestException('Configure a chave de integração WhatsApp em Sistema → Configurações.');
     }
     return { baseUrl, apiKey };
   }
@@ -323,7 +323,7 @@ export class EvolutionInstancesService {
       const message =
         err instanceof BadRequestException
           ? String(err.message)
-          : 'Configure URL e chave da Evolution em Sistema → Configurações.';
+          : 'Configure URL e chave de integração WhatsApp em Sistema → Configurações.';
       return { ok: false, message };
     }
 
@@ -336,10 +336,10 @@ export class EvolutionInstancesService {
       try {
         const response = await fetch(url, { headers });
         if (response.status === 401 || response.status === 403) {
-          return { ok: false, message: 'Evolution acessível, mas a chave API foi recusada.' };
+          return { ok: false, message: 'Servidor acessível, mas a chave de integração foi recusada.' };
         }
         if (response.ok) {
-          return { ok: true, message: 'Servidor Evolution acessível com a chave configurada.' };
+          return { ok: true, message: 'Servidor de integração acessível com a chave configurada.' };
         }
         const body = await response.text();
         const isLast = index === paths.length - 1;
@@ -348,24 +348,24 @@ export class EvolutionInstancesService {
         }
         return {
           ok: false,
-          message: `Evolution respondeu ${response.status}: ${body.slice(0, 160)}`,
+          message: `O servidor respondeu ${response.status}: ${body.slice(0, 160)}`,
         };
       } catch (err) {
         const isLast = index === paths.length - 1;
         if (!isLast) continue;
         return {
           ok: false,
-          message: err instanceof Error ? err.message : 'Falha ao contactar a Evolution API.',
+          message: err instanceof Error ? err.message : 'Falha ao contactar o servidor de integração.',
         };
       }
     }
 
-    return { ok: false, message: 'Falha ao contactar a Evolution API.' };
+    return { ok: false, message: 'Falha ao contactar o servidor de integração.' };
   }
 
   private normalizeKey(key: string): string {
     const trimmed = key.trim();
-    if (!trimmed) throw new BadRequestException('Informe o nome da instância na Evolution API.');
+    if (!trimmed) throw new BadRequestException('Informe o nome da instância.');
     if (!/^[a-zA-Z0-9._-]+$/.test(trimmed)) {
       throw new BadRequestException(
         'O nome da instância só pode conter letras, números, ponto, hífen e sublinhado.',
@@ -471,7 +471,7 @@ export class EvolutionInstancesService {
         const body = await response.text();
         return {
           ok: false,
-          message: `Evolution respondeu ${response.status}: ${body.slice(0, 160)}`,
+          message: `O servidor respondeu ${response.status}: ${body.slice(0, 160)}`,
         };
       }
 
@@ -507,7 +507,7 @@ export class EvolutionInstancesService {
     } catch (err) {
       return {
         ok: false,
-        message: err instanceof Error ? err.message : 'Falha ao contactar a Evolution API.',
+        message: err instanceof Error ? err.message : 'Falha ao contactar o servidor de integração.',
       };
     }
   }
@@ -678,7 +678,7 @@ export class EvolutionInstancesService {
     const activeCount = instances.filter((row) => row.active).length;
     const baseMessage =
       test.message ??
-      (test.ok ? 'Servidor Evolution acessível.' : 'Falha ao contactar a Evolution API.');
+      (test.ok ? 'Servidor de integração acessível.' : 'Falha ao contactar o servidor de integração.');
     const apiMessage =
       test.ok && activeCount > 0
         ? `${baseMessage} · ${activeCount} instância(s) cadastrada(s).`
@@ -785,7 +785,7 @@ export class EvolutionInstancesService {
     if (!deleted.ok) {
       return {
         ok: true,
-        warning: `Removida no ACAF, mas a Evolution ainda tem a instância «${row.instanceKey}». ${deleted.message ?? 'Exclua na Evolution ou use outro nome ao recriar.'}`,
+        warning: `Removida no ACAF, mas o servidor remoto ainda tem a instância «${row.instanceKey}». ${deleted.message ?? 'Exclua no servidor ou use outro nome ao recriar.'}`,
       };
     }
     return { ok: true };
@@ -838,7 +838,7 @@ export class EvolutionInstancesService {
       if (!response.ok) {
         return {
           ok: false,
-          message: `Evolution respondeu ${response.status}: ${body.slice(0, 200)}`,
+          message: `O servidor respondeu ${response.status}: ${body.slice(0, 200)}`,
         };
       }
 
@@ -928,7 +928,7 @@ export class EvolutionInstancesService {
         imported: 0,
         total: 0,
         webhookUrl,
-        message: 'A Evolution não retornou mensagens. Envie um teste ou aguarde o webhook.',
+        message: 'O servidor não retornou mensagens. Envie um teste ou aguarde o webhook.',
       };
     }
 
@@ -952,19 +952,19 @@ export class EvolutionInstancesService {
         rowCount > 0
           ? watermark
             ? `${rowCount} mensagem(ns) nova(s) ou alterada(s) desde o último histórico local.`
-            : `${rowCount} mensagem(ns) analisada(s) na Evolution (inclui grupos e retroativo).`
+            : `${rowCount} mensagem(ns) analisada(s) no WhatsApp (inclui grupos e retroativo).`
           : null,
         mediaPatched > 0 ? `${mediaPatched} mensagem(ns) com mídia atualizada.` : null,
         mediaStored.stored > 0
           ? `${mediaStored.stored} mídia(s) copiada(s) para o Nextcloud (exibição sem depender do WhatsApp).`
           : mediaStored.processed > 0
-            ? `${mediaStored.processed} mídia(s) tentadas; nenhuma nova no storage (Evolution indisponível ou já salvas).`
+            ? `${mediaStored.processed} mídia(s) tentadas; nenhuma nova no storage (servidor indisponível ou já salvas).`
             : null,
         namesUpdated ? `${namesUpdated} conversa(s) com nome atualizado.` : null,
         avatarsStored > 0
           ? `${avatarsStored} avatar(es) copiado(s) do WhatsApp e salvos no storage (independe da conexão).`
           : avatars > 0
-            ? `${avatars} foto(s) na Evolution, mas não gravou no Nextcloud — confira NEXTCLOUD_* e permissões.`
+            ? `${avatars} foto(s) no WhatsApp, mas não gravou no Nextcloud — confira NEXTCLOUD_* e permissões.`
             : 'Avatares: WhatsApp não devolveu foto (privacidade/LID é comum).',
       ]
         .filter(Boolean)
@@ -1006,7 +1006,7 @@ export class EvolutionInstancesService {
       outcome.stored > 0
         ? `${outcome.stored} gravada(s) no Nextcloud.`
         : 'Nenhuma nova mídia gravada.',
-      outcome.failed > 0 ? `${outcome.failed} falha(s) — confira Evolution e NEXTCLOUD_*.` : null,
+      outcome.failed > 0 ? `${outcome.failed} falha(s) — confira servidor de integração e NEXTCLOUD_*.` : null,
       outcome.skipped > 0 ? `${outcome.skipped} sem payload para baixar.` : null,
     ].filter(Boolean);
 
@@ -1102,7 +1102,7 @@ export class EvolutionInstancesService {
           try {
             payload = JSON.parse(text);
           } catch {
-            lastError = 'Resposta inválida da Evolution.';
+            lastError = 'Resposta inválida do servidor.';
             continue;
           }
           const record =
@@ -1123,7 +1123,7 @@ export class EvolutionInstancesService {
 
     if (merged.length) return { messages: merged };
     throw new BadRequestException(
-      `Não foi possível buscar mensagens na Evolution (${lastError || 'erro desconhecido'}).`,
+      `Não foi possível buscar mensagens no servidor (${lastError || 'erro desconhecido'}).`,
     );
   }
 }

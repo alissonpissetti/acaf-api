@@ -29,7 +29,7 @@ function isTransientMediaStorageError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   if (msg.includes('MEDIA_PERMANENT:')) return false;
   if (/não foi possível baixar a mídia/i.test(msg)) return false;
-  if (/Evolution não retornou base64/i.test(msg)) return false;
+  if (/servidor não retornou base64/i.test(msg)) return false;
   if (/Payload de mídia inválido/i.test(msg)) return false;
   if (/\b404\b/.test(msg) || /cannot\s+post/i.test(msg)) return false;
   if (/fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|timeout/i.test(msg)) return true;
@@ -41,7 +41,7 @@ function isPermanentMediaStorageError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   if (msg.includes('MEDIA_PERMANENT:')) return true;
   if (/não foi possível baixar a mídia/i.test(msg)) return true;
-  if (/Evolution não retornou base64/i.test(msg)) return true;
+  if (/servidor não retornou base64/i.test(msg)) return true;
   if (/Payload de mídia inválido/i.test(msg)) return true;
   if (/\b(400|401|403|404|410|422)\b/.test(msg)) return true;
   return !isTransientMediaStorageError(err);
@@ -190,7 +190,7 @@ export class EvolutionMessageMediaStorageService {
         if (permanent || !retryable) {
           await this.markMediaPersistUnavailable(row.id, lastError);
           this.logger.debug(
-            `Mídia indisponível na Evolution (msg ${messageId}, ${row.mediaKind}): ${lastError.replace(/^MEDIA_PERMANENT:\s*/i, '')}`,
+            `Mídia indisponível no servidor (msg ${messageId}, ${row.mediaKind}): ${lastError.replace(/^MEDIA_PERMANENT:\s*/i, '')}`,
           );
           return false;
         }

@@ -76,6 +76,9 @@ export class EvolutionMessage {
   @Column({ name: 'message_at', type: 'datetime' })
   messageAt: Date;
 
+  @Column({ name: 'delivery_status', type: 'varchar', length: 16, nullable: true })
+  deliveryStatus: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

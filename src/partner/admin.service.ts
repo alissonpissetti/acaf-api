@@ -1130,7 +1130,7 @@ export class AdminService {
     if (body.evolutionApiKey !== undefined) {
       const trimmed = String(body.evolutionApiKey ?? '').trim();
       if (!trimmed) {
-        throw new BadRequestException('Informe a chave da Evolution API.');
+        throw new BadRequestException('Informe a chave de integração WhatsApp.');
       }
       await this.systemSettings.set('evolutionApiKey', trimmed);
       await this.evolutionInstances

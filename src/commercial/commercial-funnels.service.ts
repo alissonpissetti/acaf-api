@@ -119,6 +119,19 @@ export class CommercialFunnelsService {
     return this.loadFunnel(id);
   }
 
+  /** Primeira etapa ativa de pipeline do funil (menor sortOrder). */
+  getFirstPipelineStage(funnel: CommercialFunnel): CommercialFunnelStage | null {
+    const stages = funnel.stages ?? [];
+    let best: CommercialFunnelStage | null = null;
+    for (const stage of stages) {
+      if (!stage.active || stage.outcome !== 'pipeline') continue;
+      if (!best || stage.sortOrder < best.sortOrder) {
+        best = stage;
+      }
+    }
+    return best;
+  }
+
   async create(input: {
     name: string;
     slug?: string;

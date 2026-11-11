@@ -9,6 +9,7 @@ import { EvolutionInboxService, type ParsedEvolutionMessage } from './evolution-
 import {
   collectEvolutionMessageRows,
   parseEvolutionMessagePayload,
+  parseMessageDeliveryUpdates,
 } from './evolution-message.parser';
 import {
   isEvolutionChatWebhookEvent,
@@ -144,7 +145,20 @@ export class EvolutionInboundService {
     if (!messages.length && collectEvolutionMessageRows(body).length) {
       messages = parseEvolutionMessagePayload(body);
     }
+
+    const statusPayload = body.data ?? body;
+    const hasStatusUpdates = parseMessageDeliveryUpdates(statusPayload).length > 0;
     if (!messages.length) {
+      if (hasStatusUpdates || isEvolutionMessageWebhookEvent(event)) {
+        const statusUpdated = await this.inbox.applyMessageDeliveryUpdates(
+          instance.id,
+          statusPayload,
+        );
+        if (statusUpdated > 0) {
+          await this.inbox.recordWebhookDelivery(instance.id);
+          return { ok: true, kind: 'status', updated: statusUpdated };
+        }
+      }
       return { ok: true, kind: 'messages', ignored: 'sem mensagens parseáveis', event: body.event ?? event };
     }
     await this.inbox.backfillMessageMediaFromPayload(instance.id, messageSource);
@@ -165,6 +179,7 @@ export class EvolutionInboundService {
       results.push(outcome);
     }
 
+    await this.inbox.applyMessageDeliveryUpdates(instance.id, statusPayload);
     await this.inbox.recordWebhookDelivery(instance.id);
 
     return { ok: true, kind: 'messages', results };

@@ -15,6 +15,14 @@ type InboxAuthRequest = Request & { user?: { userId: string } };
 export class EvolutionInboxController {
   constructor(private readonly inbox: EvolutionInboxService) {}
 
+  @Get('leads/:leadId/whatsapp')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  listLeadWhatsAppHistory(@Param('leadId') leadId: string, @Query('limit') limit?: string) {
+    const parsed = limit ? Number.parseInt(limit, 10) : 150;
+    const safeLimit = Number.isFinite(parsed) ? parsed : 150;
+    return this.inbox.listCommercialLeadWhatsAppHistory(leadId, safeLimit);
+  }
+
   @Get('instances')
   @RequirePermissions('sistema.evolution', 'comercial.leads')
   listInstancesWithHistory() {

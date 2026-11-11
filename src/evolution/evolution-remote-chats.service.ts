@@ -109,7 +109,7 @@ export class EvolutionRemoteChatsService {
         const text = await response.text();
         lastError = text.slice(0, 400);
         if (response.status === 404) {
-          lastError = `Rota não disponível na Evolution (${path}).`;
+          lastError = `Rota não disponível no servidor (${path}).`;
           break;
         }
       } catch (err) {
@@ -117,7 +117,7 @@ export class EvolutionRemoteChatsService {
       }
     }
 
-    return { ok: false, error: lastError || 'Falha ao arquivar conversa na Evolution.' };
+    return { ok: false, error: lastError || 'Falha ao arquivar conversa no WhatsApp remoto.' };
   }
 
   private mapChatPayload(payload: unknown): EvolutionRemoteChatRow[] {

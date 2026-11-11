@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import { MailService } from '../mail/mail.service';
 import { normalizeHolderKey } from '../partner/checkIn';
 import { getDomain, loadStore } from '../partner/store';
@@ -25,7 +25,6 @@ import {
   normalizeCpf,
   normalizeMobilePhone,
 } from '../users/person.utils';
-import { UsersService } from '../users/users.service';
 import { CorporateAccessService } from './corporate-access.service';
 import { CompanyEmployee, type CompanyEmployeeStatus } from './company-employee.entity';
 import { CompanyInvite } from './company-invite.entity';
@@ -102,7 +101,6 @@ export class CorporateEmployeesService {
     private readonly companyInvoices: Repository<CompanyInvoice>,
     @InjectRepository(User)
     private readonly users: Repository<User>,
-    private readonly usersService: UsersService,
     private readonly access: CorporateAccessService,
     @InjectRepository(Company)
     private readonly companies: Repository<Company>,
@@ -469,34 +467,13 @@ export class CorporateEmployeesService {
       throw new BadRequestException('CPF inválido.');
     }
 
-    let user = await this.usersService.findByEmail(email);
-    if (!user && cpfDigits) {
-      user = await this.usersService.findByCpf(cpfDigits);
-    }
+    const user = await this.resolveEmployeeUser({ name, email, cpfDigits, mobilePhone });
 
-    if (user) {
-      const existing = await this.employees.findOne({
-        where: { companyId: company.id, userId: user.id },
-      });
-      if (existing) {
-        throw new ConflictException('Colaborador já cadastrado nesta empresa.');
-      }
-      if (name) user.name = name;
-      if (cpfDigits && !user.cpf) user.cpf = cpfDigits;
-      user.mobilePhone = mobilePhone;
-      await this.users.save(user);
-    } else {
-      user = await this.users.save(
-        this.users.create({
-          name,
-          email,
-          cpf: cpfDigits,
-          mobilePhone,
-          passwordHash: null,
-          roles: [UserRole.MEMBER],
-          active: true,
-        }),
-      );
+    const existing = await this.employees.findOne({
+      where: { companyId: company.id, userId: user.id },
+    });
+    if (existing) {
+      throw new ConflictException('Colaborador já cadastrado nesta empresa.');
     }
 
     const employee = await this.employees.save(
@@ -511,6 +488,82 @@ export class CorporateEmployeesService {
 
     employee.user = user;
     return this.toDto(employee);
+  }
+
+  /**
+   * Reusa o cadastro existente (e-mail, CPF ou celular) em vez de inserir um usuário duplicado.
+   * Celular e e-mail são únicos em acaf_users — o convite corporativo precisa achar a pessoa pelos três.
+   */
+  private async resolveEmployeeUser(input: {
+    name: string;
+    email: string;
+    cpfDigits: string | null;
+    mobilePhone: string;
+  }): Promise<User> {
+    const { name, email, cpfDigits, mobilePhone } = input;
+    const [byEmail, byCpf, byPhone] = await Promise.all([
+      this.users.findOne({ where: { email } }),
+      cpfDigits ? this.users.findOne({ where: { cpf: cpfDigits } }) : Promise.resolve(null),
+      this.users.findOne({ where: { mobilePhone } }),
+    ]);
+
+    const matches = [byEmail, byCpf, byPhone].filter((row): row is User => Boolean(row));
+    const unique = new Map(matches.map((row) => [row.id, row]));
+
+    if (unique.size > 1) {
+      throw new ConflictException(
+        'E-mail, CPF e celular informados pertencem a cadastros diferentes. Confira os dados do colaborador.',
+      );
+    }
+
+    if (unique.size === 1) {
+      const user = [...unique.values()][0]!;
+      if (user.cpf && cpfDigits && user.cpf !== cpfDigits) {
+        throw new ConflictException(
+          'Este cadastro já existe com outro CPF. Confira os dados do colaborador.',
+        );
+      }
+      if (user.mobilePhone && user.mobilePhone !== mobilePhone) {
+        throw new ConflictException(
+          'Este cadastro já existe com outro celular. Confira os dados do colaborador.',
+        );
+      }
+      if (name) user.name = name;
+      if (cpfDigits && !user.cpf) user.cpf = cpfDigits;
+      if (!user.mobilePhone) user.mobilePhone = mobilePhone;
+      try {
+        return await this.users.save(user);
+      } catch (error) {
+        this.rethrowDuplicateUser(error);
+      }
+    }
+
+    try {
+      return await this.users.save(
+        this.users.create({
+          name,
+          email,
+          cpf: cpfDigits,
+          mobilePhone,
+          passwordHash: null,
+          roles: [UserRole.MEMBER],
+          active: true,
+        }),
+      );
+    } catch (error) {
+      this.rethrowDuplicateUser(error);
+    }
+  }
+
+  private rethrowDuplicateUser(error: unknown): never {
+    if (error instanceof QueryFailedError) {
+      const code = (error as QueryFailedError & { driverError?: { code?: string } }).driverError
+        ?.code;
+      if (code === 'ER_DUP_ENTRY' || /Duplicate entry/i.test(error.message)) {
+        throw new ConflictException('Já existe um usuário com este e-mail, CPF ou celular.');
+      }
+    }
+    throw error;
   }
 
   /**
@@ -665,7 +718,8 @@ export class CorporateEmployeesService {
 
     if (!smsResult.sent) {
       throw new BadRequestException(
-        'Envio ao celular não configurado na API. Use e-mail ou copie o código manualmente.',
+        smsResult.reason ??
+          'Não foi possível enviar o SMS. Use e-mail ou copie o código manualmente.',
       );
     }
 
@@ -691,6 +745,22 @@ export class CorporateEmployeesService {
 
   async removeEmployee(companyId: string, employeeId: string): Promise<void> {
     const row = await this.getEmployeeOrThrow(companyId, employeeId);
+    await this.invites.delete({ employeeId: row.id });
+    await this.employees.remove(row);
+  }
+
+  /**
+   * Portal corporativo: cancela cadastro/convite ainda não ativado e tira a pessoa da lista.
+   * Colaborador já ativo precisa ser inativado, não removido por aqui.
+   */
+  async cancelEmployeeInvite(companyId: string, employeeId: string): Promise<void> {
+    const row = await this.getEmployeeOrThrow(companyId, employeeId);
+    if (row.status !== 'pending' && row.status !== 'invited') {
+      throw new BadRequestException(
+        'Só é possível remover cadastros que ainda não foram ativados. Inative o colaborador se ele já usa o benefício.',
+      );
+    }
+    await this.invites.delete({ employeeId: row.id });
     await this.employees.remove(row);
   }
 

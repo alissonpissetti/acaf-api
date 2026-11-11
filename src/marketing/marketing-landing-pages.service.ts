@@ -467,6 +467,7 @@ export class MarketingLandingPagesService {
       {
         title: mapped.title || mapped.contactName || 'Lead de marketing',
         type: page.leadType,
+        source: 'marketing_form',
         funnelId: page.funnelId ?? undefined,
         legalName: mapped.legalName,
         cnpj: mapped.cnpj,

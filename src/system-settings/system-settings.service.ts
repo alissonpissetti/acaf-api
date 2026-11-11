@@ -32,7 +32,7 @@ export type SystemSettingsAdminSnapshot = {
 export function normalizeEvolutionBaseUrl(raw: string): string {
   const trimmed = String(raw ?? '').trim().replace(/\/+$/, '');
   if (!trimmed) {
-    throw new BadRequestException('Informe a URL base da Evolution API.');
+    throw new BadRequestException('Informe a URL base da integração WhatsApp.');
   }
   if (!/^https?:\/\//i.test(trimmed)) {
     throw new BadRequestException('A URL deve começar com http:// ou https://.');
@@ -43,7 +43,7 @@ export function normalizeEvolutionBaseUrl(raw: string): string {
       throw new Error('protocol');
     }
   } catch {
-    throw new BadRequestException('URL da Evolution inválida. Verifique o endereço e tente de novo.');
+    throw new BadRequestException('URL da integração inválida. Verifique o endereço e tente de novo.');
   }
   return trimmed;
 }
