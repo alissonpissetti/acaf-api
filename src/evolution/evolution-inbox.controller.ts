@@ -89,6 +89,12 @@ export class EvolutionInboxController {
     return { ok: true, updated };
   }
 
+  @Post('instances/:instanceId/reconcile-lid-phones')
+  @RequirePermissions('sistema.evolution', 'comercial.leads')
+  async reconcileLidPhonesForLeads(@Param('instanceId') instanceId: string) {
+    return this.inbox.reconcileLidPhonesForLeads(instanceId);
+  }
+
   @Post('threads/:instanceId/:contactPhone/archive')
   @RequirePermissions('sistema.evolution', 'comercial.leads')
   async setThreadArchived(
@@ -139,6 +145,7 @@ export class EvolutionInboxController {
     @Param('contactPhone') contactPhone: string,
     @Query('limit') limit?: string,
     @Query('remote') remote?: string,
+    @Query('watch') watch?: string,
   ) {
     const parsedLimit = limit ? Number.parseInt(limit, 10) : 200;
     const userId = req.user?.userId ?? null;
@@ -148,12 +155,16 @@ export class EvolutionInboxController {
     let syncRemote: boolean | 'auto' = 'auto';
     if (remoteFlag === '0' || remoteFlag === 'false') syncRemote = false;
     else if (remoteFlag === '1' || remoteFlag === 'true') syncRemote = true;
+    const watchFlag = String(watch ?? '')
+      .trim()
+      .toLowerCase();
+    const watchThread = watchFlag === '1' || watchFlag === 'true';
     return this.inbox.listThreadMessages(
       userId,
       instanceId,
       decodeURIComponent(contactPhone),
       Number.isFinite(parsedLimit) ? parsedLimit : 200,
-      { syncRemote },
+      { syncRemote, watch: watchThread },
     );
   }
 

@@ -1,9 +1,4 @@
-import {
-  Column,
-  CreateDateColumn,
-  Entity,
-  PrimaryGeneratedColumn,
-} from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 export type CommercialLeadInteractionSource = 'manual' | 'system' | 'whatsapp';
 
@@ -27,6 +22,6 @@ export class CommercialLeadInteraction {
   @Column({ name: 'external_id', type: 'varchar', length: 128, nullable: true })
   externalId: string | null;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @Column({ name: 'created_at', type: 'datetime', precision: 6 })
   createdAt: Date;
 }

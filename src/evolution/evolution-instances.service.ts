@@ -647,7 +647,6 @@ export class EvolutionInstancesService {
     connectedCount: number;
     activeCount: number;
   }> {
-    await this.syncActiveInstancesFromEvolution();
     const rows = await this.instances.find({
       where: { active: true },
       select: ['id', 'connectionState'],

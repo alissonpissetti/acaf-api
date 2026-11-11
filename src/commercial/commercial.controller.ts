@@ -3,12 +3,14 @@ import {
   Controller,
   Delete,
   Get,
+  Inject,
   Param,
   Patch,
   Post,
   Query,
   Req,
   UseGuards,
+  forwardRef,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
@@ -18,11 +20,13 @@ import { PermissionsGuard } from '../access-control/permissions.guard';
 import { CommercialLeadsService } from './commercial-leads.service';
 import { CommercialFunnelsService } from './commercial-funnels.service';
 import { CommercialLossReasonsService } from './commercial-loss-reasons.service';
+import { CommercialLossReportService } from './commercial-loss-report.service';
 import { CommercialLeadAuditService } from './commercial-lead-audit.service';
 import type { CommercialLeadType } from './commercial-lead.entity';
 import type { FunnelOutcomeAction } from './commercial-funnel.entity';
 import type { FunnelStageOutcome } from './commercial-funnel-stage.entity';
 import { COMMERCIAL_LEAD_SOURCES } from './commercial-lead-source';
+import { EvolutionInboxService } from '../evolution/evolution-inbox.service';
 
 type AuthRequest = Request & { user: { userId: string } };
 
@@ -33,10 +37,30 @@ type AuthRequest = Request & { user: { userId: string } };
 export class CommercialController {
   constructor(
     private readonly leads: CommercialLeadsService,
+    @Inject(forwardRef(() => EvolutionInboxService))
+    private readonly evolutionInbox: EvolutionInboxService,
     private readonly funnels: CommercialFunnelsService,
     private readonly lossReasons: CommercialLossReasonsService,
+    private readonly lossReport: CommercialLossReportService,
     private readonly audit: CommercialLeadAuditService,
   ) {}
+
+  @Get('reports/loss-reasons')
+  @RequirePermissions('comercial.leads')
+  getLossReasonsReport(
+    @Query('funnelId') funnelId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = limit ? Number(limit) : undefined;
+    return this.lossReport.getReport({
+      funnelId: funnelId?.trim() || undefined,
+      from: from?.trim() || undefined,
+      to: to?.trim() || undefined,
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    });
+  }
 
   @Get('loss-reasons')
   @RequirePermissions('comercial.leads')
@@ -145,8 +169,15 @@ export class CommercialController {
     @Query('funnelId') funnelId?: string,
     @Query('ownerUserId') ownerUserId?: string,
     @Query('type') type?: CommercialLeadType,
+    @Query('limit') limit?: string,
   ) {
-    return this.leads.list({ funnelId, ownerUserId, type });
+    const parsedLimit = limit != null && limit !== '' ? Number(limit) : undefined;
+    return this.leads.list({
+      funnelId,
+      ownerUserId,
+      type,
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    });
   }
 
   @Get('leads/:id')
@@ -227,6 +258,12 @@ export class CommercialController {
     return this.leads.convert(id, req.user.userId);
   }
 
+  @Delete('leads/:id')
+  @RequirePermissions('comercial.leads.manage')
+  deleteLead(@Param('id') id: string) {
+    return this.leads.remove(id);
+  }
+
   @Get('leads/:id/interactions')
   @RequirePermissions('comercial.leads')
   listLeadInteractions(@Param('id') id: string) {
@@ -257,5 +294,53 @@ export class CommercialController {
     @Body() body: { kind?: 'call' | 'whatsapp' | 'email' },
   ) {
     return this.leads.recordInteraction(id, req.user.userId, body?.kind);
+  }
+
+  @Post('leads/purge-whatsapp-duplicates')
+  @RequirePermissions('comercial.leads.manage')
+  purgeWhatsAppDuplicateLeads(
+    @Query('dryRun') dryRun?: string,
+    @Query('funnelId') funnelId?: string,
+  ) {
+    return this.leads.purgeWhatsAppDuplicateLeads({
+      dryRun: dryRun !== '0' && dryRun !== 'false',
+      funnelId: funnelId?.trim() || undefined,
+    });
+  }
+
+  @Post('leads/backfill-whatsapp-phones')
+  @RequirePermissions('comercial.leads.manage')
+  async backfillWhatsAppLeadPhones(
+    @Query('funnelId') funnelId?: string,
+    @Query('limit') limit?: string,
+    @Query('instanceId') instanceId?: string,
+    @Query('relink') relink?: string,
+  ) {
+    const parsedLimit = limit ? Number(limit) : undefined;
+    const safeLimit = Number.isFinite(parsedLimit) ? parsedLimit : undefined;
+    const evoInstanceId = instanceId?.trim();
+    const shouldRelink = relink === '1' || relink === 'true';
+    let lidRepair: { lidAliases: number } | undefined;
+    let relinkResult:
+      | Awaited<ReturnType<EvolutionInboxService['relinkOrphanWhatsAppLeads']>>
+      | undefined;
+    if (evoInstanceId) {
+      lidRepair = await this.evolutionInbox.reconcileLidPhonesForLeads(evoInstanceId);
+      if (shouldRelink) {
+        relinkResult = await this.evolutionInbox.relinkOrphanWhatsAppLeads(
+          evoInstanceId,
+          safeLimit ?? 120,
+        );
+      }
+    }
+    const backfill = await this.leads.backfillWhatsAppLeadPhones({
+      funnelId: funnelId?.trim() || undefined,
+      limit: safeLimit,
+    });
+    return {
+      ...(lidRepair ? { lidRepair } : {}),
+      ...(relinkResult ? { relink: relinkResult } : {}),
+      ...backfill,
+    };
   }
 }

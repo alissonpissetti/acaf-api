@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { AccessControlModule } from '../access-control/access-control.module';
@@ -31,6 +31,8 @@ import { EvolutionInboxSyncState } from './evolution-inbox-sync-state.entity';
 import { EvolutionRemoteChatsService } from './evolution-remote-chats.service';
 import { EvolutionRemoteMessagesService } from './evolution-remote-messages.service';
 import { EvolutionInboxJobsScheduler } from './evolution-inbox-jobs.scheduler';
+import { EvolutionLeadIgnoreContact } from './evolution-lead-ignore-contact.entity';
+import { EvolutionLeadIgnoreContactsService } from './evolution-lead-ignore-contacts.service';
 
 @Module({
   imports: [
@@ -43,12 +45,13 @@ import { EvolutionInboxJobsScheduler } from './evolution-inbox-jobs.scheduler';
       EvolutionInboxDeviceRead,
       EvolutionInboxThreadArchive,
       EvolutionInboxSyncState,
+      EvolutionLeadIgnoreContact,
       Department,
       User,
       CommercialLead,
     ]),
     AccessControlModule,
-    CommercialModule,
+    forwardRef(() => CommercialModule),
     UsersModule,
     SystemSettingsModule,
     StorageModule,
@@ -67,7 +70,8 @@ import { EvolutionInboxJobsScheduler } from './evolution-inbox-jobs.scheduler';
     EvolutionRemoteChatsService,
     EvolutionRemoteMessagesService,
     EvolutionInboxJobsScheduler,
+    EvolutionLeadIgnoreContactsService,
   ],
-  exports: [EvolutionInstancesService],
+  exports: [EvolutionInstancesService, EvolutionInboxService, EvolutionLeadIgnoreContactsService],
 })
 export class EvolutionModule {}

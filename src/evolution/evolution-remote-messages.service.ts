@@ -77,7 +77,19 @@ export class EvolutionRemoteMessagesService {
           const item = row as Record<string, unknown>;
           const key = (item.key ?? {}) as Record<string, unknown>;
           const rowJid = String(key.remoteJid ?? item.remoteJid ?? '').trim();
-          if (rowJid && rowJid.toLowerCase() !== jid.toLowerCase()) continue;
+          const rowJidAlt = String(key.remoteJidAlt ?? '').trim();
+          const queryJid = jid.toLowerCase();
+          if (rowJid) {
+            const rowLower = rowJid.toLowerCase();
+            if (rowLower !== queryJid) {
+              const altLower = rowJidAlt.toLowerCase();
+              const phoneQuery =
+                queryJid.endsWith('@s.whatsapp.net') || queryJid.endsWith('@c.us');
+              const lidRow = rowLower.endsWith('@lid');
+              // Evolution often returns @lid rows when the query uses the phone JID.
+              if (altLower !== queryJid && !(phoneQuery && lidRow)) continue;
+            }
+          }
           const id = String(key.id ?? item.id ?? '').trim();
           const sig = id || JSON.stringify(item).slice(0, 160);
           if (seen.has(sig)) continue;

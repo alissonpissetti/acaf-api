@@ -641,9 +641,9 @@ export class MarketingLandingPagesService {
       leadType: row.leadType,
       leadTypeLabel:
         row.leadType === 'partner'
-          ? 'Academias / parceiros'
+          ? 'Academia'
           : row.leadType === 'corporate'
-            ? 'Corporativo'
+            ? 'Empresa'
             : null,
       viewCount: row.viewCount,
       submissionCount: row.submissionCount,

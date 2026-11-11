@@ -33,6 +33,10 @@ export class CommercialLead {
   @Column({ type: 'varchar', length: 24, default: 'manual' })
   source: CommercialLeadSource;
 
+  /** Chave estável do contato WhatsApp (`telefone` ou `lid:…`) para evitar leads duplicados. */
+  @Column({ name: 'whatsapp_contact_key', type: 'varchar', length: 64, nullable: true })
+  whatsappContactKey: string | null;
+
   @Column({ name: 'loss_reason_id', type: 'uuid', nullable: true })
   lossReasonId: string | null;
 

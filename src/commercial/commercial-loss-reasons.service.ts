@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { CommercialLossReason } from './commercial-loss-reason.entity';
 
 const SEED_LABELS = [
@@ -65,6 +65,15 @@ export class CommercialLossReasonsService implements OnModuleInit {
   async getLabel(reasonId: string): Promise<string> {
     const row = await this.reasons.findOne({ where: { id: reasonId } });
     return row?.label ?? '—';
+  }
+
+  async labelMap(ids: string[]): Promise<Map<string, string>> {
+    const unique = [...new Set(ids.map((id) => id?.trim()).filter(Boolean))];
+    const map = new Map<string, string>();
+    if (!unique.length) return map;
+    const rows = await this.reasons.find({ where: { id: In(unique) } });
+    for (const row of rows) map.set(row.id, row.label);
+    return map;
   }
 
   async ensureLabel(label: string): Promise<string> {

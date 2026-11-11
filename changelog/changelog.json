@@ -2,6 +2,60 @@
   "version": 1,
   "entries": [
     {
+      "id": "a35572fd-52b3-48f4-a38f-6aebd9c78f63",
+      "commitSha": "6d174f2bc787c4184ee63ded72661dc54681c9ee",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-11T18:04:09-03:00",
+      "title": "Leads WhatsApp, ignore de contatos e sync inbox",
+      "summary": "Deduplicação de leads por chave de contato, lista de ignore na Evolution,",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
+      "id": "44e7e868-ac38-4f81-a4de-c2b9af089cff",
+      "commitSha": "25418824c584e662d7ab7f844fba40e8630c281c",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-11T18:04:06-03:00",
+      "title": "Leads WhatsApp, ignore de contatos e sync inbox",
+      "summary": "Deduplicação de leads por chave de contato, lista de ignore na Evolution,",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
+      "id": "58443398-569c-4c0a-9899-9212b970b741",
+      "commitSha": "c4c4e8525bd3810e7095e4fdb2f3700d38089919",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-11T18:04:02-03:00",
+      "title": "Leads WhatsApp, ignore de contatos e sync inbox",
+      "summary": "Deduplicação de leads por chave de contato, lista de ignore na Evolution,",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "79b69405-353e-4ea7-8647-73595bb0e263",
       "commitSha": "cfffffa168ea6ef8a3c9983d5fcdf0edf9e8258e",
       "repository": "api",

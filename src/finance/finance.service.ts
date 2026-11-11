@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -232,7 +233,7 @@ export class FinanceService {
       throw new BadRequestException('Informe quem deve receber o reembolso.');
     }
 
-    return this.payables.save(
+    const reimbursement = await this.payables.save(
       this.payables.create({
         description: `Reembolso: ${source.description}`,
         amount: source.amount,
@@ -250,6 +251,67 @@ export class FinanceService {
         createdByUserId: userId,
       }),
     );
+
+    const copied = await this.copyStoredPayableAttachments(source, reimbursement.id);
+    if (copied.length) {
+      reimbursement.attachments = copied;
+      await this.payables.save(reimbursement);
+    }
+
+    return reimbursement;
+  }
+
+  private async copyStoredPayableAttachments(
+    source: AccountPayable,
+    targetPayableId: string,
+  ): Promise<PayableAttachment[]> {
+    const copied: PayableAttachment[] = [];
+    for (const attachment of source.attachments ?? []) {
+      if (!attachment.path?.trim()) continue;
+      try {
+        const stored = await this.storage.copyFinanceAttachment(
+          'payables',
+          attachment.path,
+          targetPayableId,
+          attachment.originalName,
+          attachment.mimeType,
+        );
+        copied.push({
+          id: randomUUID(),
+          originalName: attachment.originalName,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          path: stored.path,
+          publicUrl: stored.publicUrl,
+          uploadedAt: new Date().toISOString(),
+          kind: attachment.kind ?? 'general',
+          recordedSettledAt: attachment.recordedSettledAt ?? null,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Não foi possível copiar anexo ${attachment.id} para reembolso ${targetPayableId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return copied;
+  }
+
+  private assertStoredAttachment(stored: { path: string; publicUrl: string }) {
+    if (!stored.path?.trim() || !stored.publicUrl?.trim()) {
+      throw new InternalServerErrorException('Anexo não foi gravado no storage.');
+    }
+  }
+
+  private async rollbackStoredPaths(paths: string[]) {
+    for (const path of paths) {
+      try {
+        await this.storage.deleteFile(path);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   async listAccountPlans(filters?: { kind?: AccountPlanKind; active?: boolean }) {
@@ -852,22 +914,30 @@ export class FinanceService {
     }
 
     const uploaded: PayableAttachment[] = [];
-    for (const file of files) {
-      const stored = await this.storage.uploadPayableAttachment(id, file);
-      uploaded.push({
-        id: randomUUID(),
-        originalName: file.originalname,
-        mimeType: file.mimetype,
-        size: file.size,
-        path: stored.path,
-        publicUrl: stored.publicUrl,
-        uploadedAt: new Date().toISOString(),
-        kind,
-        recordedSettledAt:
-          kind === 'payment_receipt' && settlementMoment
-            ? settlementMoment.toISOString()
-            : null,
-      });
+    const storedPaths: string[] = [];
+    try {
+      for (const file of files) {
+        const stored = await this.storage.uploadPayableAttachment(id, file);
+        this.assertStoredAttachment(stored);
+        storedPaths.push(stored.path);
+        uploaded.push({
+          id: randomUUID(),
+          originalName: file.originalname,
+          mimeType: file.mimetype,
+          size: file.size,
+          path: stored.path,
+          publicUrl: stored.publicUrl,
+          uploadedAt: new Date().toISOString(),
+          kind,
+          recordedSettledAt:
+            kind === 'payment_receipt' && settlementMoment
+              ? settlementMoment.toISOString()
+              : null,
+        });
+      }
+    } catch (err) {
+      await this.rollbackStoredPaths(storedPaths);
+      throw err;
     }
 
     row.attachments = [...current, ...uploaded];
@@ -887,7 +957,9 @@ export class FinanceService {
     const target = current.find((item) => item.id === attachmentId);
     if (!target) throw new NotFoundException('Anexo não encontrado.');
 
-    await this.storage.deleteFile(target.path);
+    if (target.path?.trim()) {
+      await this.storage.deleteFile(target.path);
+    }
     row.attachments = current.filter((item) => item.id !== attachmentId);
     await this.payables.save(row);
     return mapPayable(row);
@@ -1211,22 +1283,30 @@ export class FinanceService {
     }
 
     const uploaded: ReceivableAttachment[] = [];
-    for (const file of files) {
-      const stored = await this.storage.uploadReceivableAttachment(id, file);
-      uploaded.push({
-        id: randomUUID(),
-        originalName: file.originalname,
-        mimeType: file.mimetype,
-        size: file.size,
-        path: stored.path,
-        publicUrl: stored.publicUrl,
-        uploadedAt: new Date().toISOString(),
-        kind,
-        recordedSettledAt:
-          kind === 'payment_receipt' && settlementMoment
-            ? settlementMoment.toISOString()
-            : null,
-      });
+    const storedPaths: string[] = [];
+    try {
+      for (const file of files) {
+        const stored = await this.storage.uploadReceivableAttachment(id, file);
+        this.assertStoredAttachment(stored);
+        storedPaths.push(stored.path);
+        uploaded.push({
+          id: randomUUID(),
+          originalName: file.originalname,
+          mimeType: file.mimetype,
+          size: file.size,
+          path: stored.path,
+          publicUrl: stored.publicUrl,
+          uploadedAt: new Date().toISOString(),
+          kind,
+          recordedSettledAt:
+            kind === 'payment_receipt' && settlementMoment
+              ? settlementMoment.toISOString()
+              : null,
+        });
+      }
+    } catch (err) {
+      await this.rollbackStoredPaths(storedPaths);
+      throw err;
     }
 
     row.attachments = [...current, ...uploaded];
@@ -1246,7 +1326,9 @@ export class FinanceService {
     const target = current.find((item) => item.id === attachmentId);
     if (!target) throw new NotFoundException('Anexo não encontrado.');
 
-    await this.storage.deleteFile(target.path);
+    if (target.path?.trim()) {
+      await this.storage.deleteFile(target.path);
+    }
     row.attachments = current.filter((item) => item.id !== attachmentId);
     await this.receivables.save(row);
     return mapReceivable(row);

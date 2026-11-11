@@ -30,7 +30,9 @@ Cada entrega de mensagem atualiza `acaf_evolution_inbox_sync_state.last_webhook_
 - `findMessages` com filtro temporal (+ overlap de 2 min) e limite menor quando já há histórico.
 - Ingere apenas mensagens novas; atualiza `last_incremental_pull_at`.
 
-Throttle maior quando o webhook está saudável (~12 min vs ~90 s).
+Throttle quando o webhook está saudável (~90 s em reparo geral). Com a conversa **aberta no ADM**, use `watch=1` na listagem de mensagens (pull bloqueante a cada ~6 s no máximo).
+
+**Webhook na Evolution:** em Sistema → Configurações, defina a URL pública da API; rode **Sync inbox** na instância (reaplica `POST /webhook/set` na Evolution). Endpoint: `POST /public/evolution/webhook` (header opcional `x-evolution-webhook-secret`). Sem webhook configurado, o painel depende do pull incremental — mais lento.
 
 ### 4. Sync manual da instância (`POST .../sync-inbox`)
 

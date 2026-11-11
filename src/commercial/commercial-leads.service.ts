@@ -12,6 +12,7 @@ import {
   isValidMobilePhone,
   normalizeCnpj,
   normalizeMobilePhone,
+  resolveBrazilMobilePhone,
 } from '../users/person.utils';
 import { UsersService } from '../users/users.service';
 import { AdminService } from '../partner/admin.service';
@@ -25,6 +26,8 @@ import { CommercialLeadAuditService } from './commercial-lead-audit.service';
 import type { CommercialLeadAuditChange } from './commercial-lead-audit.entity';
 import { CommercialFunnelStage } from './commercial-funnel-stage.entity';
 import { CommercialFunnel } from './commercial-funnel.entity';
+import { EvolutionContactProfile } from '../evolution/evolution-contact-profile.entity';
+import { EvolutionMessage } from '../evolution/evolution-message.entity';
 import {
   type CommercialLeadSource,
   inferCommercialLeadSource,
@@ -32,6 +35,12 @@ import {
   leadSourceMeta,
 } from './commercial-lead-source';
 import { UserRole, userHasRole } from '../users/user.entity';
+import {
+  isHumanContactName,
+  normalizedBrazilMobileKey,
+  phoneKeyFromJid,
+} from '../evolution/evolution-contact.resolver';
+import { resolveContactFromEvolutionPayload } from '../evolution/evolution-message.parser';
 
 type LeadOwnerDto = {
   userId: string;
@@ -81,6 +90,7 @@ type LeadDto = {
   email: string | null;
   phone: string | null;
   contactName: string | null;
+  whatsappContactKey: string | null;
   contacts: LeadContactDto[];
   notes: string | null;
   ownerUserId: string;
@@ -122,6 +132,91 @@ function parseTemperature(value?: string | null): CommercialLeadTemperature {
   return 'cold';
 }
 
+function whatsAppContactAliasKeys(contactKey: string, phone?: string | null): string[] {
+  const keys = new Set<string>();
+  const ck = String(contactKey ?? '').trim();
+  if (ck) keys.add(ck);
+
+  const lidDigits = ck.replace(/^lid:/i, '').replace(/\D/g, '');
+  if (lidDigits.length >= 8) {
+    keys.add(lidDigits);
+    keys.add(`lid:${lidDigits}`);
+  }
+
+  const ph = phone ? normalizeMobilePhone(phone) : '';
+  if (ph && isValidMobilePhone(ph)) keys.add(ph);
+
+  return [...keys].filter(Boolean);
+}
+
+function canonicalWhatsAppContactKey(contactKey: string, phone?: string | null): string {
+  const ph = phone ? normalizeMobilePhone(phone) : '';
+  if (ph && isValidMobilePhone(ph)) return ph;
+  const ck = String(contactKey ?? '').trim();
+  if (ck.startsWith('lid:')) return ck;
+  const fromCk = resolveBrazilMobilePhone(ck);
+  if (fromCk) return fromCk;
+  const digits = ck.replace(/\D/g, '');
+  if (digits.length >= 8 && /^\d+$/.test(ck)) {
+    const normalized = normalizeMobilePhone(digits);
+    if (isValidMobilePhone(normalized)) return normalized;
+    return `lid:${digits}`;
+  }
+  return ck;
+}
+
+function preferOpenWhatsAppLead(rows: CommercialLead[]): CommercialLead | null {
+  if (!rows.length) return null;
+  return rows.find(leadIsOpen) ?? null;
+}
+
+function expandWhatsAppReferenceKeys(
+  contactKey: string,
+  phone?: string | null,
+  extraAliasKeys?: string[],
+): string[] {
+  const seed = [...whatsAppContactAliasKeys(contactKey, phone), ...(extraAliasKeys ?? [])];
+  const keys = new Set<string>();
+  for (const raw of seed) {
+    const item = String(raw ?? '').trim();
+    if (!item) continue;
+    keys.add(item);
+    keys.add(canonicalWhatsAppContactKey(item, phone));
+    keys.add(normalizeWhatsAppGroupKey(item));
+    const resolved = resolveBrazilMobilePhone(item);
+    if (resolved) {
+      keys.add(resolved);
+      keys.add(canonicalWhatsAppContactKey(resolved, resolved));
+    }
+  }
+  keys.add(canonicalWhatsAppContactKey(contactKey, phone));
+  keys.add(normalizeWhatsAppGroupKey(canonicalWhatsAppContactKey(contactKey, phone)));
+  return [...keys].filter(Boolean);
+}
+
+function extractWhatsAppMarkerFromNotes(notes: string | null | undefined): string | null {
+  const match = String(notes ?? '').match(/whatsapp-contact:([^\s.]+)/i);
+  return match?.[1]?.trim() || null;
+}
+
+function normalizeWhatsAppGroupKey(key: string | null | undefined): string {
+  const raw = String(key ?? '').trim();
+  if (!raw) return '';
+  const fromNotes = extractWhatsAppMarkerFromNotes(raw);
+  const value = fromNotes || raw;
+  const digits = value.replace(/^lid:/i, '').replace(/\D/g, '');
+  if (digits.length >= 8 && !isValidMobilePhone(normalizeMobilePhone(digits))) {
+    return `lid:${digits}`;
+  }
+  const phone = normalizeMobilePhone(value.replace(/^lid:/i, ''));
+  if (isValidMobilePhone(phone)) return phone;
+  return value;
+}
+
+function leadIsOpen(lead: CommercialLead): boolean {
+  return !lead.convertedNetworkId && !lead.convertedCompanyId;
+}
+
 @Injectable()
 export class CommercialLeadsService {
   constructor(
@@ -137,6 +232,10 @@ export class CommercialLeadsService {
     private readonly funnels: Repository<CommercialFunnel>,
     @InjectRepository(CommercialFunnelStage)
     private readonly stages: Repository<CommercialFunnelStage>,
+    @InjectRepository(EvolutionContactProfile)
+    private readonly evolutionProfiles: Repository<EvolutionContactProfile>,
+    @InjectRepository(EvolutionMessage)
+    private readonly evolutionMessages: Repository<EvolutionMessage>,
     private readonly funnelService: CommercialFunnelsService,
     private readonly lossReasons: CommercialLossReasonsService,
     private readonly audit: CommercialLeadAuditService,
@@ -148,11 +247,14 @@ export class CommercialLeadsService {
     funnelId?: string;
     ownerUserId?: string;
     type?: CommercialLeadType;
+    limit?: number;
   }) {
+    const limit = Math.min(Math.max(filters?.limit ?? 500, 1), 2000);
     const qb = this.leads
       .createQueryBuilder('lead')
       .orderBy('lead.sortOrder', 'ASC')
-      .addOrderBy('lead.updatedAt', 'DESC');
+      .addOrderBy('lead.updatedAt', 'DESC')
+      .take(limit);
 
     if (filters?.funnelId) {
       qb.andWhere('lead.funnelId = :funnelId', { funnelId: filters.funnelId });
@@ -172,9 +274,11 @@ export class CommercialLeadsService {
     const latestInteractionMap = await this.loadLatestInteractionMap(rows.map((row) => row.id));
     const ownersMap = await this.loadOwnersMap(rows);
     const contactsMap = await this.loadContactsMap(rows);
-    await Promise.all(
-      rows.map((row) => this.syncStageExpiration(row, stageMap.get(row.stageId) ?? null)),
+    const funnelMap = await this.loadFunnelMap(rows.map((row) => row.funnelId));
+    const lossReasonLabels = await this.lossReasons.labelMap(
+      rows.map((row) => row.lossReasonId ?? '').filter(Boolean),
     );
+    const dtoContext = { funnels: funnelMap, lossReasonLabels };
     return Promise.all(
       rows.map((row) =>
         this.toDto(
@@ -183,6 +287,7 @@ export class CommercialLeadsService {
           latestInteractionMap.get(row.id) ?? null,
           ownersMap.get(row.id) ?? [],
           contactsMap.get(row.id) ?? [],
+          dtoContext,
         ),
       ),
     );
@@ -238,6 +343,7 @@ export class CommercialLeadsService {
         userId,
         content: text,
         source,
+        createdAt: new Date(),
       }),
     );
 
@@ -279,6 +385,9 @@ export class CommercialLeadsService {
     const lead = await this.leads.findOne({ where: { id: leadId } });
     if (!lead) throw new NotFoundException('Lead não encontrado.');
 
+    const interactionAt =
+      createdAt instanceof Date && !Number.isNaN(createdAt.getTime()) ? createdAt : new Date();
+
     const saved = await this.interactions.save(
       this.interactions.create({
         leadId,
@@ -286,7 +395,7 @@ export class CommercialLeadsService {
         content: text,
         source: 'whatsapp',
         externalId: externalId.trim(),
-        ...(createdAt ? { createdAt } : {}),
+        createdAt: interactionAt,
       }),
     );
 
@@ -347,6 +456,7 @@ export class CommercialLeadsService {
       contactName?: string;
       contacts?: LeadContactInput[];
       notes?: string;
+      whatsappContactKey?: string | null;
       ownerUserId?: string;
       ownerUserIds?: string[];
       temperature?: CommercialLeadTemperature;
@@ -404,8 +514,8 @@ export class CommercialLeadsService {
       throw new BadRequestException('CNPJ inválido.');
     }
 
-    const phoneRaw = input.phone ? normalizeMobilePhone(input.phone) : '';
-    if (phoneRaw && !isValidMobilePhone(phoneRaw)) {
+    const phoneRaw = input.phone ? resolveBrazilMobilePhone(input.phone) : null;
+    if (input.phone?.trim() && !phoneRaw) {
       throw new BadRequestException('Telefone inválido.');
     }
 
@@ -441,6 +551,7 @@ export class CommercialLeadsService {
         phone: primaryContact?.phone ?? (phoneRaw || null),
         contactName: primaryContact?.name ?? (input.contactName?.trim() || null),
         notes: input.notes?.trim() || null,
+        whatsappContactKey: input.whatsappContactKey?.trim() || null,
         ownerUserId,
         createdByUserId,
         sortOrder: nextLeadSortOrder(),
@@ -625,7 +736,16 @@ export class CommercialLeadsService {
     }
 
     if (patch.contacts !== undefined) {
-      const normalizedContacts = this.normalizeContactInputs(patch.contacts);
+      const normalizedContacts = this.normalizeContactInputs(patch.contacts, {
+        contactName: lead.contactName,
+        phone: lead.phone,
+        email: lead.email,
+      });
+      const primary =
+        normalizedContacts.find((contact) => contact.isPrimary) ?? normalizedContacts[0] ?? null;
+      if (primary && !primary.phone && lead.phone) {
+        primary.phone = lead.phone;
+      }
       this.validateContactInputs(normalizedContacts);
       await this.syncLeadContacts(lead.id, normalizedContacts);
       this.applyPrimaryContactToLead(lead, normalizedContacts);
@@ -641,8 +761,8 @@ export class CommercialLeadsService {
       }
 
       if (patch.phone !== undefined) {
-        const phoneRaw = patch.phone ? normalizeMobilePhone(patch.phone) : '';
-        if (phoneRaw && !isValidMobilePhone(phoneRaw)) {
+        const phoneRaw = patch.phone ? resolveBrazilMobilePhone(patch.phone) : null;
+        if (patch.phone?.trim() && !phoneRaw) {
           throw new BadRequestException('Telefone inválido.');
         }
         lead.phone = phoneRaw || null;
@@ -745,6 +865,43 @@ export class CommercialLeadsService {
       conversion,
       outcome: transferOutcome,
     };
+  }
+
+  /** Exclusão definitiva do lead e de todo o histórico vinculado (interações, auditoria, etc.). */
+  async remove(id: string): Promise<{ deleted: true; id: string }> {
+    const lead = await this.leads.findOne({ where: { id } });
+    if (!lead) throw new NotFoundException('Lead não encontrado.');
+    if (lead.convertedNetworkId || lead.convertedCompanyId) {
+      throw new BadRequestException(
+        'Este lead já foi convertido em cadastro e não pode ser excluído por aqui.',
+      );
+    }
+    await this.detachLeadForeignKeys([id]);
+    await this.deleteLeadRows([id]);
+    return { deleted: true, id };
+  }
+
+  private async detachLeadForeignKeys(leadIds: string[]): Promise<void> {
+    const ids = [...new Set(leadIds.filter(Boolean))];
+    if (!ids.length) return;
+
+    await this.evolutionMessages.update({ leadId: In(ids) }, { leadId: null });
+    await this.evolutionProfiles.update({ leadId: In(ids) }, { leadId: null });
+    await this.leads.manager.query(
+      `UPDATE acaf_marketing_form_submissions SET lead_id = NULL WHERE lead_id IN (${ids.map(() => '?').join(',')})`,
+      ids,
+    );
+  }
+
+  private async deleteLeadRows(leadIds: string[]): Promise<void> {
+    const ids = [...new Set(leadIds.filter(Boolean))];
+    if (!ids.length) return;
+
+    await this.interactions.delete({ leadId: In(ids) });
+    await this.leadOwners.delete({ leadId: In(ids) });
+    await this.leadContacts.delete({ leadId: In(ids) });
+    await this.audit.deleteForLeads(ids);
+    await this.leads.delete({ id: In(ids) });
   }
 
   private async executeConvert(lead: CommercialLead, actingUserId: string) {
@@ -950,18 +1107,40 @@ export class CommercialLeadsService {
     }
   }
 
+  private async loadFunnelMap(funnelIds: string[]) {
+    const unique = [...new Set(funnelIds.filter(Boolean))];
+    if (!unique.length) return new Map<string, CommercialFunnel>();
+    const rows = await this.funnels.find({ where: { id: In(unique) } });
+    return new Map(rows.map((row) => [row.id, row]));
+  }
+
   private async loadLatestInteractionMap(leadIds: string[]) {
     const map = new Map<string, string>();
     const unique = [...new Set(leadIds.filter(Boolean))];
     if (!unique.length) return map;
 
-    const rows = await this.interactions.find({
-      where: { leadId: In(unique) },
-      order: { createdAt: 'DESC' },
-    });
+    const rows = await this.interactions
+      .createQueryBuilder('interaction')
+      .select('interaction.lead_id', 'leadId')
+      .addSelect('interaction.content', 'content')
+      .innerJoin(
+        (sub) =>
+          sub
+            .select('sub.lead_id', 'lead_id')
+            .addSelect('MAX(sub.created_at)', 'max_created')
+            .from(CommercialLeadInteraction, 'sub')
+            .where('sub.lead_id IN (:...unique)', { unique })
+            .groupBy('sub.lead_id'),
+        'latest',
+        'latest.lead_id = interaction.lead_id AND latest.max_created = interaction.created_at',
+      )
+      .where('interaction.lead_id IN (:...unique)', { unique })
+      .getRawMany<{ leadId: string; content: string }>();
 
     for (const row of rows) {
-      if (!map.has(row.leadId)) map.set(row.leadId, row.content);
+      if (row.leadId && row.content && !map.has(row.leadId)) {
+        map.set(row.leadId, row.content);
+      }
     }
 
     return map;
@@ -992,6 +1171,10 @@ export class CommercialLeadsService {
     latestInteractionContent?: string | null,
     owners: LeadOwnerDto[] = [],
     contacts: LeadContactDto[] = [],
+    context?: {
+      funnels?: Map<string, CommercialFunnel>;
+      lossReasonLabels?: Map<string, string>;
+    },
   ): Promise<LeadDto> {
     const resolvedOwners =
       owners.length > 0
@@ -999,12 +1182,24 @@ export class CommercialLeadsService {
         : await this.buildOwnerDtos(
             await this.getLeadOwnerUserIds(lead.id, lead.ownerUserId),
           );
-    const resolvedContacts = contacts.length > 0 ? contacts : this.buildLegacyContacts(lead);
+    let resolvedContacts = contacts.length > 0 ? contacts.map((row) => ({ ...row })) : this.buildLegacyContacts(lead);
+    if (resolvedContacts.length > 0 && lead.phone) {
+      const primaryIndex = resolvedContacts.findIndex((row) => row.isPrimary);
+      const index = primaryIndex >= 0 ? primaryIndex : 0;
+      if (!resolvedContacts[index]?.phone) {
+        resolvedContacts = resolvedContacts.map((row, rowIndex) =>
+          rowIndex === index ? { ...row, phone: lead.phone } : row,
+        );
+      }
+    }
     const primaryOwner = resolvedOwners[0];
+    const cachedFunnel = context?.funnels?.get(lead.funnelId);
     const [owner, createdBy, funnel, resolvedStage] = await Promise.all([
       this.userProfile(lead.ownerUserId),
       this.userProfile(lead.createdByUserId),
-      this.funnels.findOne({ where: { id: lead.funnelId } }),
+      cachedFunnel !== undefined
+        ? Promise.resolve(cachedFunnel)
+        : this.funnels.findOne({ where: { id: lead.funnelId } }),
       stage !== undefined
         ? Promise.resolve(stage)
         : this.stages.findOne({ where: { id: lead.stageId } }),
@@ -1018,7 +1213,8 @@ export class CommercialLeadsService {
     });
     const sourceMeta = leadSourceMeta(resolvedSource);
     const lossReasonLabel = lead.lossReasonId
-      ? await this.lossReasons.getLabel(lead.lossReasonId)
+      ? (context?.lossReasonLabels?.get(lead.lossReasonId) ??
+        (await this.lossReasons.getLabel(lead.lossReasonId)))
       : null;
 
     return {
@@ -1033,9 +1229,9 @@ export class CommercialLeadsService {
       type: lead.type,
       typeLabel:
         lead.type === 'partner'
-          ? 'Academia parceira'
+          ? 'Academia'
           : lead.type === 'corporate'
-            ? 'Empresa corporativa'
+            ? 'Empresa'
             : null,
       source: resolvedSource,
       sourceLabel: sourceMeta.label,
@@ -1048,6 +1244,7 @@ export class CommercialLeadsService {
       email: lead.email,
       phone: lead.phone,
       contactName: lead.contactName,
+      whatsappContactKey: lead.whatsappContactKey,
       contacts: resolvedContacts,
       notes: lead.notes,
       ownerUserId: lead.ownerUserId,
@@ -1232,7 +1429,7 @@ export class CommercialLeadsService {
         id: item.id?.trim() || undefined,
         name: item.name?.trim() ?? '',
         role: item.role?.trim() || null,
-        phone: item.phone ? normalizeMobilePhone(item.phone) : null,
+        phone: item.phone ? resolveBrazilMobilePhone(item.phone) : null,
         email: item.email?.toLowerCase().trim() || null,
         isPrimary: Boolean(item.isPrimary),
       }))
@@ -1241,7 +1438,7 @@ export class CommercialLeadsService {
     if (fromArray.length) return this.ensurePrimaryContact(fromArray);
 
     const legacyName = legacy?.contactName?.trim();
-    const legacyPhone = legacy?.phone ? normalizeMobilePhone(legacy.phone) : null;
+    const legacyPhone = legacy?.phone ? resolveBrazilMobilePhone(legacy.phone) : null;
     const legacyEmail = legacy?.email?.toLowerCase().trim() || null;
     if (!legacyName && !legacyPhone && !legacyEmail) return [];
 
@@ -1326,11 +1523,138 @@ export class CommercialLeadsService {
     if (!key) return null;
     const marker = `whatsapp-contact:${key}`;
 
-    return this.leads
+    const rows = await this.leads
       .createQueryBuilder('lead')
       .where('lead.notes LIKE :marker', { marker: `%${marker}%` })
-      .orderBy('lead.createdAt', 'DESC')
-      .getOne();
+      .orderBy('lead.createdAt', 'ASC')
+      .getMany();
+    const hit = preferOpenWhatsAppLead(rows);
+    return hit && leadIsOpen(hit) ? hit : null;
+  }
+
+  private async findLeadByWhatsAppContactKeyMarker(contactKey: string): Promise<CommercialLead | null> {
+    const key = String(contactKey ?? '').trim();
+    if (!key) return null;
+    const marker = `whatsapp-contact:${key}`;
+
+    const rows = await this.leads
+      .createQueryBuilder('lead')
+      .where('lead.notes LIKE :marker', { marker: `%${marker}%` })
+      .orderBy('lead.createdAt', 'ASC')
+      .getMany();
+    return preferOpenWhatsAppLead(rows);
+  }
+
+  async findLeadByWhatsAppIdentity(
+    instanceId: string | undefined,
+    contactKey: string,
+    phone?: string | null,
+    extraAliasKeys?: string[],
+  ): Promise<CommercialLead | null> {
+    const aliasKeys = expandWhatsAppReferenceKeys(contactKey, phone, extraAliasKeys);
+    if (!aliasKeys.length) return null;
+
+    let byRefColumn: CommercialLead[] = [];
+    try {
+      byRefColumn = await this.leads
+        .createQueryBuilder('lead')
+        .where('lead.whatsapp_contact_key IN (:...aliasKeys)', { aliasKeys })
+        .orderBy('lead.createdAt', 'ASC')
+        .getMany();
+    } catch {
+      /* coluna whatsapp_contact_key ausente até rodar a migração SQL */
+    }
+    const refHit = preferOpenWhatsAppLead(byRefColumn);
+    if (refHit) return refHit;
+
+    if (instanceId) {
+      const profiles = await this.evolutionProfiles.find({
+        where: { instanceId, contactKey: In(aliasKeys) },
+        select: ['leadId'],
+      });
+      const profileLeadIds = [
+        ...new Set(profiles.map((profile) => profile.leadId).filter(Boolean)),
+      ] as string[];
+      if (profileLeadIds.length) {
+        const profileLeads = await this.leads.find({
+          where: { id: In(profileLeadIds) },
+          order: { createdAt: 'ASC' },
+        });
+        const profileHit = preferOpenWhatsAppLead(profileLeads);
+        if (profileHit) return profileHit;
+      }
+    }
+
+    if (instanceId) {
+      const messages = await this.evolutionMessages
+        .createQueryBuilder('message')
+        .select('DISTINCT message.lead_id', 'leadId')
+        .where('message.instance_id = :instanceId', { instanceId })
+        .andWhere('message.contact_phone IN (:...aliasKeys)', { aliasKeys })
+        .andWhere('message.lead_id IS NOT NULL')
+        .getRawMany<{ leadId: string }>();
+      const messageLeadIds = [...new Set(messages.map((row) => row.leadId).filter(Boolean))];
+      if (messageLeadIds.length) {
+        const messageLeads = await this.leads.find({
+          where: { id: In(messageLeadIds) },
+          order: { createdAt: 'ASC' },
+        });
+        const messageHit = preferOpenWhatsAppLead(messageLeads);
+        if (messageHit) return messageHit;
+      }
+    }
+
+    for (const key of aliasKeys) {
+      const fromNotes = await this.findLeadByWhatsAppContactKeyMarker(key);
+      if (fromNotes) return fromNotes;
+    }
+
+    const ph = phone ? normalizeMobilePhone(phone) : null;
+    if (ph && isValidMobilePhone(ph)) {
+      const byPhone = await this.findOpenLeadByPhone(ph);
+      if (byPhone) return byPhone;
+    }
+
+    return null;
+  }
+
+  private async withWhatsAppLeadLock<T>(
+    contactKey: string,
+    phone: string | null | undefined,
+    work: () => Promise<T>,
+    extraAliasKeys?: string[],
+  ): Promise<T> {
+    const lockKeys = [
+      ...new Set([
+        canonicalWhatsAppContactKey(contactKey, phone),
+        ...whatsAppContactAliasKeys(contactKey, phone),
+        ...(extraAliasKeys ?? []),
+      ]),
+    ]
+      .filter(Boolean)
+      .map((key) => key.slice(0, 60))
+      .sort();
+
+    const connection = this.leads.manager.connection;
+    const queryRunner = connection.createQueryRunner();
+    await queryRunner.connect();
+    const acquired: string[] = [];
+    try {
+      for (const lockKey of lockKeys) {
+        await queryRunner.query('SELECT GET_LOCK(?, 15)', [`wa-lead-${lockKey}`]);
+        acquired.push(lockKey);
+      }
+      return await work();
+    } finally {
+      for (const lockKey of acquired.reverse()) {
+        try {
+          await queryRunner.query('SELECT RELEASE_LOCK(?)', [`wa-lead-${lockKey}`]);
+        } catch {
+          /* ignore */
+        }
+      }
+      await queryRunner.release();
+    }
   }
 
   async findOpenLeadByPhone(phone: string): Promise<CommercialLead | null> {
@@ -1338,7 +1662,7 @@ export class CommercialLeadsService {
     if (!digits) return null;
 
     const direct = await this.leads.findOne({ where: { phone: digits } });
-    if (direct) return direct;
+    if (direct && leadIsOpen(direct)) return direct;
 
     const contact = await this.leadContacts
       .createQueryBuilder('contact')
@@ -1347,95 +1671,555 @@ export class CommercialLeadsService {
       .getOne();
     if (!contact) return null;
 
-    return this.leads.findOne({ where: { id: contact.leadId } });
+    const linked = await this.leads.findOne({ where: { id: contact.leadId } });
+    return linked && leadIsOpen(linked) ? linked : null;
   }
 
   /** Mensagem inbound WhatsApp: reusa lead por telefone ou cria lead básico no funil padrão. */
   async ensureLeadFromWhatsAppInbox(input: {
+    instanceId?: string;
     contactKey: string;
     phone?: string | null;
+    remoteJid?: string | null;
     pushName?: string | null;
     messageText: string;
     externalId: string;
     ownerUserId: string;
     createdByUserId: string;
     instanceLabel: string;
+    messageAt?: Date;
     recordInteraction?: boolean;
-  }): Promise<{ leadId: string; created: boolean }> {
+    autoCreateLeads?: boolean;
+    /** Telefones alternativos (senderPn, remoteJidAlt, etc.) para gravar no lead. */
+    phoneHints?: Array<string | null | undefined>;
+    mediaPayload?: string | null;
+    /** Chave canônica (ex.: telefone) para deduplicar antes de criar. */
+    identityContactKey?: string;
+    extraAliasKeys?: string[];
+    /** Lead já vinculado à thread (evita recriação ao reabrir conversa). */
+    existingLeadId?: string | null;
+  }): Promise<{ leadId: string | null; created: boolean }> {
     const contactKey = String(input.contactKey ?? '').trim();
-    const rawPhone = String(input.phone ?? contactKey).trim();
-    const digits =
-      input.phone && isValidMobilePhone(normalizeMobilePhone(input.phone))
-        ? normalizeMobilePhone(input.phone)
-        : isValidMobilePhone(normalizeMobilePhone(rawPhone))
-          ? normalizeMobilePhone(rawPhone)
-          : null;
+    if (!contactKey || contactKey === 'unknown') {
+      return { leadId: null, created: false };
+    }
 
-    let existing =
-      (digits ? await this.findOpenLeadByPhone(digits) : null) ??
-      (await this.findOpenLeadByWhatsAppContactKey(contactKey));
+    const rawPhone = String(input.phone ?? contactKey).trim();
+    let digits = this.resolveWhatsAppLeadPhoneDigits({
+      phone: input.phone,
+      contactKey,
+      remoteJid: input.remoteJid,
+      rawPhoneCandidate: rawPhone,
+    });
+    if (!digits) {
+      const fromKey = normalizedBrazilMobileKey(contactKey);
+      if (fromKey) digits = fromKey;
+    }
+    const mergedHints = this.collectWhatsAppPhoneHints(input);
+    if (!digits) {
+      for (const hint of mergedHints) {
+        const resolved = resolveBrazilMobilePhone(hint);
+        if (resolved) {
+          digits = resolved;
+          break;
+        }
+      }
+    }
+
     const preview = input.messageText.trim().slice(0, 500);
     const shouldRecord = input.recordInteraction !== false;
+    const canCreate = input.autoCreateLeads !== false;
 
-    if (existing) {
-      await this.enrichLeadFromWhatsApp(existing.id, input.pushName);
-      if (preview && shouldRecord) {
-        await this.ingestWhatsAppInteraction(existing.id, preview, input.externalId);
+    const identityKey = String(input.identityContactKey ?? contactKey).trim() || contactKey;
+    const extraAliases = input.extraAliasKeys;
+
+    return this.withWhatsAppLeadLock(identityKey, digits, async () => {
+      let existing: CommercialLead | null = null;
+      const hintedLeadId = String(input.existingLeadId ?? '').trim();
+      if (hintedLeadId) {
+        existing = await this.leads.findOne({ where: { id: hintedLeadId } });
       }
-      return { leadId: existing.id, created: false };
+      if (!existing) {
+        existing = await this.findLeadByWhatsAppIdentity(
+          input.instanceId,
+          identityKey,
+          digits,
+          extraAliases,
+        );
+      }
+      if (!existing && identityKey !== contactKey) {
+        existing = await this.findLeadByWhatsAppIdentity(
+          input.instanceId,
+          contactKey,
+          digits,
+          extraAliases,
+        );
+      }
+
+      if (!existing) {
+        const refKey = canonicalWhatsAppContactKey(identityKey, digits);
+        try {
+          const refRows = await this.leads.find({
+            where: { whatsappContactKey: refKey },
+            order: { createdAt: 'ASC' },
+          });
+          existing = preferOpenWhatsAppLead(refRows);
+        } catch {
+          /* coluna whatsapp_contact_key ausente até rodar a migração SQL */
+        }
+      }
+
+      if (existing && !leadIsOpen(existing)) {
+        existing = null;
+      }
+
+      if (existing) {
+        const canonical = canonicalWhatsAppContactKey(identityKey, digits);
+        if (!existing.whatsappContactKey) {
+          await this.leads.update({ id: existing.id }, { whatsappContactKey: canonical });
+        }
+        if (digits) {
+          await this.ensureLeadWhatsAppPhoneContact(existing.id, digits, input.pushName);
+        } else {
+          const fromKey = normalizedBrazilMobileKey(contactKey);
+          if (fromKey) {
+            await this.ensureLeadWhatsAppPhoneContact(existing.id, fromKey, input.pushName);
+          }
+        }
+        await this.enrichLeadFromWhatsApp(existing.id, input.pushName);
+        if (preview && shouldRecord) {
+          await this.ingestWhatsAppInteraction(
+            existing.id,
+            preview,
+            input.externalId,
+            input.messageAt,
+          );
+        }
+        return { leadId: existing.id, created: false };
+      }
+
+      if (!canCreate) {
+        return { leadId: null, created: false };
+      }
+
+      const title =
+        input.pushName?.trim() ||
+        (digits && isValidMobilePhone(digits)
+          ? formatMobilePhone(digits)
+          : contactKey.replace(/^lid:/i, '') || 'Contato WhatsApp');
+
+      const canonicalKey = canonicalWhatsAppContactKey(identityKey, digits);
+      const marker = `whatsapp-contact:${canonicalKey}`;
+      const createdLead = await this.create(
+        {
+          title,
+          source: 'whatsapp',
+          phone: digits ?? undefined,
+          contactName: input.pushName?.trim() || undefined,
+          contacts: [
+            {
+              name: input.pushName?.trim() || title || 'Contato WhatsApp',
+              phone: digits ?? undefined,
+              isPrimary: true,
+            },
+          ],
+          notes: `Origem: instância WhatsApp «${input.instanceLabel}». ${marker}`,
+          whatsappContactKey: canonicalKey,
+          ownerUserId: input.ownerUserId,
+          temperature: 'warm',
+        },
+        input.createdByUserId,
+      );
+
+      if (digits) {
+        await this.ensureLeadWhatsAppPhoneContact(createdLead.id, digits, input.pushName);
+      }
+
+      if (preview && shouldRecord) {
+        await this.ingestWhatsAppInteraction(
+          createdLead.id,
+          preview,
+          input.externalId,
+          input.messageAt,
+        );
+      }
+
+      return { leadId: createdLead.id, created: true };
+    }, extraAliases);
+  }
+
+  /** Funde lead WhatsApp duplicado no mantenedor (mesmo contato, thread lid vs telefone). */
+  async absorbWhatsAppLeadDuplicate(duplicateId: string, keeperId: string): Promise<void> {
+    const dup = String(duplicateId ?? '').trim();
+    const keep = String(keeperId ?? '').trim();
+    if (!dup || !keep || dup === keep) return;
+
+    const [duplicate, keeper] = await Promise.all([
+      this.leads.findOne({ where: { id: dup } }),
+      this.leads.findOne({ where: { id: keep } }),
+    ]);
+    if (!duplicate || !keeper || !leadIsOpen(duplicate) || !leadIsOpen(keeper)) return;
+
+    await this.evolutionMessages.update({ leadId: dup }, { leadId: keep });
+    await this.evolutionProfiles.update({ leadId: dup }, { leadId: keep });
+    await this.deleteLeadRows([dup]);
+  }
+
+  private collectWhatsAppPhoneHints(input: {
+    phone?: string | null;
+    contactKey: string;
+    remoteJid?: string | null;
+    phoneHints?: Array<string | null | undefined>;
+    mediaPayload?: string | null;
+  }): string[] {
+    const hints = new Set<string>();
+    const add = (value?: string | null) => {
+      const raw = String(value ?? '').trim();
+      if (raw) hints.add(raw);
+    };
+    for (const hint of input.phoneHints ?? []) add(hint);
+    add(input.phone);
+    add(input.contactKey);
+    add(input.remoteJid);
+    const payload = String(input.mediaPayload ?? '').trim();
+    if (payload) {
+      try {
+        const data = JSON.parse(payload) as Record<string, unknown>;
+        const key = (data.key ?? {}) as Record<string, unknown>;
+        add(String(key.senderPn ?? data.senderPn ?? ''));
+        add(String(key.remoteJid ?? data.remoteJid ?? ''));
+        add(String(key.remoteJidAlt ?? data.remoteJidAlt ?? ''));
+        add(String(key.participant ?? key.participantAlt ?? ''));
+        const resolved = resolveContactFromEvolutionPayload(data);
+        add(resolved?.phone ?? null);
+      } catch {
+        /* ignore */
+      }
+    }
+    return [...hints];
+  }
+
+  private resolveWhatsAppLeadPhoneDigits(input: {
+    phone?: string | null;
+    contactKey: string;
+    remoteJid?: string | null;
+    rawPhoneCandidate: string;
+  }): string | null {
+    const candidates = [
+      input.phone,
+      input.rawPhoneCandidate,
+      input.contactKey,
+      input.remoteJid,
+    ];
+    for (const value of candidates) {
+      const resolved = resolveBrazilMobilePhone(value);
+      if (resolved) return resolved;
     }
 
-    const title =
-      input.pushName?.trim() ||
-      (digits && isValidMobilePhone(digits)
-        ? formatMobilePhone(digits)
-        : 'Contato WhatsApp');
-
-    const marker = `whatsapp-contact:${contactKey}`;
-    const lead = await this.create(
-      {
-        title,
-        source: 'whatsapp',
-        phone: digits ?? undefined,
-        contactName: input.pushName?.trim() || undefined,
-        contacts: digits
-          ? [
-              {
-                name: input.pushName?.trim() || title,
-                phone: digits,
-                isPrimary: true,
-              },
-            ]
-          : undefined,
-        notes: `Origem: instância WhatsApp «${input.instanceLabel}». ${marker}`,
-        ownerUserId: input.ownerUserId,
-        temperature: 'warm',
-      },
-      input.createdByUserId,
-    );
-
-    if (preview && shouldRecord) {
-      await this.ingestWhatsAppInteraction(lead.id, preview, input.externalId);
+    const remote = String(input.remoteJid ?? '').trim();
+    if (remote) {
+      const fromJid = phoneKeyFromJid(remote);
+      if (fromJid && isValidMobilePhone(fromJid)) return fromJid;
     }
 
-    return { leadId: lead.id, created: true };
+    const fromKey = normalizedBrazilMobileKey(input.contactKey);
+    if (fromKey) return fromKey;
+
+    return null;
+  }
+
+  /** Garante telefone no lead após ingestão WhatsApp (criação ou mensagem seguinte). */
+  async applyWhatsAppPhoneToLead(
+    leadId: string,
+    candidates: Array<string | null | undefined>,
+    pushName?: string | null,
+    mediaPayload?: string | null,
+  ): Promise<string | null> {
+    const merged = this.collectWhatsAppPhoneHints({
+      contactKey: '',
+      phoneHints: candidates,
+      mediaPayload,
+    });
+    for (const hint of merged) {
+      const digits = resolveBrazilMobilePhone(hint);
+      if (!digits) continue;
+      await this.ensureLeadWhatsAppPhoneContact(leadId, digits, pushName);
+      return digits;
+    }
+    return null;
+  }
+
+  /** Grava telefone no lead e na lista de contatos (fonte WhatsApp). */
+  private async ensureLeadWhatsAppPhoneContact(
+    leadId: string,
+    phoneDigits: string,
+    pushName?: string | null,
+  ): Promise<void> {
+    const digits = resolveBrazilMobilePhone(phoneDigits);
+    if (!digits) return;
+
+    const lead = await this.leads.findOne({ where: { id: leadId } });
+    if (!lead) return;
+
+    const nameFromWhatsApp = pushName?.trim();
+    const contacts = await this.leadContacts.find({
+      where: { leadId },
+      order: { sortOrder: 'ASC', createdAt: 'ASC' },
+    });
+
+    const contactName =
+      nameFromWhatsApp ||
+      lead.contactName?.trim() ||
+      (isHumanContactName(lead.title) ? lead.title.trim() : null) ||
+      'Contato WhatsApp';
+
+    const leadPatch: Partial<CommercialLead> = {};
+    if (!lead.phone) leadPatch.phone = digits;
+    if (!lead.contactName?.trim() && nameFromWhatsApp) {
+      leadPatch.contactName = nameFromWhatsApp;
+    }
+
+    const primaryRow = contacts.find((row) => row.isPrimary) ?? contacts[0] ?? null;
+    if (!lead.phone && primaryRow?.phone) {
+      leadPatch.phone = primaryRow.phone;
+    }
+
+    const hasPhoneContact = contacts.some((row) => row.phone === digits);
+    if (!hasPhoneContact) {
+      if (!contacts.length) {
+        await this.leadContacts.save(
+          this.leadContacts.create({
+            leadId,
+            name: contactName,
+            role: null,
+            phone: digits,
+            email: null,
+            isPrimary: true,
+            sortOrder: 0,
+          }),
+        );
+      } else {
+        const primary = contacts.find((row) => row.isPrimary) ?? contacts[0];
+        if (primary && !primary.phone) {
+          const contactPatch: Partial<CommercialLeadContact> = { phone: digits };
+          if (!primary.name?.trim() || primary.name === 'Contato') {
+            contactPatch.name = contactName;
+          }
+          await this.leadContacts.update({ id: primary.id }, contactPatch);
+        } else {
+          await this.leadContacts.save(
+            this.leadContacts.create({
+              leadId,
+              name: contactName,
+              role: null,
+              phone: digits,
+              email: null,
+              isPrimary: false,
+              sortOrder: contacts.length,
+            }),
+          );
+        }
+      }
+    }
+
+    if (Object.keys(leadPatch).length) {
+      await this.leads.update({ id: leadId }, leadPatch);
+    }
+  }
+
+  /**
+   * Remove leads duplicados gerados por mensagens WhatsApp (mantém o mais antigo por contato).
+   */
+  async purgeWhatsAppDuplicateLeads(options?: { dryRun?: boolean; funnelId?: string }) {
+    const dryRun = options?.dryRun !== false;
+    const qb = this.leads
+      .createQueryBuilder('lead')
+      .where('lead.converted_network_id IS NULL')
+      .andWhere('lead.converted_company_id IS NULL')
+      .andWhere(
+        `(lead.source = 'whatsapp'
+          OR lead.notes LIKE :waNotes
+          OR lead.notes LIKE :waOrigin
+          OR lead.whatsapp_contact_key IS NOT NULL)`,
+        { waNotes: '%whatsapp-contact:%', waOrigin: '%instância WhatsApp%' },
+      );
+
+    if (options?.funnelId) {
+      qb.andWhere('lead.funnel_id = :funnelId', { funnelId: options.funnelId });
+    }
+
+    const rows = await qb.orderBy('lead.createdAt', 'ASC').getMany();
+    const groups = new Map<string, CommercialLead[]>();
+
+    for (const row of rows) {
+      const key =
+        normalizeWhatsAppGroupKey(row.whatsappContactKey) ||
+        normalizeWhatsAppGroupKey(extractWhatsAppMarkerFromNotes(row.notes)) ||
+        normalizeWhatsAppGroupKey(row.title) ||
+        row.id;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(row);
+    }
+
+    const toRemove: string[] = [];
+    const toKeep: Array<{ key: string; leadId: string; removedIds: string[] }> = [];
+
+    for (const [key, list] of groups) {
+      if (list.length <= 1) continue;
+      const keeper = list[0];
+      const duplicates = list.slice(1).map((row) => row.id);
+      toRemove.push(...duplicates);
+      toKeep.push({ key, leadId: keeper.id, removedIds: duplicates });
+    }
+
+    if (!dryRun && toRemove.length) {
+      for (const item of toKeep) {
+        if (!item.removedIds.length) continue;
+        await this.evolutionMessages.update(
+          { leadId: In(item.removedIds) },
+          { leadId: item.leadId },
+        );
+        await this.evolutionProfiles.update(
+          { leadId: In(item.removedIds) },
+          { leadId: item.leadId },
+        );
+        await this.deleteLeadRows(item.removedIds);
+      }
+    }
+
+    return {
+      dryRun,
+      duplicateGroups: toKeep.length,
+      leadsRemoved: toRemove.length,
+      samples: toKeep.slice(0, 20),
+    };
+  }
+
+  /** Preenche telefone em leads WhatsApp sem número, usando mensagens Evolution vinculadas. */
+  async backfillWhatsAppLeadPhones(options?: { funnelId?: string; limit?: number }) {
+    const limit = Math.min(Math.max(options?.limit ?? 300, 1), 2000);
+    const qb = this.leads
+      .createQueryBuilder('lead')
+      .where('(lead.phone IS NULL OR lead.phone = "")')
+      .andWhere(
+        `(
+          lead.source = 'whatsapp'
+          OR lead.whatsapp_contact_key IS NOT NULL
+          OR lead.notes LIKE :waOrigin
+          OR EXISTS (
+            SELECT 1 FROM acaf_evolution_messages em
+            WHERE em.lead_id = lead.id
+          )
+          OR EXISTS (
+            SELECT 1 FROM acaf_evolution_contact_profiles ep
+            WHERE ep.lead_id = lead.id
+          )
+        )`,
+        { waOrigin: '%instância WhatsApp%' },
+      );
+    if (options?.funnelId) {
+      qb.andWhere('lead.funnel_id = :funnelId', { funnelId: options.funnelId });
+    }
+    const rows = await qb.orderBy('lead.created_at', 'DESC').limit(limit).getMany();
+
+    const orphanLeadRefs = await this.countOrphanEvolutionLeadReferences();
+
+    let updated = 0;
+    const samples: Array<{ leadId: string; phone: string }> = [];
+
+    for (const lead of rows) {
+      const messages = await this.evolutionMessages.find({
+        where: { leadId: lead.id },
+        order: { messageAt: 'DESC' },
+        take: 24,
+        select: ['contactPhone', 'remoteJid', 'mediaPayload'],
+      });
+
+      const hints = [
+        lead.whatsappContactKey,
+        ...messages.flatMap((row) => [row.contactPhone, row.remoteJid]),
+      ];
+      let applied: string | null = null;
+      for (const row of messages) {
+        const rowHints = [row.contactPhone, row.remoteJid, lead.whatsappContactKey];
+        applied = await this.applyWhatsAppPhoneToLead(lead.id, rowHints, null, row.mediaPayload);
+        if (applied) break;
+      }
+      if (!applied) {
+        applied = await this.applyWhatsAppPhoneToLead(lead.id, hints);
+      }
+      if (!applied) {
+        const profiles = await this.evolutionProfiles.find({
+          where: { leadId: lead.id },
+          select: ['contactKey', 'phoneLabel'],
+        });
+        for (const profile of profiles) {
+          const fromKey = resolveBrazilMobilePhone(profile.contactKey);
+          const fromLabel = profile.phoneLabel
+            ? resolveBrazilMobilePhone(profile.phoneLabel)
+            : null;
+          const digits = fromKey ?? fromLabel;
+          if (!digits) continue;
+          await this.ensureLeadWhatsAppPhoneContact(lead.id, digits);
+          applied = digits;
+          break;
+        }
+      }
+      if (applied) {
+        updated += 1;
+        if (samples.length < 25) samples.push({ leadId: lead.id, phone: applied });
+      }
+    }
+
+    return { checked: rows.length, updated, samples, orphanLeadRefs };
+  }
+
+  /** Mensagens/perfis apontam para `lead_id` que não existe mais na tabela comercial. */
+  async countOrphanEvolutionLeadReferences(): Promise<{
+    messageLeadIds: number;
+    profileLeadIds: number;
+  }> {
+    const messageLeadIds = await this.evolutionMessages
+      .createQueryBuilder('message')
+      .leftJoin(CommercialLead, 'lead', 'lead.id = message.lead_id')
+      .where('message.lead_id IS NOT NULL')
+      .andWhere('lead.id IS NULL')
+      .select('COUNT(DISTINCT message.lead_id)', 'count')
+      .getRawOne<{ count: string }>();
+
+    const profileLeadIds = await this.evolutionProfiles
+      .createQueryBuilder('profile')
+      .leftJoin(CommercialLead, 'lead', 'lead.id = profile.lead_id')
+      .where('profile.lead_id IS NOT NULL')
+      .andWhere('lead.id IS NULL')
+      .select('COUNT(DISTINCT profile.lead_id)', 'count')
+      .getRawOne<{ count: string }>();
+
+    return {
+      messageLeadIds: Number(messageLeadIds?.count ?? 0),
+      profileLeadIds: Number(profileLeadIds?.count ?? 0),
+    };
   }
 
   async enrichLeadPhoneFromWhatsAppInbox(leadId: string, phoneDigits: string): Promise<void> {
-    const digits = normalizeMobilePhone(phoneDigits);
-    if (!isValidMobilePhone(digits)) return;
+    const digits = resolveBrazilMobilePhone(phoneDigits);
+    if (!digits) return;
+
     const lead = await this.leads.findOne({
       where: { id: leadId },
       select: ['id', 'phone', 'title'],
     });
-    if (!lead || lead.phone) return;
+    if (!lead) return;
 
-    const patch: Partial<CommercialLead> = { phone: digits };
     const title = lead.title?.trim() ?? '';
-    if (!title || title === 'Contato WhatsApp' || title.startsWith('WhatsApp ')) {
-      patch.title = formatMobilePhone(digits);
+    const shouldRetitle =
+      !lead.phone && (!title || title === 'Contato WhatsApp' || title.startsWith('WhatsApp '));
+
+    await this.ensureLeadWhatsAppPhoneContact(leadId, digits);
+
+    if (shouldRetitle) {
+      await this.leads.update({ id: leadId }, { title: formatMobilePhone(digits) });
     }
-    await this.leads.update({ id: leadId }, patch);
   }
 
   async enrichLeadFromWhatsAppInbox(leadId: string, pushName?: string | null): Promise<void> {
@@ -1461,8 +2245,8 @@ export class CommercialLeadsService {
   }
 
   private typeAuditLabel(type: CommercialLeadType | null): string {
-    if (type === 'partner') return 'Academia parceira';
-    if (type === 'corporate') return 'Empresa corporativa';
+    if (type === 'partner') return 'Academia';
+    if (type === 'corporate') return 'Empresa';
     return '—';
   }
 

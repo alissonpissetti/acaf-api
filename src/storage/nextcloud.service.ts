@@ -590,8 +590,13 @@ export class NextcloudService {
     return allowed.has(mime);
   }
 
-  async uploadPayableAttachment(
-    payableId: string,
+  private financeAttachmentFolder(scope: 'payables' | 'receivables', entryId: string) {
+    return `${this.rootFolder}/finance/${scope}/${entryId}`;
+  }
+
+  async uploadFinanceAttachment(
+    scope: 'payables' | 'receivables',
+    entryId: string,
     file: Express.Multer.File,
   ): Promise<{ path: string; publicUrl: string }> {
     if (!this.payableMimeAllowed(file.mimetype)) {
@@ -600,64 +605,57 @@ export class NextcloudService {
       );
     }
 
-    const folder = `${this.rootFolder}/payables/${payableId}`;
+    const folder = this.financeAttachmentFolder(scope, entryId);
     const relativePath = `${folder}/${Date.now()}-${this.safeFileName(file.originalname)}`;
-
     await this.ensureFolder(folder);
 
-    const response = await fetch(this.davUrl(relativePath), {
-      method: 'PUT',
-      headers: {
-        Authorization: this.authHeader(),
-        'Content-Type': file.mimetype || 'application/octet-stream',
-      },
-      body: new Uint8Array(file.buffer),
-    });
+    const contentType = file.mimetype?.split(';')[0]?.trim() || 'application/octet-stream';
+    await this.putDavFileWithRetry(
+      relativePath,
+      file.buffer,
+      contentType,
+      'Falha ao enviar anexo financeiro ao storage',
+    );
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new InternalServerErrorException(
-        `Falha ao enviar anexo (${response.status}): ${body.slice(0, 120)}`,
-      );
-    }
+    const shareUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl: this.directPublicFileUrl(shareUrl) };
+  }
 
-    const publicUrl = await this.createPublicShareUrl(relativePath);
-    return { path: relativePath, publicUrl };
+  async copyFinanceAttachment(
+    scope: 'payables' | 'receivables',
+    sourcePath: string,
+    entryId: string,
+    originalName: string,
+    mimeType: string,
+  ): Promise<{ path: string; publicUrl: string }> {
+    const { buffer, mime } = await this.readFileBuffer(sourcePath);
+    const folder = this.financeAttachmentFolder(scope, entryId);
+    const relativePath = `${folder}/${Date.now()}-${this.safeFileName(originalName)}`;
+    await this.ensureFolder(folder);
+
+    await this.putDavFileWithRetry(
+      relativePath,
+      buffer,
+      mimeType?.split(';')[0]?.trim() || mime || 'application/octet-stream',
+      'Falha ao copiar anexo financeiro no storage',
+    );
+
+    const shareUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl: this.directPublicFileUrl(shareUrl) };
+  }
+
+  async uploadPayableAttachment(
+    payableId: string,
+    file: Express.Multer.File,
+  ): Promise<{ path: string; publicUrl: string }> {
+    return this.uploadFinanceAttachment('payables', payableId, file);
   }
 
   async uploadReceivableAttachment(
     receivableId: string,
     file: Express.Multer.File,
   ): Promise<{ path: string; publicUrl: string }> {
-    if (!this.payableMimeAllowed(file.mimetype)) {
-      throw new BadRequestException(
-        'Formato não suportado. Envie PDF, imagem, Word, Excel, CSV, TXT ou ZIP.',
-      );
-    }
-
-    const folder = `${this.rootFolder}/receivables/${receivableId}`;
-    const relativePath = `${folder}/${Date.now()}-${this.safeFileName(file.originalname)}`;
-
-    await this.ensureFolder(folder);
-
-    const response = await fetch(this.davUrl(relativePath), {
-      method: 'PUT',
-      headers: {
-        Authorization: this.authHeader(),
-        'Content-Type': file.mimetype || 'application/octet-stream',
-      },
-      body: new Uint8Array(file.buffer),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new InternalServerErrorException(
-        `Falha ao enviar anexo (${response.status}): ${body.slice(0, 120)}`,
-      );
-    }
-
-    const publicUrl = await this.createPublicShareUrl(relativePath);
-    return { path: relativePath, publicUrl };
+    return this.uploadFinanceAttachment('receivables', receivableId, file);
   }
 
   async deleteFile(relativePath: string, options?: { skipTrash?: boolean }): Promise<void> {

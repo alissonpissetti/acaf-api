@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccessControlModule } from '../access-control/access-control.module';
 import { PartnerModule } from '../partner/partner.module';
@@ -16,6 +16,10 @@ import { CommercialController } from './commercial.controller';
 import { CommercialLeadsService } from './commercial-leads.service';
 import { CommercialFunnelsService } from './commercial-funnels.service';
 import { CommercialLossReasonsService } from './commercial-loss-reasons.service';
+import { CommercialLossReportService } from './commercial-loss-report.service';
+import { EvolutionContactProfile } from '../evolution/evolution-contact-profile.entity';
+import { EvolutionMessage } from '../evolution/evolution-message.entity';
+import { EvolutionModule } from '../evolution/evolution.module';
 
 @Module({
   imports: [
@@ -28,16 +32,20 @@ import { CommercialLossReasonsService } from './commercial-loss-reasons.service'
       CommercialFunnelStage,
       CommercialLossReason,
       CommercialLeadAuditLog,
+      EvolutionContactProfile,
+      EvolutionMessage,
     ]),
     PartnerModule,
     UsersModule,
     AccessControlModule,
+    forwardRef(() => EvolutionModule),
   ],
   controllers: [CommercialController],
   providers: [
     CommercialLeadsService,
     CommercialFunnelsService,
     CommercialLossReasonsService,
+    CommercialLossReportService,
     CommercialLeadAuditService,
   ],
   exports: [CommercialFunnelsService, CommercialLeadsService, CommercialLossReasonsService],

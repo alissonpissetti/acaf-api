@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { CommercialLeadsService } from '../commercial/commercial-leads.service';
 import { CommercialLead } from '../commercial/commercial-lead.entity';
 import { EvolutionInstance } from './evolution-instance.entity';
@@ -65,9 +65,10 @@ import { EvolutionRemoteContactsService } from './evolution-remote-contacts.serv
 import { EvolutionContactProfile } from './evolution-contact-profile.entity';
 import { EvolutionContactAvatarService } from './evolution-contact-avatar.service';
 import { EvolutionInboxRealtimeService } from './evolution-inbox-realtime.service';
+import { EvolutionLeadIgnoreContactsService } from './evolution-lead-ignore-contacts.service';
 import { EvolutionMessageMediaStorageService } from './evolution-message-media-storage.service';
 import type { LidPhoneAlias } from './evolution-remote-contacts.service';
-import { normalizeMobilePhone, isValidMobilePhone } from '../users/person.utils';
+import { normalizeMobilePhone, isValidMobilePhone, resolveBrazilMobilePhone } from '../users/person.utils';
 import { resolveYouTubeVideoId } from './youtube-link';
 
 export type ParsedEvolutionMessage = {
@@ -132,8 +133,10 @@ export type EvolutionInboxThreadsPageDto = {
 const INBOX_THREADS_PAGE_DEFAULT = 45;
 const INBOX_THREADS_PAGE_MAX = 100;
 const INBOX_WEBHOOK_HEALTH_MS = 25 * 60_000;
-const INBOX_THREAD_PULL_THROTTLE_MS = 90_000;
-const INBOX_THREAD_PULL_THROTTLE_HEALTHY_MS = 12 * 60_000;
+const INBOX_THREAD_PULL_THROTTLE_MS = 45_000;
+const INBOX_THREAD_PULL_THROTTLE_HEALTHY_MS = 90_000;
+/** Pull quando o ADM mantém a conversa aberta (polling / socket fallback). */
+const INBOX_THREAD_PULL_THROTTLE_WATCH_MS = 6_000;
 const INBOX_DELTA_OVERLAP_MS = 2 * 60_000;
 const INBOX_CHAT_READ_SYNC_MS = 90_000;
 
@@ -181,6 +184,7 @@ export class EvolutionInboxService {
   private readonly threadRemotePullAt = new Map<string, number>();
   private readonly backgroundMaintenanceAt = new Map<string, number>();
   private readonly connectBootstrapAt = new Map<string, number>();
+  private readonly lidPhoneAliasCache = new Map<string, { at: number; map: Map<string, LidPhoneAlias> }>();
   private readonly connectBootstrapInFlight = new Set<string>();
 
   constructor(
@@ -208,6 +212,7 @@ export class EvolutionInboxService {
     private readonly messageMediaStorage: EvolutionMessageMediaStorageService,
     private readonly remoteChats: EvolutionRemoteChatsService,
     private readonly remoteMessages: EvolutionRemoteMessagesService,
+    private readonly leadIgnoreContacts: EvolutionLeadIgnoreContactsService,
     @InjectRepository(User)
     private readonly users: Repository<User>,
   ) {}
@@ -250,21 +255,101 @@ export class EvolutionInboxService {
 
     let leadId: string | null = null;
     let created = false;
-    if (!parsed.isGroup) {
-      const leadOutcome = await this.commercialLeads.ensureLeadFromWhatsAppInbox({
-        contactKey: parsed.contactKey,
-        phone: parsed.phone,
-        pushName: parsed.pushName,
-        messageText: parsed.text,
-        externalId: parsed.externalId,
-        ownerUserId,
-        createdByUserId: ownerUserId,
-        instanceLabel: instance.name,
-        recordInteraction: !parsed.fromMe,
-      });
-      leadId = leadOutcome.leadId;
-      created = leadOutcome.created;
+    let payloadContact: ReturnType<typeof resolveContactFromEvolutionPayload> = null;
+    if (parsed.mediaPayload?.trim()) {
+      try {
+        payloadContact = resolveContactFromEvolutionPayload(JSON.parse(parsed.mediaPayload));
+      } catch {
+        payloadContact = null;
+      }
     }
+    const phoneHints = [
+      parsed.phone,
+      payloadContact?.phone ?? null,
+      parsed.contactKey,
+      parsed.remoteJid,
+    ];
+    const ingestPhone = await this.resolveIngestPhoneForLead(
+      instance.id,
+      parsed,
+      payloadContact?.phone ?? parsed.phone ?? null,
+    );
+    if (ingestPhone) phoneHints.unshift(ingestPhone);
+
+    if (!parsed.isGroup) {
+      if (parsed.mediaPayload?.trim()) {
+        await this.rekeyThreadToPhoneIfKnown(instance.id, parsed.contactKey, parsed.mediaPayload);
+      }
+      const { identityContactKey, extraAliasKeys } = await this.resolveWhatsAppIngestIdentity(
+        instance.id,
+        parsed.contactKey,
+        ingestPhone,
+      );
+
+      const skipLeadAutoCreate = await this.leadIgnoreContacts.isContactIgnored(instance.id, {
+        contactKey: parsed.contactKey,
+        phone: ingestPhone,
+        remoteJid: parsed.remoteJid,
+        extraAliasKeys,
+      });
+
+      let existingLeadId: string | null = null;
+      if (duplicate?.leadId) {
+        existingLeadId = await this.openLeadIdFromHint(duplicate.leadId);
+      }
+      if (!existingLeadId) {
+        existingLeadId = await this.resolveInboundThreadLeadId(
+          instance.id,
+          parsed.contactKey,
+          ingestPhone,
+          identityContactKey,
+          extraAliasKeys,
+        );
+      }
+
+      if (!skipLeadAutoCreate) {
+        const leadOutcome = await this.commercialLeads.ensureLeadFromWhatsAppInbox({
+          instanceId: instance.id,
+          contactKey: parsed.contactKey,
+          identityContactKey,
+          extraAliasKeys,
+          existingLeadId,
+          phone: ingestPhone,
+          remoteJid: parsed.remoteJid,
+          pushName: parsed.pushName,
+          messageText: parsed.text,
+          externalId: parsed.externalId,
+          messageAt: parsed.messageAt,
+          ownerUserId,
+          createdByUserId: ownerUserId,
+          instanceLabel: instance.name,
+          recordInteraction: !parsed.fromMe,
+          autoCreateLeads: instance.autoCreateLeads,
+          phoneHints,
+          mediaPayload: parsed.mediaPayload,
+        });
+        leadId = leadOutcome.leadId;
+        created = leadOutcome.created;
+        if (leadId) {
+          await this.commercialLeads.applyWhatsAppPhoneToLead(
+            leadId,
+            phoneHints,
+            parsed.pushName,
+            parsed.mediaPayload,
+          );
+        }
+      }
+    }
+
+    const syncIngestedLeadPhone = async (contactKeyForPhone: string) => {
+      if (!leadId) return;
+      await this.commercialLeads.applyWhatsAppPhoneToLead(
+        leadId,
+        [contactKeyForPhone, ingestPhone, parsed.phone, parsed.contactKey, parsed.remoteJid],
+        parsed.pushName,
+        parsed.mediaPayload,
+      );
+    };
 
     const contactName = parsed.isGroup
       ? pickBestGroupThreadName(
@@ -345,6 +430,7 @@ export class EvolutionInboxService {
       const threadKey =
         (await this.rekeyThreadToPhoneIfKnown(instance.id, parsed.contactKey, parsed.mediaPayload)) ??
         parsed.contactKey;
+      await syncIngestedLeadPhone(threadKey);
       await this.publishInboxActivity(instance.id, threadKey, duplicate.id, false);
       return { leadId, created: false, messageId: duplicate.id, ingested: false };
     }
@@ -399,6 +485,7 @@ export class EvolutionInboxService {
     const threadKey =
       (await this.rekeyThreadToPhoneIfKnown(instance.id, parsed.contactKey, parsed.mediaPayload)) ??
       parsed.contactKey;
+    await syncIngestedLeadPhone(threadKey);
     await this.publishInboxActivity(instance.id, threadKey, saved.id, true);
     void this.bumpLocalMessageWatermark(instance.id, parsed.messageAt);
     return { leadId, created, messageId: saved.id, ingested: true };
@@ -909,6 +996,157 @@ export class EvolutionInboxService {
     return { leadId: null, created: true, messageId: saved.id, ingested: true };
   }
 
+  private async getLidPhoneAliasesCached(instanceId: string): Promise<Map<string, LidPhoneAlias>> {
+    const now = Date.now();
+    const cached = this.lidPhoneAliasCache.get(instanceId);
+    if (cached && now - cached.at < 90_000) return cached.map;
+    const map = await this.remoteContacts.fetchLidPhoneAliases(instanceId);
+    this.lidPhoneAliasCache.set(instanceId, { at: now, map });
+    return map;
+  }
+
+  /** Resolve telefone real quando o thread veio só como `lid:` / JID @lid (comum em contatos não salvos). */
+  private async resolveIngestPhoneForLead(
+    instanceId: string,
+    parsed: ParsedEvolutionMessage,
+    directPhone: string | null,
+  ): Promise<string | null> {
+    const fromDirect = resolveBrazilMobilePhone(directPhone);
+    if (fromDirect) return fromDirect;
+
+    const fromJid = resolveBrazilMobilePhone(parsed.remoteJid);
+    if (fromJid) return fromJid;
+
+    const contactKey = String(parsed.contactKey ?? '').trim();
+    const remoteJid = String(parsed.remoteJid ?? '').trim().toLowerCase();
+    const needsLidLookup = contactKey.startsWith('lid:') || remoteJid.includes('@lid');
+    if (!needsLidLookup) {
+      return (
+        resolveBrazilMobilePhone(parsed.phone) ??
+        resolveBrazilMobilePhone(parsed.contactKey) ??
+        null
+      );
+    }
+
+    if (parsed.mediaPayload?.trim()) {
+      try {
+        const payload = JSON.parse(parsed.mediaPayload) as Record<string, unknown>;
+        const key = (payload.key ?? {}) as Record<string, unknown>;
+        const senderPn = String(key.senderPn ?? payload.senderPn ?? '').trim();
+        const fromPn = resolveBrazilMobilePhone(phoneFromSenderPn(senderPn));
+        if (fromPn) return fromPn;
+        const resolved = resolveContactFromEvolutionPayload(payload);
+        const fromPayload = resolveBrazilMobilePhone(resolved?.phone);
+        if (fromPayload) return fromPayload;
+      } catch {
+        /* ignora */
+      }
+    }
+
+    const aliases = await this.getLidPhoneAliasesCached(instanceId);
+    const alias =
+      aliases.get(contactKey) ??
+      (remoteJid ? aliases.get(remoteJid) : undefined);
+    if (alias?.phoneContactKey) {
+      return resolveBrazilMobilePhone(alias.phoneContactKey);
+    }
+
+    return null;
+  }
+
+  private isCommercialLeadOpen(lead: CommercialLead): boolean {
+    return !lead.convertedNetworkId && !lead.convertedCompanyId;
+  }
+
+  private async openLeadIdFromHint(leadId: string | null | undefined): Promise<string | null> {
+    const id = String(leadId ?? '').trim();
+    if (!id) return null;
+    const lead = await this.leads.findOne({
+      where: { id },
+      select: ['id', 'convertedNetworkId', 'convertedCompanyId'],
+    });
+    return lead && this.isCommercialLeadOpen(lead) ? lead.id : null;
+  }
+
+  /** Lead já vinculado ao perfil/mensagens da thread (ex.: reabrir conversa no inbox). */
+  private async resolveInboundThreadLeadId(
+    instanceId: string,
+    contactKey: string,
+    ingestPhone: string | null,
+    identityContactKey: string,
+    extraAliasKeys: string[],
+  ): Promise<string | null> {
+    const threadKeys = await this.resolveThreadContactKeys(instanceId, contactKey);
+    const aliasKeys = [
+      ...new Set([contactKey, identityContactKey, ...threadKeys, ...extraAliasKeys]),
+    ].filter(Boolean);
+    if (!aliasKeys.length) return null;
+
+    const exactProfile = await this.contactProfiles.findOne({
+      where: { instanceId, contactKey },
+      select: ['leadId'],
+    });
+    const fromExactProfile = await this.openLeadIdFromHint(exactProfile?.leadId);
+    if (fromExactProfile) return fromExactProfile;
+
+    const aliasOnly = aliasKeys.filter((key) => key !== contactKey);
+    if (aliasOnly.length) {
+      const profile = await this.contactProfiles.findOne({
+        where: { instanceId, contactKey: In(aliasOnly) },
+        select: ['leadId'],
+      });
+      const fromProfile = await this.openLeadIdFromHint(profile?.leadId);
+      if (fromProfile) return fromProfile;
+    }
+
+    const message = await this.messages
+      .createQueryBuilder('message')
+      .where('message.instance_id = :instanceId', { instanceId })
+      .andWhere('message.contact_phone IN (:...aliasKeys)', { aliasKeys })
+      .andWhere('message.lead_id IS NOT NULL')
+      .orderBy('message.message_at', 'DESC')
+      .getOne();
+    return this.openLeadIdFromHint(message?.leadId);
+  }
+
+  /** Unifica chaves lid/telefone para achar o mesmo lead antes de criar outro. */
+  private async resolveWhatsAppIngestIdentity(
+    instanceId: string,
+    contactKey: string,
+    ingestPhone: string | null,
+  ): Promise<{ identityContactKey: string; extraAliasKeys: string[] }> {
+    const keys = new Set<string>();
+    const add = (value?: string | null) => {
+      const raw = String(value ?? '').trim();
+      if (raw && raw !== 'unknown') keys.add(raw);
+    };
+    add(contactKey);
+    add(ingestPhone);
+
+    const aliases = await this.getLidPhoneAliasesCached(instanceId);
+    for (const [lidKey, alias] of aliases.entries()) {
+      const phone = resolveBrazilMobilePhone(alias.phoneContactKey);
+      if (!phone) continue;
+      const linked =
+        keys.has(lidKey) ||
+        keys.has(phone) ||
+        contactKey === lidKey ||
+        ingestPhone === phone ||
+        alias.phoneContactKey === contactKey;
+      if (!linked) continue;
+      add(lidKey);
+      add(phone);
+      add(alias.phoneContactKey);
+    }
+
+    const phoneDigits =
+      resolveBrazilMobilePhone(ingestPhone) ?? resolveBrazilMobilePhone(contactKey) ?? null;
+    const identityContactKey = phoneDigits ?? contactKey;
+    if (phoneDigits) keys.add(phoneDigits);
+
+    return { identityContactKey, extraAliasKeys: [...keys] };
+  }
+
   /** Contatos não salvos no celular costumam vir como `lid:` até aparecer o telefone no payload. */
   private async rekeyThreadToPhoneIfKnown(
     instanceId: string,
@@ -924,8 +1162,9 @@ export class EvolutionInboxService {
       try {
         const payload = JSON.parse(mediaPayload) as unknown;
         const resolved = resolveContactFromEvolutionPayload(payload);
-        if (resolved?.phone && isValidMobilePhone(normalizeMobilePhone(resolved.phone))) {
-          phoneKey = normalizeMobilePhone(resolved.phone);
+        const fromPayload = resolveBrazilMobilePhone(resolved?.phone);
+        if (fromPayload) {
+          phoneKey = fromPayload;
         }
       } catch {
         /* ignora */
@@ -938,8 +1177,9 @@ export class EvolutionInboxService {
         const key = (payload.key ?? {}) as Record<string, unknown>;
         const senderPn = String(key.senderPn ?? payload.senderPn ?? '').trim();
         const fromPn = phoneFromSenderPn(senderPn);
-        if (fromPn && isValidMobilePhone(normalizeMobilePhone(fromPn))) {
-          phoneKey = normalizeMobilePhone(fromPn);
+        const fromPnDigits = resolveBrazilMobilePhone(fromPn);
+        if (fromPnDigits) {
+          phoneKey = fromPnDigits;
         }
       } catch {
         /* ignora */
@@ -954,6 +1194,31 @@ export class EvolutionInboxService {
     );
 
     const profile = await this.contactProfiles.findOne({ where: { instanceId, contactKey: fromKey } });
+    const phoneProfile = await this.contactProfiles.findOne({
+      where: { instanceId, contactKey: phoneKey },
+    });
+
+    let mergedLeadId = profile?.leadId ?? phoneProfile?.leadId ?? null;
+    if (profile?.leadId && phoneProfile?.leadId && profile.leadId !== phoneProfile.leadId) {
+      const [lidLead, phoneLead] = await Promise.all([
+        this.leads.findOne({
+          where: { id: profile.leadId },
+          select: ['id', 'createdAt'],
+        }),
+        this.leads.findOne({
+          where: { id: phoneProfile.leadId },
+          select: ['id', 'createdAt'],
+        }),
+      ]);
+      const keeperId =
+        lidLead && phoneLead && lidLead.createdAt <= phoneLead.createdAt
+          ? profile.leadId
+          : phoneProfile.leadId;
+      const dropId = keeperId === profile.leadId ? phoneProfile.leadId : profile.leadId;
+      await this.commercialLeads.absorbWhatsAppLeadDuplicate(dropId, keeperId);
+      mergedLeadId = keeperId;
+    }
+
     if (profile) {
       await this.upsertContactProfile({
         instanceId,
@@ -962,11 +1227,20 @@ export class EvolutionInboxService {
         phoneLabel: formatPhoneLenient(phoneKey),
         remoteJid: profile.remoteJid,
         avatarUrl: profile.avatarUrl,
-        leadId: profile.leadId,
+        leadId: mergedLeadId ?? profile.leadId,
       });
-      if (profile.leadId) {
-        await this.commercialLeads.enrichLeadPhoneFromWhatsAppInbox(profile.leadId, phoneKey);
+      if (mergedLeadId) {
+        await this.commercialLeads.enrichLeadPhoneFromWhatsAppInbox(mergedLeadId, phoneKey);
       }
+    } else if (phoneProfile?.leadId) {
+      mergedLeadId = phoneProfile.leadId;
+    }
+
+    if (mergedLeadId) {
+      await this.messages.update(
+        { instanceId, contactPhone: phoneKey, leadId: IsNull() },
+        { leadId: mergedLeadId },
+      );
     }
 
     void this.remoteContacts
@@ -1251,12 +1525,18 @@ export class EvolutionInboxService {
   private async pullRemoteMessagesForThreadIfDue(
     instanceId: string,
     contactKey: string,
-    options?: { force?: boolean },
+    options?: { force?: boolean; watch?: boolean },
   ): Promise<void> {
     const throttleKey = `${instanceId}:${contactKey}`;
     const last = this.threadRemotePullAt.get(throttleKey) ?? 0;
     const webhookHealthy = await this.isInstanceWebhookHealthy(instanceId);
-    const throttleMs = webhookHealthy ? INBOX_THREAD_PULL_THROTTLE_HEALTHY_MS : INBOX_THREAD_PULL_THROTTLE_MS;
+    const throttleMs = options?.force
+      ? 0
+      : options?.watch
+        ? INBOX_THREAD_PULL_THROTTLE_WATCH_MS
+        : webhookHealthy
+          ? INBOX_THREAD_PULL_THROTTLE_HEALTHY_MS
+          : INBOX_THREAD_PULL_THROTTLE_MS;
     if (!options?.force && Date.now() - last < throttleMs) return;
     this.threadRemotePullAt.set(throttleKey, Date.now());
 
@@ -2296,7 +2576,7 @@ export class EvolutionInboxService {
     instanceId: string,
     contactPhone: string,
     limit = 300,
-    options?: { syncRemote?: boolean | 'auto' },
+    options?: { syncRemote?: boolean | 'auto'; watch?: boolean },
   ): Promise<EvolutionInboxMessageDto[]> {
     const contactKey = String(contactPhone ?? '').trim();
     if (!contactKey) throw new NotFoundException('Conversa não encontrada.');
@@ -2310,28 +2590,32 @@ export class EvolutionInboxService {
 
     const markReadPromise = userId ? this.markThreadRead(userId, instanceId, contactKey) : Promise.resolve();
 
+    const watching = Boolean(options?.watch);
     let pullBlocking = false;
     let pullBackground = false;
     if (syncMode === true) {
       pullBlocking = true;
     } else if (syncMode === 'auto') {
-      pullBlocking = !localMax;
-      if (localMax) {
+      pullBlocking = !localMax || watching;
+      if (localMax && !watching) {
         const webhookHealthy = await this.isInstanceWebhookHealthy(instanceId);
         pullBackground = !webhookHealthy;
       }
     }
 
+    const pullOptions = {
+      force: syncMode === true,
+      watch: watching && syncMode !== true,
+    };
+
     if (pullBlocking) {
       try {
-        await this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey, {
-          force: syncMode === true,
-        });
+        await this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey, pullOptions);
       } catch {
         /* Evolution indisponível: exibe histórico local */
       }
     } else if (pullBackground) {
-      void this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey).catch(() => {});
+      void this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey, pullOptions).catch(() => {});
     }
 
     const skipRepair = syncMode === false;
@@ -3181,11 +3465,145 @@ export class EvolutionInboxService {
       if (isHumanContactName(row.displayName)) {
         await this.commercialLeads.enrichLeadFromWhatsAppInbox(row.leadId, row.displayName);
       }
-      const normalizedKey = normalizeMobilePhone(row.contactKey);
-      if (isValidMobilePhone(normalizedKey)) {
+      const normalizedKey = resolveBrazilMobilePhone(row.contactKey) ?? resolveBrazilMobilePhone(row.phoneLabel);
+      if (normalizedKey) {
         await this.commercialLeads.enrichLeadPhoneFromWhatsAppInbox(row.leadId, normalizedKey);
       }
     }
+  }
+
+  /**
+   * Recria vínculo comercial para threads WhatsApp cujo `lead_id` sumiu (ex.: leads apagados).
+   * Usa a última mensagem armazenada e grava telefone via `remoteJidAlt` / `remoteJid`.
+   */
+  async relinkOrphanWhatsAppLeads(
+    instanceId: string,
+    limit = 80,
+  ): Promise<{
+    profilesCleared: number;
+    leadsLinked: number;
+    phonesApplied: number;
+    samples: Array<{ contactKey: string; leadId: string; phone: string | null }>;
+  }> {
+    const safeLimit = Math.min(Math.max(limit, 1), 300);
+    const orphanProfiles = await this.contactProfiles
+      .createQueryBuilder('profile')
+      .leftJoin(CommercialLead, 'lead', 'lead.id = profile.lead_id')
+      .where('profile.instance_id = :instanceId', { instanceId })
+      .andWhere('profile.lead_id IS NOT NULL')
+      .andWhere('lead.id IS NULL')
+      .getMany();
+
+    for (const profile of orphanProfiles) {
+      await this.contactProfiles.update({ id: profile.id }, { leadId: null });
+    }
+
+    const instance = await this.instances.findOne({ where: { id: instanceId, active: true } });
+    if (!instance) throw new NotFoundException('Instância WhatsApp não encontrada');
+
+    const threads = await this.messages
+      .createQueryBuilder('message')
+      .select('message.contact_phone', 'contactPhone')
+      .addSelect('MAX(message.message_at)', 'lastAt')
+      .where('message.instance_id = :instanceId', { instanceId })
+      .andWhere("message.contact_phone NOT LIKE 'group:%'")
+      .groupBy('message.contact_phone')
+      .orderBy('lastAt', 'DESC')
+      .limit(safeLimit)
+      .getRawMany<{ contactPhone: string }>();
+
+    const ownerUserId = await this.resolveOwnerUserId(instance);
+    let leadsLinked = 0;
+    let phonesApplied = 0;
+    const samples: Array<{ contactKey: string; leadId: string; phone: string | null }> = [];
+
+    for (const row of threads) {
+      const contactKey = String(row.contactPhone ?? '').trim();
+      if (!contactKey || contactKey === 'unknown') continue;
+
+      const latest = await this.messages.findOne({
+        where: { instanceId, contactPhone: contactKey },
+        order: { messageAt: 'DESC' },
+      });
+      if (!latest) continue;
+
+      const ingestPhone = await this.resolveIngestPhoneForLead(
+        instanceId,
+        {
+          contactKey,
+          remoteJid: latest.remoteJid,
+          phone: null,
+          mediaPayload: latest.mediaPayload,
+        } as ParsedEvolutionMessage,
+        resolveBrazilMobilePhone(latest.remoteJid),
+      );
+
+      const { identityContactKey, extraAliasKeys } = await this.resolveWhatsAppIngestIdentity(
+        instanceId,
+        contactKey,
+        ingestPhone,
+      );
+
+      const skipLead = await this.leadIgnoreContacts.isContactIgnored(instanceId, {
+        contactKey,
+        phone: ingestPhone,
+        remoteJid: latest.remoteJid,
+        extraAliasKeys,
+      });
+      if (skipLead) continue;
+
+      const outcome = await this.commercialLeads.ensureLeadFromWhatsAppInbox({
+        instanceId,
+        contactKey,
+        identityContactKey,
+        extraAliasKeys,
+        phone: ingestPhone,
+        remoteJid: latest.remoteJid,
+        pushName: latest.contactName,
+        messageText: String(latest.body ?? '').trim() || '—',
+        externalId: latest.externalId ?? `relink-${latest.id}`,
+        ownerUserId,
+        createdByUserId: ownerUserId,
+        instanceLabel: instance.name,
+        recordInteraction: false,
+        autoCreateLeads: instance.autoCreateLeads,
+        phoneHints: [contactKey, latest.remoteJid, ingestPhone],
+        mediaPayload: latest.mediaPayload,
+      });
+
+      if (!outcome.leadId) continue;
+
+      await this.messages.update({ instanceId, contactPhone: contactKey }, { leadId: outcome.leadId });
+      await this.contactProfiles.update({ instanceId, contactKey }, { leadId: outcome.leadId });
+
+      const applied = await this.commercialLeads.applyWhatsAppPhoneToLead(
+        outcome.leadId,
+        [contactKey, latest.remoteJid, ingestPhone],
+        latest.contactName,
+        latest.mediaPayload,
+      );
+
+      leadsLinked += 1;
+      if (applied) phonesApplied += 1;
+      if (samples.length < 20) {
+        samples.push({ contactKey, leadId: outcome.leadId, phone: applied });
+      }
+    }
+
+    return {
+      profilesCleared: orphanProfiles.length,
+      leadsLinked,
+      phonesApplied,
+      samples,
+    };
+  }
+
+  /** Consulta a Evolution e reconcilia threads `lid:` com o telefone real vinculado ao lead. */
+  async reconcileLidPhonesForLeads(instanceId: string): Promise<{ lidAliases: number }> {
+    const aliases = await this.remoteContacts.fetchLidPhoneAliases(instanceId);
+    this.lidPhoneAliasCache.set(instanceId, { at: Date.now(), map: aliases });
+    await this.reconcileLidContactPhones(instanceId, aliases);
+    return { lidAliases: aliases.size };
   }
 
   private async reconcileLidContactPhones(

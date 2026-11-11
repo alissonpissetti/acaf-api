@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { UsersService } from '../users/users.service';
 import {
   CommercialLeadAuditChange,
@@ -35,6 +35,12 @@ export class CommercialLeadAuditService {
         };
       }),
     );
+  }
+
+  async deleteForLeads(leadIds: string[]) {
+    const ids = leadIds.filter(Boolean);
+    if (!ids.length) return;
+    await this.logs.delete({ leadId: In(ids) });
   }
 
   async record(leadId: string, userId: string | undefined, changes: CommercialLeadAuditChange[]) {

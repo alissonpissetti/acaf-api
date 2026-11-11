@@ -18,13 +18,20 @@ import type {
   CreateEvolutionInstanceInput,
   UpdateEvolutionInstanceInput,
 } from './evolution-instances.service';
+import {
+  EvolutionLeadIgnoreContactsService,
+  type CreateEvolutionLeadIgnoreContactInput,
+} from './evolution-lead-ignore-contacts.service';
 
 @ApiTags('Admin · Evolution API')
 @ApiBearerAuth('admin-jwt')
 @Controller('admin/evolution/instances')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class EvolutionInstancesController {
-  constructor(private readonly evolution: EvolutionInstancesService) {}
+  constructor(
+    private readonly evolution: EvolutionInstancesService,
+    private readonly leadIgnores: EvolutionLeadIgnoreContactsService,
+  ) {}
 
   @Get('overview')
   @RequirePermissions('sistema.evolution')
@@ -108,5 +115,26 @@ export class EvolutionInstancesController {
   @RequirePermissions('sistema.evolution.manage', 'comercial.leads')
   syncMessageMedia(@Param('id') id: string) {
     return this.evolution.syncMessageMedia(id);
+  }
+
+  @Get(':id/lead-ignore-contacts')
+  @RequirePermissions('sistema.evolution.manage')
+  listLeadIgnoreContacts(@Param('id') id: string) {
+    return this.leadIgnores.listForInstance(id);
+  }
+
+  @Post(':id/lead-ignore-contacts')
+  @RequirePermissions('sistema.evolution.manage')
+  addLeadIgnoreContact(
+    @Param('id') id: string,
+    @Body() body: CreateEvolutionLeadIgnoreContactInput,
+  ) {
+    return this.leadIgnores.add(id, body);
+  }
+
+  @Delete(':id/lead-ignore-contacts/:ignoreId')
+  @RequirePermissions('sistema.evolution.manage')
+  removeLeadIgnoreContact(@Param('id') id: string, @Param('ignoreId') ignoreId: string) {
+    return this.leadIgnores.remove(id, ignoreId);
   }
 }

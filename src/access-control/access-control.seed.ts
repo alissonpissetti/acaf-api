@@ -134,6 +134,13 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
         sortOrder: 3,
         permissionKey: 'comercial.leads',
       },
+      {
+        slug: 'relatorio-perdas',
+        label: 'Análise comercial',
+        route: '/m/comercial/relatorio-perdas',
+        sortOrder: 4,
+        permissionKey: 'comercial.leads',
+      },
     ],
   },
   {

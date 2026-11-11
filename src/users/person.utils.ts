@@ -34,6 +34,41 @@ export function isValidMobilePhone(digits: string): boolean {
   return digits.length === 11 && digits[2] === '9';
 }
 
+/** Extrai celular BR (11 dígitos, 3º = 9) de chaves WhatsApp, JID ou número com DDI. */
+export function resolveBrazilMobilePhone(value: string | null | undefined): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  if (/^lid:/i.test(raw)) return null;
+  if (raw.includes('@lid')) return null;
+
+  const numeric = raw.replace(/\D/g, '');
+  if (!numeric) return null;
+
+  if (numeric.length >= 12 && numeric.startsWith('55')) {
+    const afterDdi = numeric.slice(2);
+    if (afterDdi.length === 11 && isValidMobilePhone(afterDdi)) return afterDdi;
+    if (afterDdi.length === 10) {
+      const withNine = `${afterDdi.slice(0, 2)}9${afterDdi.slice(2)}`;
+      if (isValidMobilePhone(withNine)) return withNine;
+      if (afterDdi[2] === '9') return afterDdi;
+    }
+    const local = numeric.slice(-11);
+    if (isValidMobilePhone(local)) return local;
+  }
+
+  if (numeric.length === 11 && isValidMobilePhone(numeric)) return numeric;
+
+  if (numeric.length === 10) {
+    const candidate = `${numeric.slice(0, 2)}9${numeric.slice(2)}`;
+    if (isValidMobilePhone(candidate)) return candidate;
+  }
+
+  const trimmed = normalizeMobilePhone(numeric);
+  if (isValidMobilePhone(trimmed)) return trimmed;
+
+  return null;
+}
+
 export function normalizeCnpj(value: string): string {
   return String(value ?? '').replace(/\D/g, '').slice(0, 14);
 }

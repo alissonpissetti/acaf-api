@@ -42,17 +42,41 @@ function extractParticipantLabel(item: Record<string, unknown>, key: Record<stri
   return null;
 }
 
+function coerceUnixMillis(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return raw > 1e12 ? raw : raw * 1000;
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (/^\d+$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (Number.isFinite(num) && num > 0) return num > 1e12 ? num : num * 1000;
+    }
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (typeof raw === 'object') {
+    const record = raw as { low?: number; high?: number };
+    const low = Number(record.low);
+    const high = Number.isFinite(Number(record.high)) ? Number(record.high) : 0;
+    if (Number.isFinite(low) && low > 0) {
+      const unix = high ? high * 4294967296 + (low >>> 0) : low;
+      return unix > 1e12 ? unix : unix * 1000;
+    }
+  }
+  return null;
+}
+
 function messageTimestamp(item: Record<string, unknown>, key: Record<string, unknown>): Date {
   const raw =
     item.messageTimestamp ??
     key.messageTimestamp ??
     item.timestamp ??
     (item.message as Record<string, unknown> | undefined)?.messageTimestamp;
-  const num = typeof raw === 'number' ? raw : Number(raw);
-  if (Number.isFinite(num) && num > 0) {
-    const ms = num > 1e12 ? num : num * 1000;
-    return new Date(ms);
-  }
+  const ms = coerceUnixMillis(raw);
+  if (ms != null) return new Date(ms);
   return new Date();
 }
 

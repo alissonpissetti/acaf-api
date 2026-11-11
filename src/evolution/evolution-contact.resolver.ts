@@ -29,6 +29,13 @@ function phoneFromPhoneJid(jid: string): string | null {
   const digits = digitsFromJid(jid);
   if (!digits) return null;
   if (digits.length >= 12 && digits.startsWith('55')) {
+    const afterDdi = digits.slice(2);
+    if (afterDdi.length === 11 && isValidMobilePhone(afterDdi)) return afterDdi;
+    if (afterDdi.length === 10) {
+      const withNine = `${afterDdi.slice(0, 2)}9${afterDdi.slice(2)}`;
+      if (isValidMobilePhone(withNine)) return withNine;
+      if (afterDdi[2] === '9') return afterDdi;
+    }
     const local = digits.slice(-11);
     return isValidMobilePhone(local) ? local : null;
   }
@@ -155,7 +162,9 @@ export function formatPhoneLenient(contactKey: string): string | null {
 }
 
 export function normalizedBrazilMobileKey(contactKey: string): string | null {
-  const digits = normalizeMobilePhone(contactKey);
+  const key = String(contactKey ?? '').trim();
+  if (!key || key.startsWith('lid:') || key.startsWith('group:')) return null;
+  const digits = normalizeMobilePhone(key);
   return isValidMobilePhone(digits) ? digits : null;
 }
 
