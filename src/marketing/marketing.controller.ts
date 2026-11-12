@@ -284,10 +284,12 @@ export class MarketingController {
     return this.landingPages.updatePage(id, body);
   }
 
+  /** Resposta de sucesso na exclusão definitiva (`?force=1`, padrão): `{ ok: true, removed: true }`. Com `?force=0`, apenas inativa: `{ ok: true, removed: false }`. */
   @Delete('landing-pages/:id')
   @RequirePermissions('marketing.formularios.manage')
-  deactivateLandingPage(@Param('id') id: string) {
-    return this.landingPages.deactivatePage(id);
+  deactivateLandingPage(@Param('id') id: string, @Query('force') force?: string) {
+    const forceDelete = force !== '0' && force !== 'false';
+    return this.landingPages.deactivatePage(id, { force: forceDelete });
   }
 
   @Get('landing-pages/:id/metrics')

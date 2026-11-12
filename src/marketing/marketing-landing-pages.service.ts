@@ -1,11 +1,12 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Request } from 'express';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import type { CommercialLeadType } from '../commercial/commercial-lead.entity';
 import { CommercialLeadsService } from '../commercial/commercial-leads.service';
 import { BrandFontsService } from '../branding/brand-fonts.service';
@@ -36,7 +37,10 @@ import { buildMarketingFormPath, utmFromCreative, type MarketingUtmParams } from
 
 @Injectable()
 export class MarketingLandingPagesService {
+  private readonly logger = new Logger(MarketingLandingPagesService.name);
+
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(MarketingLandingPage)
     private readonly pages: Repository<MarketingLandingPage>,
     @InjectRepository(MarketingFormSubmission)
@@ -250,21 +254,104 @@ export class MarketingLandingPagesService {
     return this.pageDto(row);
   }
 
-  async deactivatePage(id: string) {
+  async deactivatePage(id: string, options: { force?: boolean } = {}) {
+    const force = options.force !== false;
     const row = await this.pages.findOne({ where: { id } });
     if (!row) throw new NotFoundException('Formulário não encontrado.');
 
+    if (!force) {
+      row.active = false;
+      await this.pages.save(row);
+      return { ok: true, removed: false };
+    }
+
     await this.removePageRecord(row);
+
+    const stillThere = await this.pages.findOne({ where: { id } });
+    if (stillThere) {
+      throw new BadRequestException(
+        'O formulário não foi removido do banco. Tente novamente ou contate o suporte.',
+      );
+    }
+
     return { ok: true, removed: true };
   }
 
   private async removePageRecord(page: MarketingLandingPage) {
-    await this.creatives.update({ landingPageId: page.id }, { landingPageId: null });
-    await this.events.delete({ landingPageId: page.id });
-    await this.submissions.delete({ landingPageId: page.id });
-    const deleted = await this.pages.delete({ id: page.id });
-    if (!deleted.affected) {
-      throw new BadRequestException('Não foi possível remover o formulário.');
+    const pageId = page.id;
+
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        await manager.getRepository(MarketingCreative).update(
+          { landingPageId: pageId },
+          { landingPageId: null },
+        );
+        if (page.creativeId) {
+          await manager.getRepository(MarketingCreative).update(
+            { id: page.creativeId },
+            { landingPageId: null },
+          );
+        }
+        await manager.getRepository(MarketingPageEvent).delete({ landingPageId: pageId });
+        await manager.getRepository(MarketingFormSubmission).delete({ landingPageId: pageId });
+        const deleted = await manager.getRepository(MarketingLandingPage).delete({ id: pageId });
+        if (!deleted.affected) {
+          throw new BadRequestException('Não foi possível remover o formulário.');
+        }
+      });
+    } catch (error) {
+      this.logger.error(
+        `Falha na exclusão transacional do formulário ${pageId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      const removed = await this.forceRemovePageRecordSql(pageId);
+      if (!removed) {
+        const detail =
+          error instanceof Error && error.message
+            ? error.message
+            : 'Falha ao remover o formulário e dependências.';
+        throw new BadRequestException(
+          `Não foi possível excluir o formulário: ${detail}`,
+        );
+      }
+    }
+  }
+
+  private async forceRemovePageRecordSql(pageId: string): Promise<boolean> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      await queryRunner.query(
+        `UPDATE acaf_marketing_creatives SET landing_page_id = NULL WHERE landing_page_id = ?`,
+        [pageId],
+      );
+      await queryRunner.query(
+        `DELETE FROM acaf_marketing_page_events WHERE landing_page_id = ?`,
+        [pageId],
+      );
+      await queryRunner.query(
+        `DELETE FROM acaf_marketing_form_submissions WHERE landing_page_id = ?`,
+        [pageId],
+      );
+      const result = await queryRunner.query(
+        `DELETE FROM acaf_marketing_landing_pages WHERE id = ?`,
+        [pageId],
+      );
+      await queryRunner.commitTransaction();
+      const affectedRows =
+        (result as { affectedRows?: number })?.affectedRows ??
+        (Array.isArray(result) ? Number(result[0]?.affectedRows ?? 0) : 0);
+      return affectedRows > 0;
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `Fallback SQL falhou ao remover formulário ${pageId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return false;
+    } finally {
+      await queryRunner.release();
     }
   }
 

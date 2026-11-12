@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { CommercialLeadsService } from '../commercial/commercial-leads.service';
 import { BrandFontsService } from '../branding/brand-fonts.service';
 import { NextcloudService } from '../storage/nextcloud.service';
@@ -25,19 +26,40 @@ function repoMock() {
   };
 }
 
+function buildDataSourceMock(repos: Record<string, ReturnType<typeof repoMock>>) {
+  const manager = {
+    getRepository: jest.fn((entity: unknown) => {
+      if (entity === MarketingLandingPage) return repos.pages;
+      if (entity === MarketingFormSubmission) return repos.submissions;
+      if (entity === MarketingPageEvent) return repos.events;
+      if (entity === MarketingCreative) return repos.creatives;
+      throw new Error('unexpected entity in transaction');
+    }),
+  };
+  return {
+    transaction: jest.fn(async (fn: (m: typeof manager) => Promise<void>) => fn(manager)),
+    createQueryRunner: jest.fn(),
+    query: jest.fn(),
+    _manager: manager,
+  };
+}
+
 describe('MarketingLandingPagesService.deactivatePage', () => {
   let service: MarketingLandingPagesService;
   const pages = repoMock();
   const submissions = repoMock();
   const events = repoMock();
   const creatives = repoMock();
+  let dataSource: ReturnType<typeof buildDataSourceMock>;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    dataSource = buildDataSourceMock({ pages, submissions, events, creatives });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MarketingLandingPagesService,
+        { provide: DataSource, useValue: dataSource },
         { provide: getRepositoryToken(MarketingLandingPage), useValue: pages },
         { provide: getRepositoryToken(MarketingFormSubmission), useValue: submissions },
         { provide: getRepositoryToken(MarketingPageEvent), useValue: events },
@@ -60,7 +82,9 @@ describe('MarketingLandingPagesService.deactivatePage', () => {
       active: true,
     } as MarketingLandingPage;
 
-    pages.findOne.mockResolvedValue(row);
+    pages.findOne
+      .mockResolvedValueOnce(row)
+      .mockResolvedValueOnce(null);
     creatives.update.mockResolvedValue({ affected: 0 });
     events.delete.mockResolvedValue({ affected: 0 });
     submissions.delete.mockResolvedValue({ affected: 0 });
@@ -69,6 +93,7 @@ describe('MarketingLandingPagesService.deactivatePage', () => {
     const result = await service.deactivatePage('page-1');
 
     expect(result).toEqual({ ok: true, removed: true });
+    expect(dataSource.transaction).toHaveBeenCalled();
     expect(creatives.update).toHaveBeenCalledWith(
       { landingPageId: 'page-1' },
       { landingPageId: null },
@@ -87,7 +112,9 @@ describe('MarketingLandingPagesService.deactivatePage', () => {
       submissionCount: 2,
     } as MarketingLandingPage;
 
-    pages.findOne.mockResolvedValue(row);
+    pages.findOne
+      .mockResolvedValueOnce(row)
+      .mockResolvedValueOnce(null);
     creatives.update.mockResolvedValue({ affected: 1 });
     events.delete.mockResolvedValue({ affected: 3 });
     submissions.delete.mockResolvedValue({ affected: 2 });
@@ -115,7 +142,9 @@ describe('MarketingLandingPagesService.deactivatePage', () => {
       submissionCount: 0,
     } as MarketingLandingPage;
 
-    pages.findOne.mockResolvedValue(row);
+    pages.findOne
+      .mockResolvedValueOnce(row)
+      .mockResolvedValueOnce(null);
     creatives.update.mockResolvedValue({ affected: 0 });
     events.delete.mockResolvedValue({ affected: 1 });
     submissions.delete.mockResolvedValue({ affected: 0 });
@@ -140,7 +169,51 @@ describe('MarketingLandingPagesService.deactivatePage', () => {
     events.delete.mockResolvedValue({ affected: 0 });
     submissions.delete.mockResolvedValue({ affected: 0 });
     pages.delete.mockResolvedValue({ affected: 0 });
+    const queryRunner = {
+      connect: jest.fn(),
+      startTransaction: jest.fn(),
+      query: jest
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({ affectedRows: 0 }),
+      commitTransaction: jest.fn(),
+      rollbackTransaction: jest.fn(),
+      release: jest.fn(),
+    };
+    dataSource.createQueryRunner.mockReturnValue(queryRunner);
 
     await expect(service.deactivatePage('page-ghost')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('com force=false apenas inativa o formulário', async () => {
+    const row = {
+      id: 'page-soft',
+      name: 'Soft',
+      active: true,
+    } as MarketingLandingPage;
+    pages.findOne.mockResolvedValue(row);
+    pages.save.mockImplementation(async (r) => r);
+
+    const result = await service.deactivatePage('page-soft', { force: false });
+
+    expect(result).toEqual({ ok: true, removed: false });
+    expect(row.active).toBe(false);
+    expect(pages.save).toHaveBeenCalledWith(row);
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+  });
+
+  it('falha se o registro ainda existir após exclusão bem-sucedida na transação', async () => {
+    const row = { id: 'page-zombie', name: 'Zombie', active: true } as MarketingLandingPage;
+    pages.findOne
+      .mockResolvedValueOnce(row)
+      .mockResolvedValueOnce(row);
+    creatives.update.mockResolvedValue({ affected: 0 });
+    events.delete.mockResolvedValue({ affected: 0 });
+    submissions.delete.mockResolvedValue({ affected: 0 });
+    pages.delete.mockResolvedValue({ affected: 1 });
+
+    await expect(service.deactivatePage('page-zombie')).rejects.toBeInstanceOf(BadRequestException);
   });
 });

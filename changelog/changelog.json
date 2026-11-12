@@ -2,6 +2,23 @@
   "version": 1,
   "entries": [
     {
+      "id": "13b21579-1165-4754-bd24-16fcdc581e61",
+      "commitSha": "3132eeb9ed4cc875f6635dcb2ed8579e278aee61",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-12T16:27:45-03:00",
+      "title": "Exclusão definitiva de landing pages e campo select",
+      "summary": "Hard delete em deactivate com limpeza de creatives, eventos e submissões;",
+      "category": "feature",
+      "areas": [
+        "api"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "29a293ce-d658-483b-82de-191b11c604b8",
       "commitSha": "0eb8ca4be6f079ee465d0b6c13b80e1cc2cfa114",
       "repository": "api",
