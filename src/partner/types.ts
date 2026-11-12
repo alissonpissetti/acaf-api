@@ -6,6 +6,7 @@ import { createEmptyStore } from './store-normalize';
 import { getDomain } from './store';
 import type { DayOfWeek, UnitWeeklySchedule } from './weeklySchedule';
 import { sanitizeUnitPhotosForApi } from './photoUrls';
+import type { AssociateImportSource } from './associate-meta';
 
 /** Uma linha do histórico diário de vidas pagantes (associados) para faixas de repasse. */
 export type AssociateRepasseDailySnapshot = {
@@ -71,7 +72,11 @@ export type ConnectPlanId =
   | 'connect-plus'
   | 'connect-multi'
   | 'connect-pro'
-  | 'connect-total';
+  | 'connect-max'
+  | 'connect-prime'
+  | 'connect-elite'
+  | 'connect-signature'
+  | 'connect-infinite';
 
 export type UnitPlanSpec = {
   connectPlanId: ConnectPlanId;
@@ -138,6 +143,8 @@ export type GymUnit = {
   instructors?: string[];
   /** Metadados da planilha de associados ACAF (importação admin). */
   acafAssociate?: AcafAssociateMeta;
+  /** Resumo da entidade `associations` (somente respostas admin). */
+  associateAssociation?: { id: string; name: string; slug: string };
   /**
    * Override opcional (%): taxa sobre planos de assinatura para esta unidade.
    * Tem precedência sobre a rede e sobre o padrão global.
@@ -150,16 +157,19 @@ export type GymUnit = {
   dailyFeePercentOverride?: number | null;
 };
 
-/** Cadastro de academia associada ACAF (planilha NOVA ASSINATURA). */
+/** Cadastro de academia associada (planilha NOVA ASSINATURA e futuras importações). */
 export type AcafAssociateMeta = {
+  /** FK opcional da entidade `associations` (agrupador comercial / portal). */
+  associationId?: string;
   /** CNPJ só dígitos — chave de upsert na reimportação. */
   cnpj: string;
   legalName: string;
+  /** Rótulo da coluna «Associação» na planilha (texto livre). */
   association: string;
   /** ISO date (YYYY-MM-DD). */
   signedAt: string;
   contactEmail: string;
-  importSource: 'acaf_associates_xlsx';
+  importSource: AssociateImportSource;
   importedAt: string;
   /** false = removido da planilha na última sincronização (some do catálogo app). */
   listed?: boolean;
@@ -285,6 +295,11 @@ export type AdminNetwork = {
   dailyFeePercentOverride?: number | null;
   /** Usuário admin/comercial que cadastrou a rede parceira. */
   commercialOwnerUserId?: string | null;
+  /**
+   * E-mail do responsável pelo parceiro (convite de onboarding).
+   * Tem prioridade sobre o e-mail da planilha ACAF por unidade.
+   */
+  partnerContactEmail?: string | null;
   /**
    * Campo legado; CNPJ pertence à unidade (`acafAssociate.cnpj`), não à rede.
    * Mantido opcional para dados antigos — novas importações ACAF não preenchem.

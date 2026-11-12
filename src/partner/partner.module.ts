@@ -24,9 +24,12 @@ import { PartnerAuthModule } from '../partner-auth/partner-auth.module';
 import { AssociateRepasseDailyScheduler } from './associate-repasse-daily.scheduler';
 import { SystemSettingsModule } from '../system-settings/system-settings.module';
 import { EvolutionInstance } from '../evolution/evolution-instance.entity';
+import { AssociationsModule } from '../associations/associations.module';
+import { AssociateStoreMigrationService } from '../associations/associate-store-migration.service';
 
 @Module({
   imports: [
+    AssociationsModule,
     PartnerAuthModule,
     TypeOrmModule.forFeature([
       UnitSchedule,
@@ -54,6 +57,7 @@ import { EvolutionInstance } from '../evolution/evolution-instance.entity';
     UnitCoordinatesService,
     AcafAssociatesImportService,
     AssociateRepasseDailyScheduler,
+    AssociateStoreMigrationService,
   ],
   exports: [UnitScheduleService, PartnerStorePersistenceService, AdminService],
 })

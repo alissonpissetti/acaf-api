@@ -10,12 +10,15 @@ import { UsersModule } from '../users/users.module';
 import { PartnerAuthController } from './partner-auth.controller';
 import { PartnerAuthService } from './partner-auth.service';
 import { PartnerJwtStrategy } from './partner-jwt.strategy';
+import { MailModule } from '../mail/mail.module';
+import { PartnerOnboardingEmailSend } from './partner-onboarding-email-send.entity';
 import { PartnerOnboardingInvite } from './partner-onboarding-invite.entity';
 import { PartnerOnboardingService } from './partner-onboarding.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([PartnerOnboardingInvite]),
+    MailModule,
+    TypeOrmModule.forFeature([PartnerOnboardingInvite, PartnerOnboardingEmailSend]),
     AuthModule,
     SmsModule,
     PlatformUsersModule,

@@ -39,11 +39,39 @@
       "description": "Tier avançado para uso intenso do benefício."
     },
     {
-      "id": "connect-total",
-      "name": "Total",
+      "id": "connect-max",
+      "name": "Max",
       "pricePerMonth": 299.9,
       "tierIndex": 4,
-      "description": "Máximo nível de benefícios."
+      "description": "Máximo nível de benefícios na faixa principal."
+    },
+    {
+      "id": "connect-prime",
+      "name": "Prime",
+      "pricePerMonth": 399.9,
+      "tierIndex": 5,
+      "description": "Benefícios ampliados para quem prioriza o treino na rede."
+    },
+    {
+      "id": "connect-elite",
+      "name": "Elite",
+      "pricePerMonth": 549.9,
+      "tierIndex": 6,
+      "description": "Tier premium com cobertura reforçada de modalidades."
+    },
+    {
+      "id": "connect-signature",
+      "name": "Signature",
+      "pricePerMonth": 699.9,
+      "tierIndex": 7,
+      "description": "Experiência signature com o máximo de flexibilidade na rede."
+    },
+    {
+      "id": "connect-infinite",
+      "name": "Infinite",
+      "pricePerMonth": 799.9,
+      "tierIndex": 8,
+      "description": "Topo da linha Connect — benefícios ilimitados no ecossistema."
     }
   ],
   "modalityCatalog": [

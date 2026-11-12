@@ -11,6 +11,16 @@ import {
   buildEmployeeEnrollmentInviteSubject,
   buildEmployeeEnrollmentInviteText,
 } from './employee-enrollment-invite.template';
+import {
+  buildPartnerOnboardingInviteHtml,
+  buildPartnerOnboardingInviteSubject,
+  buildPartnerOnboardingInviteText,
+} from './partner-onboarding-invite.template';
+import {
+  buildPartnerTeamInviteHtml,
+  buildPartnerTeamInviteSubject,
+  buildPartnerTeamInviteText,
+} from './partner-team-invite.template';
 
 const MAIL_LOGO_FILE = 'movly-logo-lime-on-purple.png';
 
@@ -19,6 +29,11 @@ const HOSTINGER_MAIL_API_BASE = 'https://api.mail.hostinger.com';
 export type SendMailResult = {
   sent: boolean;
   enrollmentCode?: string;
+  reason?: string;
+};
+
+export type SendPartnerOnboardingInviteResult = {
+  sent: boolean;
   reason?: string;
 };
 
@@ -300,6 +315,112 @@ export class MailService implements OnModuleInit {
         enrollmentCode: code,
         reason: this.friendlySendError(message),
       };
+    }
+  }
+
+  async sendPartnerOnboardingInvite(input: {
+    to: string;
+    networkName: string;
+    inviteUrl: string;
+    expiresAt: Date;
+  }): Promise<SendPartnerOnboardingInviteResult> {
+    const expiresAtLabel = input.expiresAt.toLocaleString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      dateStyle: 'short',
+      timeStyle: 'short',
+    });
+    const inviteContent = {
+      networkName: input.networkName,
+      inviteUrl: input.inviteUrl.trim(),
+      expiresAtLabel,
+      logoUrl: await this.employeeInviteLogoUrl(),
+    };
+
+    const subject = buildPartnerOnboardingInviteSubject(input.networkName);
+    const text = buildPartnerOnboardingInviteText(inviteContent);
+    const html = buildPartnerOnboardingInviteHtml(inviteContent);
+
+    const provider = this.mailProvider();
+    if (!provider) {
+      this.logger.warn(`E-mail não configurado — convite de onboarding não enviado para ${input.to}`);
+      return {
+        sent: false,
+        reason:
+          'E-mail não configurado na API (SMTP ou Hostinger Mail API). Configure MAIL_PROVIDER ou use "Gerar link".',
+      };
+    }
+
+    const from = this.defaultFromAddress();
+
+    try {
+      if (provider === 'hostinger') {
+        await this.sendViaHostinger({ to: input.to, subject, text, html });
+      } else {
+        const transporter = this.getTransporter();
+        if (!transporter) {
+          return { sent: false, reason: 'SMTP_HOST não configurado na API.' };
+        }
+        await transporter.sendMail({ from, to: input.to, subject, text, html });
+      }
+      this.logger.log(`Convite de onboarding parceiro enviado para ${input.to}`);
+      return { sent: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Falha ao enviar convite de onboarding para ${input.to}: ${message}`);
+      return { sent: false, reason: this.friendlySendError(message) };
+    }
+  }
+
+  async sendPartnerTeamInvite(input: {
+    to: string;
+    networkName: string;
+    inviteUrl: string;
+    expiresAt: Date;
+  }): Promise<SendPartnerOnboardingInviteResult> {
+    const expiresAtLabel = input.expiresAt.toLocaleString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      dateStyle: 'short',
+      timeStyle: 'short',
+    });
+    const inviteContent = {
+      networkName: input.networkName,
+      inviteUrl: input.inviteUrl.trim(),
+      expiresAtLabel,
+      logoUrl: await this.employeeInviteLogoUrl(),
+    };
+
+    const subject = buildPartnerTeamInviteSubject(input.networkName);
+    const text = buildPartnerTeamInviteText(inviteContent);
+    const html = buildPartnerTeamInviteHtml(inviteContent);
+
+    const provider = this.mailProvider();
+    if (!provider) {
+      this.logger.warn(`E-mail não configurado — convite de equipe não enviado para ${input.to}`);
+      return {
+        sent: false,
+        reason:
+          'E-mail não configurado na API (SMTP ou Hostinger Mail API). Configure MAIL_PROVIDER ou use "Gerar link".',
+      };
+    }
+
+    const from = this.defaultFromAddress();
+
+    try {
+      if (provider === 'hostinger') {
+        await this.sendViaHostinger({ to: input.to, subject, text, html });
+      } else {
+        const transporter = this.getTransporter();
+        if (!transporter) {
+          return { sent: false, reason: 'SMTP_HOST não configurado na API.' };
+        }
+        await transporter.sendMail({ from, to: input.to, subject, text, html });
+      }
+      this.logger.log(`Convite de equipe parceiro enviado para ${input.to}`);
+      return { sent: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Falha ao enviar convite de equipe para ${input.to}: ${message}`);
+      return { sent: false, reason: this.friendlySendError(message) };
     }
   }
 }

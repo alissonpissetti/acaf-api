@@ -177,10 +177,41 @@ export class MarketingCampaignsService {
   async deactivateCampaign(id: string) {
     const row = await this.campaigns.findOne({ where: { id } });
     if (!row) throw new NotFoundException('Campanha não encontrada.');
-    row.active = false;
-    row.status = 'finished';
-    await this.campaigns.save(row);
-    return { ok: true };
+
+    const submissionCount = await this.submissions.count({ where: { campaignId: id } });
+    if (submissionCount > 0) {
+      row.active = false;
+      row.status = 'finished';
+      await this.campaigns.save(row);
+      return { ok: true, removed: false };
+    }
+
+    await this.removeCampaignRecord(id);
+    return { ok: true, removed: true };
+  }
+
+  private async removeCampaignRecord(campaignId: string) {
+    const creativeRows = await this.creatives.find({ where: { campaignId } });
+    const creativeIds = creativeRows.map((creative) => creative.id);
+
+    await this.landingPages
+      .createQueryBuilder()
+      .update()
+      .set({ campaignId: null })
+      .where('campaign_id = :campaignId', { campaignId })
+      .execute();
+
+    if (creativeIds.length) {
+      await this.landingPages
+        .createQueryBuilder()
+        .update()
+        .set({ creativeId: null })
+        .where('creative_id IN (:...creativeIds)', { creativeIds })
+        .execute();
+      await this.creatives.delete({ campaignId });
+    }
+
+    await this.campaigns.delete({ id: campaignId });
   }
 
   async createCreative(

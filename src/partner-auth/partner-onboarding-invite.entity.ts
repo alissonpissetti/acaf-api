@@ -13,6 +13,10 @@ export class PartnerOnboardingInvite {
   @Column({ name: 'network_id', type: 'varchar', length: 128 })
   networkId: string;
 
+  /** `onboarding` = primeiro acesso da rede; `team` = usuário adicional com unidades já vinculadas. */
+  @Column({ name: 'kind', type: 'varchar', length: 16, default: 'onboarding' })
+  kind: string;
+
   @Column({ name: 'created_by_user_id', type: 'uuid', nullable: true })
   createdByUserId: string | null;
 

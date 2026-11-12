@@ -13,8 +13,12 @@ import { currentMonthLabelBr } from './payoutMonth';
 import { buildNewUnit, emptyMonthlyPayout } from './unitFactory';
 import { normalizeWeeklySchedule } from './weeklySchedule';
 import { UnitCoordinatesService } from './unit-coordinates.service';
+import { AssociationsService } from '../associations/associations.service';
+import { isImportedAssociateMeta } from './associate-meta';
 
 export type AcafAssociatesImportOptions = {
+  /** Slug do agrupador (`associations.slug`); padrão `acaf`. */
+  associationSlug?: string;
   /** Marca como fora do catálogo unidades importadas antes que não aparecem na planilha. */
   syncMissing?: boolean;
   /**
@@ -117,7 +121,7 @@ function ensureAcafGroupNetwork(
 function migrateLegacyAcafNetworksToTradeNameGroups(store: ApiStore): void {
   for (const unit of store.units) {
     const meta = unit.acafAssociate;
-    if (!meta || meta.importSource !== 'acaf_associates_xlsx') continue;
+    if (!isImportedAssociateMeta(meta)) continue;
     if (!LEGACY_ACAF_NETWORK_BY_CNPJ.test(unit.networkId)) continue;
 
     const tradeName = unit.unitName?.trim() ?? '';
@@ -136,7 +140,10 @@ function migrateLegacyAcafNetworksToTradeNameGroups(store: ApiStore): void {
 
 @Injectable()
 export class AcafAssociatesImportService {
-  constructor(private readonly unitCoordinates: UnitCoordinatesService) {}
+  constructor(
+    private readonly unitCoordinates: UnitCoordinatesService,
+    private readonly associations: AssociationsService,
+  ) {}
 
   async importSpreadsheet(
     file: Express.Multer.File,
@@ -146,6 +153,10 @@ export class AcafAssociatesImportService {
     if (!file?.buffer?.length) {
       throw new BadRequestException('Envie o arquivo Excel (.xlsx).');
     }
+
+    const associationSlug = options.associationSlug?.trim() || 'acaf';
+    const association = await this.associations.requireBySlug(associationSlug);
+    const associationId = association.id;
 
     const workbook = XLSX.read(file.buffer, { type: 'buffer', cellDates: true });
     const sheetName = workbook.SheetNames[0];
@@ -187,7 +198,7 @@ export class AcafAssociatesImportService {
 
     for (const row of parsed.rows) {
       if (row.kind === 'remocao') {
-        const n = await this.applyRemovalRow(row, importedAt);
+        const n = await this.applyRemovalRow(row, importedAt, associationId);
         if (n.applied) {
           deactivatedByStatus += 1;
           if (sample.length < 8)
@@ -205,7 +216,7 @@ export class AcafAssociatesImportService {
         continue;
       }
 
-      const meta = buildAcafAssociateMeta(row, importedAt, true);
+      const meta = buildAcafAssociateMeta(row, importedAt, true, associationId);
       const existing = findUnitForAcafImport(loadStore(), row.cnpj);
 
       if (existing) {
@@ -229,7 +240,7 @@ export class AcafAssociatesImportService {
     }
 
     if (options.syncMissing) {
-      deactivatedSyncMissing = await this.deactivateMissingAssociates(importedCnpjs, importedAt);
+      deactivatedSyncMissing = await this.deactivateMissingAssociates(importedCnpjs, importedAt, associationId);
     }
 
     const errors = [...parsed.errors, ...extraErrors].slice(0, 50);
@@ -252,6 +263,7 @@ export class AcafAssociatesImportService {
   private async applyRemovalRow(
     row: Extract<ParsedAcafAssociateRow, { kind: 'remocao' }>,
     importedAt: string,
+    associationId: string,
   ): Promise<{ applied: boolean; reason?: 'not_found'; tradeName: string }> {
     const store = loadStore();
     const unit = findUnitForAcafImport(store, row.cnpj);
@@ -260,7 +272,9 @@ export class AcafAssociatesImportService {
     }
 
     const prev = unit.acafAssociate;
+    const baseAssociationId = prev?.associationId ?? associationId;
     const baseMeta: AcafAssociateMeta = prev ?? {
+      associationId: baseAssociationId,
       cnpj: row.cnpj,
       legalName: unit.unitName,
       association: 'movly.',
@@ -377,13 +391,18 @@ export class AcafAssociatesImportService {
     });
   }
 
-  private async deactivateMissingAssociates(importedCnpjs: Set<string>, importedAt: string): Promise<number> {
+  private async deactivateMissingAssociates(
+    importedCnpjs: Set<string>,
+    importedAt: string,
+    associationId: string,
+  ): Promise<number> {
     let count = 0;
     updateStore((store) => {
       migrateLegacyAcafNetworksToTradeNameGroups(store);
       for (const unit of store.units) {
         const meta = unit.acafAssociate;
-        if (!meta || meta.importSource !== 'acaf_associates_xlsx') continue;
+        if (!isImportedAssociateMeta(meta)) continue;
+        if (meta.associationId && meta.associationId !== associationId) continue;
         if (importedCnpjs.has(meta.cnpj)) continue;
         if (meta.listed === false) continue;
         unit.acafAssociate = {

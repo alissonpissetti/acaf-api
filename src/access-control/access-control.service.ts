@@ -6,6 +6,8 @@ import { In, Repository } from 'typeorm';
 import { User, UserRole, userHasRole } from '../users/user.entity';
 import {
   ACCESS_CONTROL_SEED,
+  ASSOCIACOES_CADASTRO_ROUTE,
+  RETIRED_NAV_ITEM_SLUGS,
   ADMIN_GROUP_NAME,
   COMMERCIAL_GROUP_NAME,
   FINANCE_GROUP_NAME,
@@ -204,12 +206,42 @@ export class AccessControlSeedService implements OnModuleInit {
       }
     }
 
+    await this.deactivateAssociacoesItemsUnderSistema();
+
+    const retiredItemSlugs = new Set<string>(RETIRED_NAV_ITEM_SLUGS);
     const allItems = await this.items.find();
     for (const item of allItems) {
-      if (!seededItemSlugs.has(item.slug) && item.active) {
+      if (
+        (retiredItemSlugs.has(item.slug) || !seededItemSlugs.has(item.slug)) &&
+        item.active
+      ) {
         item.active = false;
         await this.items.save(item);
       }
+    }
+  }
+
+  /** Desativa cópias legadas do cadastro que ainda aparecem no módulo Sistema. */
+  private async deactivateAssociacoesItemsUnderSistema() {
+    const sistemaModule = await this.modules.findOne({ where: { slug: 'sistema' } });
+    if (!sistemaModule) return;
+
+    const cadastroSlugs = new Set(['associacoes', 'cadastro-associacoes']);
+    const sistemaItems = await this.items.find({
+      where: { moduleId: sistemaModule.id, active: true },
+    });
+
+    for (const item of sistemaItems) {
+      const routePath = item.route.split('?')[0];
+      const isCadastroStray =
+        cadastroSlugs.has(item.slug) ||
+        routePath === ASSOCIACOES_CADASTRO_ROUTE ||
+        item.label === 'Associações';
+
+      if (!isCadastroStray) continue;
+
+      item.active = false;
+      await this.items.save(item);
     }
   }
 

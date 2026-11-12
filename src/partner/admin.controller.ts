@@ -67,6 +67,7 @@ export class AdminController {
       social?: Partial<NetworkSocialContacts>;
       connectFeePercentOverride?: number | null;
       dailyFeePercentOverride?: number | null;
+      partnerContactEmail?: string | null;
     },
   ) {
     return this.admin.updateNetwork(id, body);
@@ -108,6 +109,11 @@ export class AdminController {
     return this.partnerOnboarding.createInvite(networkId, req.user.userId);
   }
 
+  @Post('networks/:id/partner-onboarding-invite-email')
+  sendPartnerOnboardingInviteEmail(@Req() req: AuthRequest, @Param('id') networkId: string) {
+    return this.partnerOnboarding.sendOnboardingInviteEmail(networkId, req.user.userId);
+  }
+
   @Post('associates/import')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -119,6 +125,7 @@ export class AdminController {
     @UploadedFile() file: Express.Multer.File,
     @Query('syncMissing') syncMissing?: string,
     @Query('updateExisting') updateExisting?: string,
+    @Query('associationSlug') associationSlug?: string,
   ) {
     if (!file) {
       throw new BadRequestException('Envie o arquivo Excel (.xlsx).');
@@ -130,6 +137,7 @@ export class AdminController {
     return this.acafAssociatesImport.importSpreadsheet(
       file,
       {
+        associationSlug: associationSlug?.trim() || 'acaf',
         syncMissing: syncMissing === '1' || syncMissing === 'true',
         updateExisting: updateExisting === '1' || updateExisting === 'true',
       },
@@ -154,8 +162,8 @@ export class AdminController {
   }
 
   @Get('units')
-  units(@Query('networkId') networkId?: string) {
-    return this.admin.listUnits(networkId);
+  async units(@Query('networkId') networkId?: string) {
+    return this.admin.enrichAdminUnits(this.admin.listUnits(networkId));
   }
 
   @Post('units')

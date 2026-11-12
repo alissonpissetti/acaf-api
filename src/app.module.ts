@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { AuthOtp } from './auth/auth-otp.entity';
 import { parseDatabaseUrl } from './database/parse-database-url';
 import { PartnerAuthModule } from './partner-auth/partner-auth.module';
+import { PartnerOnboardingEmailSend } from './partner-auth/partner-onboarding-email-send.entity';
 import { PartnerOnboardingInvite } from './partner-auth/partner-onboarding-invite.entity';
 import { PartnerModule } from './partner/partner.module';
 import { PlatformUser } from './platform-users/platform-user.entity';
@@ -73,6 +74,8 @@ import { EvolutionLeadIgnoreContact } from './evolution/evolution-lead-ignore-co
 import { SystemSetting } from './system-settings/system-setting.entity';
 import { ChangelogModule } from './changelog/changelog.module';
 import { ChangelogEntry } from './changelog/changelog-entry.entity';
+import { AssociationsModule } from './associations/associations.module';
+import { Association } from './associations/association.entity';
 
 @Module({
   imports: [
@@ -134,6 +137,7 @@ import { ChangelogEntry } from './changelog/changelog-entry.entity';
             SupportTicketMessage,
             SupportQueue,
             PartnerOnboardingInvite,
+            PartnerOnboardingEmailSend,
             EvolutionInstance,
             EvolutionMessage,
             EvolutionContactProfile,
@@ -144,6 +148,7 @@ import { ChangelogEntry } from './changelog/changelog-entry.entity';
             EvolutionLeadIgnoreContact,
             SystemSetting,
             ChangelogEntry,
+            Association,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,
@@ -183,6 +188,7 @@ import { ChangelogEntry } from './changelog/changelog-entry.entity';
     AcafAssociationModule,
     EvolutionModule,
     ChangelogModule,
+    AssociationsModule,
   ],
 })
 export class AppModule {}

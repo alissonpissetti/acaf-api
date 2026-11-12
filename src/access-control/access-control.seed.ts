@@ -15,6 +15,12 @@ export type SeedModule = {
   items: SeedModuleItem[];
 };
 
+/** Rota interna do CRUD de agrupadores (permissão permanece em sistema.associacoes). */
+export const ASSOCIACOES_CADASTRO_ROUTE = '/m/sistema/associacoes';
+
+/** Itens de menu substituídos no seed — desativados na sync para não duplicar na sidebar. */
+export const RETIRED_NAV_ITEM_SLUGS = ['cadastro-associacoes'] as const;
+
 export const ACCESS_CONTROL_SEED: SeedModule[] = [
   {
     slug: 'operacao',
@@ -271,10 +277,17 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
   {
     slug: 'associacao',
     name: 'Associações',
-    description: 'Portais de associações parceiras (links externos)',
+    description: 'Cadastro de agrupadores e portais de associações parceiras',
     icon: 'Users',
     sortOrder: 8,
     items: [
+      {
+        slug: 'associacoes',
+        label: 'Cadastro',
+        route: ASSOCIACOES_CADASTRO_ROUTE,
+        sortOrder: 0,
+        permissionKey: 'sistema.associacoes',
+      },
       {
         slug: 'parceiros-acaf',
         label: 'ACAF',

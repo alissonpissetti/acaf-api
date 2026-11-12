@@ -341,8 +341,10 @@ export function buildAcafAssociateMeta(
   row: ParsedAcafAssociateRowActive,
   importedAt: string,
   listed: boolean,
+  associationId: string,
 ): AcafAssociateMeta {
   return {
+    associationId,
     cnpj: row.cnpj,
     legalName: row.legalName,
     association: row.association,

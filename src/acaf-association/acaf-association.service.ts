@@ -1,50 +1,28 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { AcafAssociateMeta, GymUnit } from '../partner/types';
-import { AdminService } from '../partner/admin.service';
+import { Injectable } from '@nestjs/common';
+import {
+  AssociationPortalService,
+  type AssociationAssociateUnitPatch,
+} from '../association-portal/association-portal.service';
+import type { GymUnit } from '../partner/types';
 
-export type AcafAssociateUnitPatch = {
-  acafAssociate?: Partial<
-    Pick<
-      AcafAssociateMeta,
-      | 'legalName'
-      | 'association'
-      | 'signedAt'
-      | 'contactEmail'
-      | 'contactPhone'
-      | 'complement'
-      | 'listed'
-    >
-  >;
-};
+/** @deprecated Use `AssociationPortalService` com slug `acaf`. */
+export type AcafAssociateUnitPatch = AssociationAssociateUnitPatch;
+
+const ACAF_SLUG = 'acaf';
 
 @Injectable()
 export class AcafAssociationService {
-  constructor(private readonly admin: AdminService) {}
+  constructor(private readonly portal: AssociationPortalService) {}
 
-  /** Somente unidades com cadastro de associado movly. (importação da planilha). Demais academias ficam fora deste painel. */
-  listAssociatePartnerUnits(): GymUnit[] {
-    return this.admin
-      .listUnits()
-      .filter((u) => u.acafAssociate?.importSource === 'acaf_associates_xlsx');
+  listAssociatePartnerUnits() {
+    return this.portal.listAssociatePartnerUnits(ACAF_SLUG);
   }
 
-  getAssociatePartnerUnit(unitId: string): GymUnit {
-    const unit = this.admin.listUnits().find((u) => u.id === unitId);
-    if (!unit?.acafAssociate || unit.acafAssociate.importSource !== 'acaf_associates_xlsx') {
-      throw new NotFoundException('Parceiro associado não encontrado.');
-    }
-    return unit;
+  getAssociatePartnerUnit(unitId: string) {
+    return this.portal.getAssociatePartnerUnit(ACAF_SLUG, unitId);
   }
 
   async patchAssociatePartnerUnit(unitId: string, body: AcafAssociateUnitPatch): Promise<GymUnit> {
-    const current = this.getAssociatePartnerUnit(unitId);
-    const patch = body.acafAssociate;
-    if (!patch || !Object.keys(patch).length) {
-      throw new BadRequestException('Informe os campos de acafAssociate para atualizar.');
-    }
-    const prev = current.acafAssociate!;
-    const merged: AcafAssociateMeta = { ...prev, ...patch };
-    await this.admin.updateUnit(unitId, { acafAssociate: merged });
-    return this.getAssociatePartnerUnit(unitId);
+    return this.portal.patchAssociatePartnerUnit(ACAF_SLUG, unitId, body);
   }
 }

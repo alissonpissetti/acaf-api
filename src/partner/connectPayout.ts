@@ -7,18 +7,27 @@ function netFromGross(store: ApiStore, unitId: string, gross: number): number {
   return Math.round(gross * 100 * (1 - fee)) / 100;
 }
 
+function connectPlanIdsFromDomain(): ConnectPlanId[] {
+  const domain = getDomain() as { connectPlans?: Array<{ id: string }> };
+  return (domain.connectPlans ?? []).map((p) => p.id as ConnectPlanId);
+}
+
 function planPrice(planId: ConnectPlanId): number {
   const domain = getDomain() as { connectPlans?: Array<{ id: string; pricePerMonth?: number }> };
   const plan = domain.connectPlans?.find((p) => p.id === planId);
   if (plan?.pricePerMonth != null) return plan.pricePerMonth;
-  const fallback: Record<ConnectPlanId, number> = {
+  const fallback: Partial<Record<ConnectPlanId, number>> = {
     'connect-start': 39.9,
     'connect-plus': 69.9,
     'connect-multi': 129.9,
     'connect-pro': 189.9,
-    'connect-total': 299.9,
+    'connect-max': 299.9,
+    'connect-prime': 399.9,
+    'connect-elite': 549.9,
+    'connect-signature': 699.9,
+    'connect-infinite': 799.9,
   };
-  return fallback[planId];
+  return fallback[planId] ?? 0;
 }
 
 /** Recalcula linhas de repasse de assinaturas a partir dos membros com academia principal definida. */
@@ -31,13 +40,7 @@ export function recomputeConnectPayouts(store: ApiStore): void {
     if (!payout) continue;
 
     const atUnit = activePrimary.filter((m) => m.primaryUnitId === unit.id);
-    const planIds: ConnectPlanId[] = [
-      'connect-start',
-      'connect-plus',
-      'connect-multi',
-      'connect-pro',
-      'connect-total',
-    ];
+    const planIds = connectPlanIdsFromDomain();
 
     const connectLines = planIds
       .map((planId) => {

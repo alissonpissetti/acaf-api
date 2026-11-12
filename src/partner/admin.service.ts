@@ -39,6 +39,7 @@ import {
   normalizeWeeklySchedule,
   type UnitWeeklySchedule,
 } from './weeklySchedule';
+import { AssociationsService } from '../associations/associations.service';
 import { clampPlatformFeePercent } from './platformFeePolicy';
 import { recomputeConnectPayouts } from './connectPayout';
 import { recalcDailyPassNetForOpenPayout } from './dailyPassSales';
@@ -58,11 +59,13 @@ import { currentMonthLabelBr } from './payoutMonth';
 import { buildNewUnit, emptyMonthlyPayout } from './unitFactory';
 import { isRemotePhotoUrl } from './photoUrls';
 import { UnitCoordinatesService } from './unit-coordinates.service';
+import { isImportedAssociateMeta } from './associate-meta';
 import { cancelCheckInEntry, listCheckInsForUnit, normalizeHolderKey } from './checkIn';
 import {
   getPartnerClientDetail,
   type PartnerClientDetail,
 } from './partnerClients';
+import { PartnerOnboardingService } from '../partner-auth/partner-onboarding.service';
 
 type ConnectPlan = {
   id: string;
@@ -128,7 +131,30 @@ export class AdminService {
     @InjectRepository(EvolutionInstance)
     private readonly evolutionInstances: Repository<EvolutionInstance>,
     private readonly systemSettings: SystemSettingsService,
+    private readonly partnerOnboarding: PartnerOnboardingService,
+    private readonly associations: AssociationsService,
   ) {}
+
+  /** Anexa nome/slug da entidade Association nas unidades com `acafAssociate.associationId`. */
+  async enrichAdminUnits(units: GymUnit[]): Promise<GymUnit[]> {
+    const associationIds = new Set(
+      units.map((u) => u.acafAssociate?.associationId).filter((id): id is string => Boolean(id)),
+    );
+    if (!associationIds.size) {
+      return units.map((u) => ({ ...u, associateAssociation: undefined }));
+    }
+    const rows = await this.associations.listAdmin();
+    const byId = new Map(
+      rows
+        .filter((r) => associationIds.has(r.id))
+        .map((r) => [r.id, { id: r.id, name: r.name, slug: r.slug }]),
+    );
+    return units.map((unit) => {
+      const id = unit.acafAssociate?.associationId;
+      const associateAssociation = id ? byId.get(id) : undefined;
+      return { ...unit, associateAssociation };
+    });
+  }
 
   private withUnitCount(network: AdminNetwork): AdminNetwork & { unitCount: number } {
     const store = loadStore();
@@ -381,18 +407,33 @@ export class AdminService {
     const owners = await this.commercialOwnerNamesByIds(
       store.networks.map((network) => network.commercialOwnerUserId),
     );
+    const pendingInviteNetworkIds = await this.partnerOnboarding.networkIdsWithPendingInvite();
+    const onboardingEmailMeta = await this.partnerOnboarding.listOnboardingEmailMetaByNetwork(
+      store.networks,
+      store,
+    );
 
     return Promise.all(
       store.networks.map(async (network) => {
         const unitIds = this.networkUnitIds(store, network.id);
         const withCount = this.withUnitCount(network);
+        const partnerUserCount = await this.partnerAccess.countLinkedUsersForUnits(unitIds);
+        const hasPartnerUser = partnerUserCount > 0;
+        const invitePending = pendingInviteNetworkIds.has(network.id);
+        const emailMeta = onboardingEmailMeta.get(network.id);
         return {
           ...withCount,
           primaryMemberCount: this.countPrimaryMembersForUnits(store, unitIds),
-          partnerUserCount: await this.partnerAccess.countLinkedUsersForUnits(unitIds),
+          partnerUserCount,
+          hasPartnerUser,
+          invitePending,
           commercialOwnerName: network.commercialOwnerUserId
             ? owners.get(network.commercialOwnerUserId) ?? null
             : null,
+          onboardingInviteEmail: emailMeta?.onboardingInviteEmail ?? null,
+          onboardingInviteEmailSource: emailMeta?.onboardingInviteEmailSource ?? null,
+          onboardingInviteEmailSentToday: emailMeta?.onboardingInviteEmailSentToday ?? false,
+          partnerInviteKind: hasPartnerUser ? 'team' : 'onboarding',
         };
       }),
     );
@@ -464,6 +505,7 @@ export class AdminService {
       social?: Partial<NetworkSocialContacts>;
       connectFeePercentOverride?: number | null;
       dailyFeePercentOverride?: number | null;
+      partnerContactEmail?: string | null;
     },
   ) {
     const current = loadStore();
@@ -475,6 +517,20 @@ export class AdminService {
       const trimmed = patch.name.trim();
       if (!trimmed) {
         throw new BadRequestException('Informe o nome da rede.');
+      }
+    }
+
+    let normalizedPartnerContactEmail: string | undefined;
+    if (patch.partnerContactEmail !== undefined) {
+      const raw = patch.partnerContactEmail;
+      if (raw === null || String(raw).trim() === '') {
+        normalizedPartnerContactEmail = undefined;
+      } else {
+        const normalized = String(raw).trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+          throw new BadRequestException('E-mail responsável do parceiro inválido.');
+        }
+        normalizedPartnerContactEmail = normalized;
       }
     }
 
@@ -504,6 +560,9 @@ export class AdminService {
           patch.dailyFeePercentOverride === null
             ? undefined
             : clampPlatformFeePercent(patch.dailyFeePercentOverride);
+      }
+      if (patch.partnerContactEmail !== undefined) {
+        network.partnerContactEmail = normalizedPartnerContactEmail;
       }
       updated = { ...network };
 
@@ -866,7 +925,7 @@ export class AdminService {
       s.payoutsByUnit[unit.id] = emptyMonthlyPayout(monthLabel);
       s.payoutHistoryByUnit[unit.id] = [s.payoutsByUnit[unit.id]];
     });
-    return this.listUnits(networkId);
+    return await this.enrichAdminUnits(this.listUnits(networkId));
   }
 
   async updateUnit(unitId: string, patch: Partial<GymUnit>) {
@@ -901,23 +960,38 @@ export class AdminService {
 
     if (acafPatch !== undefined) {
       const prev = before.acafAssociate;
-      if (!prev || prev.importSource !== 'acaf_associates_xlsx') {
+      if (!prev || !isImportedAssociateMeta(prev)) {
         throw new BadRequestException('Esta unidade não possui dados de importação movly. para editar.');
       }
       const cnpjLocked = prev.cnpj;
       const {
         cnpj: _ignoredCnpj,
+        associationId: patchAssociationId,
         importSource: _ignoredSource,
         importedAt: patchImportedAt,
         ...acafRest
       } = acafPatch as Partial<AcafAssociateMeta> & { cnpj?: string };
+      let nextAssociationId = prev.associationId;
+      if (patchAssociationId !== undefined) {
+        const raw = patchAssociationId == null ? '' : String(patchAssociationId).trim();
+        if (!raw) {
+          nextAssociationId = undefined;
+        } else {
+          const row = await this.associations.getById(raw);
+          if (!row) {
+            throw new BadRequestException('Associação (agrupador) não encontrada.');
+          }
+          nextAssociationId = row.id;
+        }
+      }
       const listed =
         acafRest.listed !== undefined ? acafRest.listed : (prev.listed ?? true);
       next.acafAssociate = {
         ...prev,
         ...acafRest,
         cnpj: cnpjLocked,
-        importSource: 'acaf_associates_xlsx',
+        associationId: nextAssociationId,
+        importSource: prev.importSource,
         importedAt:
           patchImportedAt !== undefined && patchImportedAt !== null
             ? String(patchImportedAt)
@@ -948,7 +1022,7 @@ export class AdminService {
       recalcDailyPassNetForOpenPayout(s, unitId);
     });
 
-    return this.listUnits();
+    return await this.enrichAdminUnits(this.listUnits());
   }
 
   listUnitCheckIns(unitId: string, todayOnly = true) {

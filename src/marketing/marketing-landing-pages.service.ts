@@ -260,22 +260,17 @@ export class MarketingLandingPagesService {
     const row = await this.pages.findOne({ where: { slug, active: true } });
     if (!row) throw new NotFoundException('Formulário não encontrado.');
 
-    row.viewCount += 1;
-    await this.pages.save(row);
-    try {
-      await this.recordPageEvent(row, 'view', attribution, req);
-    } catch {
-      /* métricas não devem bloquear a página pública */
-    }
+    void this.recordPublicPageView(row, attribution, req);
 
-    const campaign = row.campaignId
-      ? await this.campaigns.findOne({ where: { id: row.campaignId } })
-      : null;
-    const creative = row.creativeId
-      ? await this.creatives.findOne({ where: { id: row.creativeId } })
-      : null;
-
-    const brandTypography = await this.brandFonts.getBrandTypography();
+    const [campaign, creative, brandTypography] = await Promise.all([
+      row.campaignId
+        ? this.campaigns.findOne({ where: { id: row.campaignId } })
+        : Promise.resolve(null),
+      row.creativeId
+        ? this.creatives.findOne({ where: { id: row.creativeId } })
+        : Promise.resolve(null),
+      this.brandFonts.getBrandTypography(),
+    ]);
 
     return {
       slug: row.slug,
@@ -876,6 +871,22 @@ export class MarketingLandingPagesService {
       return forwarded.split(',')[0]?.trim().slice(0, 64) ?? null;
     }
     return req.ip?.slice(0, 64) ?? null;
+  }
+
+  private recordPublicPageView(
+    page: MarketingLandingPage,
+    attribution?: MarketingUtmParams,
+    req?: Request,
+  ) {
+    void (async () => {
+      try {
+        page.viewCount += 1;
+        await this.pages.save(page);
+        await this.recordPageEvent(page, 'view', attribution, req);
+      } catch {
+        /* métricas não devem bloquear a página pública */
+      }
+    })();
   }
 
   private async recordPageEvent(
