@@ -43,7 +43,7 @@ export class EvolutionInstance {
   @Column({ name: 'connection_state', type: 'varchar', length: 32, default: 'unknown' })
   connectionState: string;
 
-  @Column({ name: 'auto_create_leads', default: true })
+  @Column({ name: 'auto_create_leads', default: false })
   autoCreateLeads: boolean;
 
   @Column({ default: true })

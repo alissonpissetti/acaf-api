@@ -43,6 +43,8 @@ export type MarketingLandingField = {
   mapTo?: MarketingFieldMapTo;
 };
 
+export const MARKETING_APP_DEFAULT_FONT = 'app-default';
+
 export type MarketingLandingTheme = {
   backgroundType?: 'solid' | 'gradient' | 'image';
   backgroundColor?: string;
@@ -50,6 +52,7 @@ export type MarketingLandingTheme = {
   backgroundImageUrl?: string | null;
   cardColor?: string;
   cardTextColor?: string;
+  /** `app-default` = Figtree do movimento (storage público). */
   fontFamily?: string;
   buttonColor?: string;
   buttonTextColor?: string;
@@ -63,7 +66,7 @@ export const DEFAULT_MARKETING_THEME: MarketingLandingTheme = {
   backgroundColor: '#eef0f4',
   cardColor: '#ffffff',
   cardTextColor: '#1c1c1e',
-  fontFamily: 'Inter',
+  fontFamily: MARKETING_APP_DEFAULT_FONT,
   buttonColor: '#0f766e',
   buttonTextColor: '#ffffff',
   buttonStyle: 'rounded',

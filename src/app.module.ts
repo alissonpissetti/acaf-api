@@ -53,6 +53,7 @@ import { MarketingCampaign } from './marketing/marketing-campaign.entity';
 import { MarketingCreative } from './marketing/marketing-creative.entity';
 import { MarketingLandingPage } from './marketing/marketing-landing-page.entity';
 import { MarketingFormSubmission } from './marketing/marketing-form-submission.entity';
+import { MarketingPageEvent } from './marketing/marketing-page-event.entity';
 import { Notification } from './notifications/notification.entity';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SupportTicketMessage } from './support/support-ticket-message.entity';
@@ -127,6 +128,7 @@ import { ChangelogEntry } from './changelog/changelog-entry.entity';
             MarketingCreative,
             MarketingLandingPage,
             MarketingFormSubmission,
+            MarketingPageEvent,
             Notification,
             SupportTicket,
             SupportTicketMessage,

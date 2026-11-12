@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccessControlModule } from '../access-control/access-control.module';
 import { CommercialModule } from '../commercial/commercial.module';
+import { BrandingModule } from '../branding/branding.module';
+import { StorageModule } from '../storage/storage.module';
 import { UsersModule } from '../users/users.module';
 import { MarketingCampaign } from './marketing-campaign.entity';
 import { MarketingCreative } from './marketing-creative.entity';
@@ -24,6 +26,8 @@ import { MarketingLandingPagesService } from './marketing-landing-pages.service'
     UsersModule,
     CommercialModule,
     AccessControlModule,
+    StorageModule,
+    BrandingModule,
   ],
   controllers: [MarketingController, MarketingPublicController],
   providers: [MarketingCampaignsService, MarketingLandingPagesService],

@@ -748,7 +748,7 @@ export class EvolutionInstancesService {
       usageMode: 'corporate',
       departmentId: null,
       defaultOwnerUserId: null,
-      autoCreateLeads: true,
+      autoCreateLeads: false,
     });
 
     const saved = await this.instances.save(instance);

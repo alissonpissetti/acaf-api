@@ -288,6 +288,41 @@ export class NextcloudService {
     return { path: relativePath, publicUrl };
   }
 
+  async uploadMarketingLandingAsset(
+    pageId: string,
+    file: Express.Multer.File,
+    kind: 'logo' | 'cover',
+  ): Promise<{ path: string; publicUrl: string }> {
+    const ext = IMAGE_EXT[file.mimetype];
+    if (!ext) {
+      throw new BadRequestException('Envie uma imagem PNG, JPG, WEBP ou SVG.');
+    }
+
+    const folder = `${this.rootFolder}/marketing-landing-pages/${pageId}`;
+    const relativePath = `${folder}/${kind}${ext}`;
+
+    await this.ensureFolder(folder);
+
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'PUT',
+      headers: {
+        Authorization: this.authHeader(),
+        'Content-Type': file.mimetype,
+      },
+      body: new Uint8Array(file.buffer),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao enviar imagem do formulário (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+
+    const publicUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl: this.directPublicFileUrl(publicUrl) };
+  }
+
   async uploadUserAvatar(
     userId: string,
     file: Express.Multer.File,

@@ -8,6 +8,8 @@ import type { Request } from 'express';
 import { Repository } from 'typeorm';
 import type { CommercialLeadType } from '../commercial/commercial-lead.entity';
 import { CommercialLeadsService } from '../commercial/commercial-leads.service';
+import { BrandFontsService } from '../branding/brand-fonts.service';
+import { NextcloudService } from '../storage/nextcloud.service';
 import { UsersService } from '../users/users.service';
 import { MarketingCampaign } from './marketing-campaign.entity';
 import { MarketingCreative } from './marketing-creative.entity';
@@ -45,7 +47,13 @@ export class MarketingLandingPagesService {
     private readonly creatives: Repository<MarketingCreative>,
     private readonly leads: CommercialLeadsService,
     private readonly users: UsersService,
+    private readonly storage: NextcloudService,
+    private readonly brandFonts: BrandFontsService,
   ) {}
+
+  getPublicBrandTypography() {
+    return this.brandFonts.getBrandTypography();
+  }
 
   async listPages(includeInactive = false) {
     const rows = await this.pages.find({
@@ -198,16 +206,45 @@ export class MarketingLandingPagesService {
     if (input.fields !== undefined) row.fields = this.normalizeFields(input.fields);
     if (input.active !== undefined) row.active = input.active;
 
+    const previousCreativeId = row.creativeId;
+
     await this.pages.save(row);
-    if (input.creativeId) {
-      await this.creatives.update(
-        { id: input.creativeId },
-        {
-          landingPageId: row.id,
-          ...(row.campaignId ? { campaignId: row.campaignId } : {}),
-        },
-      );
+
+    if (input.creativeId !== undefined) {
+      if (input.creativeId) {
+        await this.creatives.update(
+          { id: input.creativeId },
+          {
+            landingPageId: row.id,
+            ...(row.campaignId ? { campaignId: row.campaignId } : {}),
+          },
+        );
+      } else if (previousCreativeId) {
+        await this.creatives.update({ id: previousCreativeId }, { landingPageId: null });
+      }
     }
+    return this.pageDto(row);
+  }
+
+  async uploadLandingPageLogo(id: string, file: Express.Multer.File) {
+    const allowed = new Set(['image/png', 'image/webp', 'image/svg+xml', 'image/jpeg']);
+    if (!allowed.has(file.mimetype)) {
+      throw new BadRequestException('Envie o logo em PNG, WEBP, JPG ou SVG.');
+    }
+    const row = await this.pages.findOne({ where: { id } });
+    if (!row) throw new NotFoundException('Formulário não encontrado.');
+    const { publicUrl } = await this.storage.uploadMarketingLandingAsset(id, file, 'logo');
+    row.logoUrl = publicUrl;
+    await this.pages.save(row);
+    return this.pageDto(row);
+  }
+
+  async uploadLandingPageCover(id: string, file: Express.Multer.File) {
+    const row = await this.pages.findOne({ where: { id } });
+    if (!row) throw new NotFoundException('Formulário não encontrado.');
+    const { publicUrl } = await this.storage.uploadMarketingLandingAsset(id, file, 'cover');
+    row.coverImageUrl = publicUrl;
+    await this.pages.save(row);
     return this.pageDto(row);
   }
 
@@ -225,7 +262,11 @@ export class MarketingLandingPagesService {
 
     row.viewCount += 1;
     await this.pages.save(row);
-    await this.recordPageEvent(row, 'view', attribution, req);
+    try {
+      await this.recordPageEvent(row, 'view', attribution, req);
+    } catch {
+      /* métricas não devem bloquear a página pública */
+    }
 
     const campaign = row.campaignId
       ? await this.campaigns.findOne({ where: { id: row.campaignId } })
@@ -233,6 +274,8 @@ export class MarketingLandingPagesService {
     const creative = row.creativeId
       ? await this.creatives.findOne({ where: { id: row.creativeId } })
       : null;
+
+    const brandTypography = await this.brandFonts.getBrandTypography();
 
     return {
       slug: row.slug,
@@ -243,6 +286,7 @@ export class MarketingLandingPagesService {
       logoUrl: row.logoUrl,
       coverImageUrl: row.coverImageUrl,
       theme: this.resolveTheme(row),
+      brandTypography,
       fields: row.fields,
       campaign: campaign
         ? { id: campaign.id, name: campaign.name, slug: campaign.slug }

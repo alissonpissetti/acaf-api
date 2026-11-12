@@ -23,6 +23,7 @@ import {
 import { EvolutionRemoteMessagesService } from './evolution-remote-messages.service';
 import { User, UserRole, userHasRole } from '../users/user.entity';
 import {
+  canAutoCreateWhatsAppLead,
   contactLabelFromKey,
   extractGroupSubjectFromRecord,
   formatPhoneLenient,
@@ -324,7 +325,7 @@ export class EvolutionInboxService {
           createdByUserId: ownerUserId,
           instanceLabel: instance.name,
           recordInteraction: !parsed.fromMe,
-          autoCreateLeads: instance.autoCreateLeads,
+          autoCreateLeads: instance.autoCreateLeads && !parsed.fromMe,
           phoneHints,
           mediaPayload: parsed.mediaPayload,
         });
@@ -3551,6 +3552,16 @@ export class EvolutionInboxService {
         extraAliasKeys,
       });
       if (skipLead) continue;
+
+      if (
+        !canAutoCreateWhatsAppLead({
+          contactKey: identityContactKey,
+          phoneDigits: ingestPhone,
+          pushName: latest.contactName,
+        })
+      ) {
+        continue;
+      }
 
       const outcome = await this.commercialLeads.ensureLeadFromWhatsAppInbox({
         instanceId,

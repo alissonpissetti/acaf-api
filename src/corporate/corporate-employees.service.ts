@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { MailService } from '../mail/mail.service';
@@ -31,6 +32,10 @@ import { CompanyInvite } from './company-invite.entity';
 import { CompanyInvoice } from './company-invoice.entity';
 import { Company } from './company.entity';
 import { currentMonthKey } from './corporate-domain';
+import {
+  buildCorporateOnboardingShare,
+  type CorporateOnboardingShare,
+} from './corporate-onboarding-share';
 
 export type EmployeeMonthlyUsageRow = {
   employeeId: string;
@@ -106,7 +111,16 @@ export class CorporateEmployeesService {
     private readonly companies: Repository<Company>,
     private readonly mail: MailService,
     private readonly sms: SmsService,
+    private readonly config: ConfigService,
   ) {}
+
+  private onboardingShareFor(company: Company, enrollmentCode: string): CorporateOnboardingShare {
+    return buildCorporateOnboardingShare(
+      this.config,
+      enrollmentCode,
+      company.tradeName || company.legalName,
+    );
+  }
 
   private toDto(row: CompanyEmployee, enrollmentCode?: string, billing?: EmployeeDto['billing']): EmployeeDto {
     const user = row.user;
@@ -663,16 +677,16 @@ export class CorporateEmployeesService {
     await this.employees.save(employee);
   }
 
-  async getEnrollmentCode(company: Company): Promise<{ enrollmentCode: string }> {
+  async getEnrollmentCode(company: Company): Promise<CorporateOnboardingShare> {
     const enrollmentCode = await this.enrollmentCodeFor(company);
-    return { enrollmentCode };
+    return this.onboardingShareFor(company, enrollmentCode);
   }
 
-  async getInviteLink(company: Company, employeeId: string): Promise<{ enrollmentCode: string }> {
+  async getInviteLink(company: Company, employeeId: string): Promise<CorporateOnboardingShare> {
     const row = await this.getEmployeeOrThrow(company.id, employeeId);
     this.assertCanShareCode(row);
     const enrollmentCode = await this.enrollmentCodeFor(company);
-    return { enrollmentCode };
+    return this.onboardingShareFor(company, enrollmentCode);
   }
 
   async sendInviteEmail(company: Company, employeeId: string): Promise<EmployeeDto> {

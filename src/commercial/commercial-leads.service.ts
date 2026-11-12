@@ -36,6 +36,7 @@ import {
 } from './commercial-lead-source';
 import { UserRole, userHasRole } from '../users/user.entity';
 import {
+  canAutoCreateWhatsAppLead,
   isHumanContactName,
   normalizedBrazilMobileKey,
   phoneKeyFromJid,
@@ -1799,6 +1800,16 @@ export class CommercialLeadsService {
       }
 
       if (!canCreate) {
+        return { leadId: null, created: false };
+      }
+
+      if (
+        !canAutoCreateWhatsAppLead({
+          contactKey: identityKey,
+          phoneDigits: digits,
+          pushName: input.pushName,
+        })
+      ) {
         return { leadId: null, created: false };
       }
 

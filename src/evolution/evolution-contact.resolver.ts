@@ -168,6 +168,25 @@ export function normalizedBrazilMobileKey(contactKey: string): string | null {
   return isValidMobilePhone(digits) ? digits : null;
 }
 
+/** Lead automático só quando há celular BR identificável ou nome humano (evita LID/número opaco). */
+export function canAutoCreateWhatsAppLead(input: {
+  contactKey: string;
+  phoneDigits?: string | null;
+  pushName?: string | null;
+}): boolean {
+  const phone = String(input.phoneDigits ?? '').trim();
+  if (phone && isValidMobilePhone(phone)) return true;
+  if (isHumanContactName(input.pushName)) return true;
+
+  const ck = String(input.contactKey ?? '').trim();
+  if (!ck || ck.startsWith('group:')) return false;
+
+  const fromKey = normalizedBrazilMobileKey(ck);
+  if (fromKey) return true;
+
+  return false;
+}
+
 export function lidReferenceLabel(contactKey: string): string | null {
   const key = String(contactKey ?? '').trim();
   if (!key.startsWith('lid:')) return null;

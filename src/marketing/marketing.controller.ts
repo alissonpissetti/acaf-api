@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,8 +9,11 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -219,6 +223,40 @@ export class MarketingController {
     return this.landingPages.createPage(body);
   }
 
+  @Post('landing-pages/:id/logo')
+  @RequirePermissions('marketing.formularios.manage')
+  @UseInterceptors(
+    FileInterceptor('image', {
+      limits: { fileSize: 2 * 1024 * 1024 },
+    }),
+  )
+  uploadLandingPageLogo(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Envie o arquivo do logo.');
+    }
+    return this.landingPages.uploadLandingPageLogo(id, file);
+  }
+
+  @Post('landing-pages/:id/cover')
+  @RequirePermissions('marketing.formularios.manage')
+  @UseInterceptors(
+    FileInterceptor('image', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+    }),
+  )
+  uploadLandingPageCover(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Envie o arquivo da foto de capa.');
+    }
+    return this.landingPages.uploadLandingPageCover(id, file);
+  }
+
   @Patch('landing-pages/:id')
   @RequirePermissions('marketing.formularios.manage')
   updateLandingPage(
@@ -274,6 +312,11 @@ export class MarketingController {
 @Controller('public/marketing')
 export class MarketingPublicController {
   constructor(private readonly landingPages: MarketingLandingPagesService) {}
+
+  @Get('brand-fonts')
+  getBrandFonts() {
+    return this.landingPages.getPublicBrandTypography();
+  }
 
   @Get('pages/:slug')
   getPage(
