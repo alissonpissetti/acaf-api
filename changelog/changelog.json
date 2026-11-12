@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "29a293ce-d658-483b-82de-191b11c604b8",
+      "commitSha": "0eb8ca4be6f079ee465d0b6c13b80e1cc2cfa114",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-12T16:04:34-03:00",
+      "title": "Portal de associações e convites de parceiro",
+      "summary": "Adiciona APIs de associações, portal dedicado, e-mails de onboarding da equipe e seeds de planos/modalidades do Connect.",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "266a28f3-6fca-44de-8bb2-5a4a6ba16c0a",
       "commitSha": "69d6cb18a85b4e6c322dcb925667cd82d537403b",
       "repository": "api",
