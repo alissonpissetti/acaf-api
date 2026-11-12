@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "522b5de2-bb16-4b5e-ad6c-f76ba03f6592",
+      "commitSha": "4fc34f503d18798f0ad6ffbbfa8b2083a3578e44",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-12T16:47:50-03:00",
+      "title": "Exclusão definitiva de landing pages com transação",
+      "summary": null,
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "13b21579-1165-4754-bd24-16fcdc581e61",
       "commitSha": "3132eeb9ed4cc875f6635dcb2ed8579e278aee61",
       "repository": "api",
