@@ -2,6 +2,23 @@
   "version": 1,
   "entries": [
     {
+      "id": "266a28f3-6fca-44de-8bb2-5a4a6ba16c0a",
+      "commitSha": "69d6cb18a85b4e6c322dcb925667cd82d537403b",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-12T11:03:49-03:00",
+      "title": "URL padrão do portal parceiro em produção",
+      "summary": "Usa https://parceiro.sejamovly.com quando PARTNER_PORTAL_PUBLIC_URL não estiver definida; documenta no .env.example.",
+      "category": "fix",
+      "areas": [
+        "api"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "1a64c6ef-a754-4569-85a5-a99eca6f72c7",
       "commitSha": "7535bf71dd597fe40f4a82ec5104f59984ec90f3",
       "repository": "api",
