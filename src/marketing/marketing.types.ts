@@ -18,7 +18,52 @@ export type MarketingCreativeFormat =
   | 'search'
   | 'other';
 
-export type MarketingFieldType = 'text' | 'email' | 'tel' | 'textarea';
+export type MarketingFieldType = 'text' | 'email' | 'tel' | 'textarea' | 'select';
+
+export type MarketingFieldSelectOption = {
+  label: string;
+  value: string;
+};
+
+const MARKETING_FIELD_TYPES: MarketingFieldType[] = ['text', 'email', 'tel', 'textarea', 'select'];
+
+export function isMarketingFieldType(value: unknown): value is MarketingFieldType {
+  return typeof value === 'string' && MARKETING_FIELD_TYPES.includes(value as MarketingFieldType);
+}
+
+export function slugifyMarketingOptionValue(label: string, index: number): string {
+  const base = label
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return base || `opcao_${index + 1}`;
+}
+
+export function normalizeMarketingSelectOptions(
+  options: MarketingFieldSelectOption[] | undefined,
+): MarketingFieldSelectOption[] {
+  if (!options?.length) return [];
+  const used = new Set<string>();
+  const normalized: MarketingFieldSelectOption[] = [];
+  options.forEach((option, index) => {
+    const label = String(option?.label ?? '').trim();
+    if (!label) return;
+    let value = String(option?.value ?? '').trim();
+    if (!value) value = slugifyMarketingOptionValue(label, index);
+    let unique = value;
+    let suffix = 2;
+    while (used.has(unique)) {
+      unique = `${value}_${suffix}`;
+      suffix += 1;
+    }
+    used.add(unique);
+    normalized.push({ label, value: unique });
+  });
+  return normalized;
+}
 
 export type MarketingFieldKind = 'field' | 'section';
 
@@ -41,6 +86,8 @@ export type MarketingLandingField = {
   description?: string;
   sectionStyle?: 'default' | 'highlight';
   mapTo?: MarketingFieldMapTo;
+  /** Opções para campos do tipo `select`. */
+  options?: MarketingFieldSelectOption[];
 };
 
 export const MARKETING_APP_DEFAULT_FONT = 'app-default';

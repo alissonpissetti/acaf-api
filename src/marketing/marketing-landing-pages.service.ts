@@ -25,6 +25,8 @@ import {
 import {
   DEFAULT_LANDING_FIELDS,
   DEFAULT_MARKETING_THEME,
+  isMarketingFieldType,
+  normalizeMarketingSelectOptions,
   slugifyMarketing,
   type MarketingFieldMapTo,
   type MarketingLandingField,
@@ -251,9 +253,19 @@ export class MarketingLandingPagesService {
   async deactivatePage(id: string) {
     const row = await this.pages.findOne({ where: { id } });
     if (!row) throw new NotFoundException('Formulário não encontrado.');
-    row.active = false;
-    await this.pages.save(row);
-    return { ok: true };
+
+    await this.removePageRecord(row);
+    return { ok: true, removed: true };
+  }
+
+  private async removePageRecord(page: MarketingLandingPage) {
+    await this.creatives.update({ landingPageId: page.id }, { landingPageId: null });
+    await this.events.delete({ landingPageId: page.id });
+    await this.submissions.delete({ landingPageId: page.id });
+    const deleted = await this.pages.delete({ id: page.id });
+    if (!deleted.affected) {
+      throw new BadRequestException('Não foi possível remover o formulário.');
+    }
   }
 
   async getPublicPage(slug: string, attribution?: MarketingUtmParams, req?: Request) {
@@ -753,16 +765,27 @@ export class MarketingLandingPagesService {
           sectionStyle,
         };
       }
-      return {
+      const type = isMarketingFieldType(field.type) ? field.type : 'text';
+      const normalized: MarketingLandingField = {
         key: field.key?.trim() || `field_${index + 1}`,
         label: field.label?.trim() || `Campo ${index + 1}`,
         kind: 'field' as const,
-        type: field.type ?? 'text',
+        type,
         required: Boolean(field.required),
         placeholder: field.placeholder?.trim() || undefined,
         description: field.description?.trim() || undefined,
         mapTo: field.mapTo,
       };
+      if (type === 'select') {
+        const options = normalizeMarketingSelectOptions(field.options);
+        if (!options.length) {
+          throw new BadRequestException(
+            `O campo "${normalized.label}" precisa de pelo menos uma opção de seleção.`,
+          );
+        }
+        normalized.options = options;
+      }
+      return normalized;
     });
   }
 
@@ -774,6 +797,12 @@ export class MarketingLandingPagesService {
       }
       if (field.type === 'email' && value && !value.includes('@')) {
         throw new BadRequestException('Informe um e-mail válido.');
+      }
+      if (field.type === 'select' && value) {
+        const allowed = new Set((field.options ?? []).map((option) => option.value));
+        if (!allowed.has(value)) {
+          throw new BadRequestException(`Selecione uma opção válida para ${field.label.toLowerCase()}.`);
+        }
       }
     }
   }
