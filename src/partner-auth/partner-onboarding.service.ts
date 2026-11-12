@@ -12,6 +12,7 @@ import { PartnerOnboardingInvite } from './partner-onboarding-invite.entity';
 
 const TOKEN_BYTES = 24;
 const DEFAULT_TTL_DAYS = 14;
+const PARTNER_PORTAL_PRODUCTION_URL = 'https://parceiro.sejamovly.com';
 
 function sha256Hex(value: string): string {
   return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
@@ -29,10 +30,9 @@ export class PartnerOnboardingService {
   ) {}
 
   private partnerPortalBaseUrl(): string {
-    return (
-      this.config.get<string>('PARTNER_PORTAL_PUBLIC_URL')?.replace(/\/$/, '') ??
-      'http://localhost:5176'
-    );
+    const fromEnv = this.config.get<string>('PARTNER_PORTAL_PUBLIC_URL')?.trim().replace(/\/$/, '');
+    if (fromEnv) return fromEnv;
+    return PARTNER_PORTAL_PRODUCTION_URL;
   }
 
   /**
