@@ -2,6 +2,23 @@
   "version": 1,
   "entries": [
     {
+      "id": "1a64c6ef-a754-4569-85a5-a99eca6f72c7",
+      "commitSha": "7535bf71dd597fe40f4a82ec5104f59984ec90f3",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-12T00:02:17-03:00",
+      "title": "Marketing, onboarding corporate e leads WhatsApp",
+      "summary": "Registra MarketingPageEvent, upload de logo/capa em formulários, tipografia Figtree pública e links de adesão corporativa. Restringe criação automática de leads no inbox WhatsApp e desliga o padrão em novas instâncias.",
+      "category": "feature",
+      "areas": [
+        "api"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "f169ba0d-b401-439d-bbee-89324898bd09",
       "commitSha": "31a5af65d6245faf18d19606c2c0c65ecfaecf3e",
       "repository": "api",
