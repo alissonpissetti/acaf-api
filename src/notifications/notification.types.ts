@@ -56,6 +56,14 @@ export const NOTIFICATION_TRIGGER_CATALOG: NotificationTriggerDefinition[] = [
     channels: ['in_app'],
     enabled: true,
   },
+  {
+    key: 'marketing.lead.created',
+    label: 'Lead de formulário',
+    description: 'Novo lead captado por envio de formulário de marketing.',
+    category: 'Marketing',
+    channels: ['in_app'],
+    enabled: true,
+  },
 ];
 
 export type NotifyUsersInput = {

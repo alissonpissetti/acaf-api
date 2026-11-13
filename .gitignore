@@ -1,5 +1,8 @@
 # compiled output
 /dist
+/.tmp-dist
+/.local-dist
+/.local-dist-test
 /node_modules
 /.npm-cache
 

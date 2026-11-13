@@ -15,6 +15,7 @@ import { isAvatarColorId, pickAvatarColor } from './avatar-colors';
 import { JobPosition } from '../access-control/job-position.entity';
 import { UserGroup } from '../access-control/user-group.entity';
 import { UnitPartnerAccess } from '../platform-users/unit-partner-access.entity';
+import { connectFallbackMemberEmail } from '../asaas/connect-checkout-identity';
 import { purgeHolderFromPartnerStore } from '../partner/purgeHolderFromStore';
 import { User, UserRole, userHasRole } from './user.entity';
 import {
@@ -147,8 +148,10 @@ export class UsersService implements OnModuleInit {
   }
 
   async findByEmail(email: string): Promise<User | null> {
+    const normalized = String(email ?? '').trim().toLowerCase();
+    if (!normalized) return null;
     return this.users.findOne({
-      where: { email: email.toLowerCase().trim() },
+      where: { email: normalized },
       select: this.authSelectFields(),
     });
   }
@@ -307,6 +310,57 @@ export class UsersService implements OnModuleInit {
     }
   }
 
+  /**
+   * Onboarding parceiro com confirmação: libera CPF/celular em outra conta para
+   * gravar no usuário-alvo (ex.: cliente MEMBER com mesmo CPF antes do vínculo PARTNER).
+   */
+  async releaseConflictingPersonFieldsForPartnerOnboarding(
+    cpf: string,
+    mobilePhone: string,
+    targetUserId?: string,
+  ): Promise<void> {
+    const cpfNorm = normalizeCpf(cpf);
+    const phoneNorm = normalizeMobilePhone(mobilePhone);
+
+    if (phoneNorm && isValidMobilePhone(phoneNorm)) {
+      const phoneHolder = await this.findByMobilePhone(phoneNorm);
+      if (phoneHolder && phoneHolder.id !== targetUserId) {
+        phoneHolder.mobilePhone = null;
+        await this.users.save(phoneHolder);
+      }
+    }
+
+    if (cpfNorm && isValidCpf(cpfNorm)) {
+      const cpfHolder = await this.findByCpf(cpfNorm);
+      if (cpfHolder && cpfHolder.id !== targetUserId) {
+        cpfHolder.cpf = null;
+        await this.users.save(cpfHolder);
+      }
+    }
+  }
+
+  async findPersonFieldHolderIds(
+    cpf: string,
+    mobilePhone: string,
+    excludeUserId?: string,
+  ): Promise<{ cpfUserId: string | null; phoneUserId: string | null }> {
+    const cpfNorm = normalizeCpf(cpf);
+    const phoneNorm = normalizeMobilePhone(mobilePhone);
+    let cpfUserId: string | null = null;
+    let phoneUserId: string | null = null;
+
+    if (cpfNorm && isValidCpf(cpfNorm)) {
+      const holder = await this.findByCpf(cpfNorm);
+      if (holder && holder.id !== excludeUserId) cpfUserId = holder.id;
+    }
+    if (phoneNorm && isValidMobilePhone(phoneNorm)) {
+      const holder = await this.findByMobilePhone(phoneNorm);
+      if (holder && holder.id !== excludeUserId) phoneUserId = holder.id;
+    }
+
+    return { cpfUserId, phoneUserId };
+  }
+
   async search(query: string, limit = 12): Promise<SafeUser[]> {
     const trimmed = query.trim();
     if (trimmed.length < 2) {
@@ -419,6 +473,68 @@ export class UsersService implements OnModuleInit {
     return this.toSafeUserDetailed(saved);
   }
 
+  /**
+   * Garante cliente (MEMBER) para checkout Connect sem login — CPF, e-mail e celular como chaves estáveis.
+   */
+  async ensureConnectMemberUser(input: {
+    name: string;
+    email?: string;
+    cpf?: string;
+    mobilePhone?: string;
+  }): Promise<string> {
+    const name = input.name.trim();
+    if (!name) {
+      throw new BadRequestException('Informe o nome do titular.');
+    }
+
+    const cpf = input.cpf ? normalizeCpf(input.cpf) : undefined;
+    if (cpf && !isValidCpf(cpf)) {
+      throw new BadRequestException('CPF inválido.');
+    }
+
+    const phone = input.mobilePhone ? normalizeMobilePhone(input.mobilePhone) : undefined;
+    if (phone && !isValidMobilePhone(phone)) {
+      throw new BadRequestException('Informe um celular válido com DDD (11 dígitos).');
+    }
+
+    let user: User | null = null;
+    if (cpf) {
+      user = await this.findByCpf(cpf);
+    }
+    if (!user && phone) {
+      user = await this.findByMobilePhone(phone);
+    }
+    const email = input.email?.trim().toLowerCase();
+    if (!user && email) {
+      user = await this.findByEmail(email);
+    }
+
+    if (!user) {
+      const resolvedEmail = email || connectFallbackMemberEmail(name);
+      const saved = await this.users.save(
+        this.users.create({
+          name,
+          email: resolvedEmail,
+          cpf: cpf && isValidCpf(cpf) ? cpf : null,
+          mobilePhone: phone ?? null,
+          passwordHash: null,
+          roles: [UserRole.MEMBER],
+          active: true,
+          avatarColor: pickAvatarColor(resolvedEmail),
+        }),
+      );
+      return saved.id;
+    }
+
+    user.name = name;
+    if (cpf && isValidCpf(cpf) && !user.cpf) user.cpf = cpf;
+    if (phone && !user.mobilePhone) user.mobilePhone = phone;
+    user.roles = mergeRoles(normalizeRoles(user.roles), [UserRole.MEMBER]);
+    if (!user.active) user.active = true;
+    await this.users.save(user);
+    return user.id;
+  }
+
   async ensureMemberUser(input: {
     name: string;
     email: string;
@@ -457,6 +573,54 @@ export class UsersService implements OnModuleInit {
     user.roles = mergeRoles(normalizeRoles(user.roles), [UserRole.MEMBER]);
     await this.users.save(user);
     return user.id;
+  }
+
+  /** Atualiza perfil e senha no fluxo de convite do portal parceiro (usuário já existente). */
+  async updateForPartnerInvite(
+    userId: string,
+    input: {
+      name: string;
+      cpf: string;
+      mobilePhone: string;
+      password: string;
+      roles?: UserRole[];
+      strictPartnerProfile?: boolean;
+    },
+  ): Promise<SafeUser> {
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    if (input.strictPartnerProfile) {
+      this.assertFullName(input.name);
+      this.assertPartnerSignupPassword(input.password);
+    }
+
+    const cpf = normalizeCpf(input.cpf);
+    if (!isValidCpf(cpf)) {
+      throw new BadRequestException('CPF inválido.');
+    }
+
+    const person = this.resolvePersonFields(
+      { cpf: input.cpf, mobilePhone: input.mobilePhone },
+      Boolean(input.strictPartnerProfile),
+    );
+
+    user.name = input.name.trim();
+    user.cpf = person.cpf ?? cpf;
+    user.mobilePhone = person.mobilePhone ?? null;
+    user.passwordHash = await bcrypt.hash(input.password, 10);
+    user.roles = mergeRoles(
+      normalizeRoles(user.roles),
+      input.roles?.length ? input.roles : [UserRole.PARTNER],
+    );
+    user.active = true;
+
+    await this.assertUniquePersonFields(user.cpf ?? undefined, user.mobilePhone ?? undefined, userId);
+
+    const saved = await this.users.save(user);
+    return this.toSafeUserDetailed(saved);
   }
 
   async createWithPassword(input: {

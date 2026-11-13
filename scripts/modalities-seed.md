@@ -31,4 +31,4 @@ A tabela é criada com `CREATE TABLE IF NOT EXISTS` quando ainda não existir (`
 
 Sem seed dedicado: use `POST /api/admin/modalities` com `{ "name": "…" }` (JWT admin) para cada modalidade.
 
-O campo `modalityCatalog` em `shared/connect_domain.json` é legado/documentação; em runtime o domínio Connect usa os nomes ativos do banco.
+O campo `modalityCatalog` em `shared/connect_domain.json` é legado/documentação; em runtime o domínio usa os nomes ativos do banco.

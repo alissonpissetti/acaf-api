@@ -11,6 +11,7 @@ import { MarketingCreative } from './marketing-creative.entity';
 import { MarketingFormSubmission } from './marketing-form-submission.entity';
 import { MarketingLandingPage } from './marketing-landing-page.entity';
 import { MarketingLandingPagesService } from './marketing-landing-pages.service';
+import { MarketingNotificationsService } from './marketing-notifications.service';
 import { MarketingPageEvent } from './marketing-page-event.entity';
 
 function repoMock() {
@@ -69,6 +70,7 @@ describe('MarketingLandingPagesService.deactivatePage', () => {
         { provide: UsersService, useValue: {} },
         { provide: NextcloudService, useValue: {} },
         { provide: BrandFontsService, useValue: {} },
+        { provide: MarketingNotificationsService, useValue: { onMarketingFormLeadCreated: jest.fn() } },
       ],
     }).compile();
 
@@ -215,5 +217,97 @@ describe('MarketingLandingPagesService.deactivatePage', () => {
     pages.delete.mockResolvedValue({ affected: 1 });
 
     await expect(service.deactivatePage('page-zombie')).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('MarketingLandingPagesService.listPages', () => {
+  let service: MarketingLandingPagesService;
+  const pages = repoMock();
+  const submissions = repoMock();
+  const campaigns = repoMock();
+  const events = repoMock();
+  const creatives = repoMock();
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const dataSource = buildDataSourceMock({ pages, submissions, events, creatives });
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MarketingLandingPagesService,
+        { provide: DataSource, useValue: dataSource },
+        { provide: getRepositoryToken(MarketingLandingPage), useValue: pages },
+        { provide: getRepositoryToken(MarketingFormSubmission), useValue: submissions },
+        { provide: getRepositoryToken(MarketingPageEvent), useValue: events },
+        { provide: getRepositoryToken(MarketingCampaign), useValue: campaigns },
+        { provide: getRepositoryToken(MarketingCreative), useValue: creatives },
+        { provide: CommercialLeadsService, useValue: {} },
+        { provide: UsersService, useValue: {} },
+        { provide: NextcloudService, useValue: {} },
+        { provide: BrandFontsService, useValue: {} },
+        { provide: MarketingNotificationsService, useValue: {} },
+      ],
+    }).compile();
+
+    service = module.get(MarketingLandingPagesService);
+  });
+
+  it('expõe leadsCount agregado por formulário na listagem', async () => {
+    const now = new Date('2026-01-01T12:00:00.000Z');
+    const pageA = {
+      id: 'page-a',
+      name: 'Alpha',
+      slug: 'alpha',
+      headline: 'Headline A',
+      viewCount: 10,
+      submissionCount: 4,
+      active: true,
+      campaignId: null,
+      creativeId: null,
+      funnelId: null,
+      leadType: null,
+      createdAt: now,
+      updatedAt: now,
+    } as MarketingLandingPage;
+    const pageB = {
+      id: 'page-b',
+      name: 'Beta',
+      slug: 'beta',
+      headline: 'Headline B',
+      viewCount: 5,
+      submissionCount: 1,
+      active: true,
+      campaignId: null,
+      creativeId: null,
+      funnelId: null,
+      leadType: null,
+      createdAt: now,
+      updatedAt: now,
+    } as MarketingLandingPage;
+
+    pages.find.mockResolvedValue([pageA, pageB]);
+
+    const queryBuilder = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      getRawMany: jest
+        .fn()
+        .mockResolvedValue([{ landingPageId: 'page-a', count: '3' }]),
+    };
+    submissions.createQueryBuilder.mockReturnValue(queryBuilder);
+
+    const result = await service.listPages(true);
+
+    expect(submissions.createQueryBuilder).toHaveBeenCalledWith('submission');
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith('submission.landingPageId IN (:...pageIds)', {
+      pageIds: ['page-a', 'page-b'],
+    });
+    expect(result).toHaveLength(2);
+    expect(result[0].leadsCount).toBe(3);
+    expect(result[1].leadsCount).toBe(0);
+    expect(submissions.count).not.toHaveBeenCalled();
   });
 });

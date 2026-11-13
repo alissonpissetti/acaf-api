@@ -390,7 +390,32 @@ export class PartnerController {
     return { profile };
   }
 
+  @Get('connect/advance-finance-preview')
+  @UseGuards(PartnerJwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'MVP cartão adiantado — recebíveis de assinatura vinculados às unidades do parceiro (flag CONNECT_FINANCE_PARTNER_ADVANCE_ENABLED)',
+  })
+  getConnectAdvanceFinancePreview(@Req() req: PartnerRequest) {
+    return this.partner.getConnectAdvanceFinancePreview(req.user.unitIds);
+  }
+
+  @Get('connect/billing-statement')
+  @ApiOperation({ summary: 'Extrato de cobranças da assinatura (status real do Asaas)' })
+  async getConnectBillingStatement(@Query('holderName') holderName?: string) {
+    if (!holderName?.trim()) {
+      throw new BadRequestException('Informe holderName.');
+    }
+    const entries = await this.partner.listConnectBillingStatement(holderName.trim());
+    return { entries };
+  }
+
   @Put('connect/subscription')
+  @ApiOperation({
+    summary: 'Registro local de assinatura (sem cobrança)',
+    description:
+      'Não chama o Asaas. Assinaturas ativas por este endpoint não geram linhas de extrato pagas no app.',
+  })
   registerConnectSubscription(
     @Body()
     body: {
@@ -402,6 +427,68 @@ export class PartnerController {
   ) {
     const profile = this.partner.registerConnectSubscription(body);
     return { ok: true, profile };
+  }
+
+  @Patch('connect/subscription/change-plan')
+  @ApiOperation({
+    summary: 'Troca de plano Movly (upgrade com cobrança pró-rata, downgrade sem estorno)',
+  })
+  async changeConnectSubscriptionPlan(
+    @Body() body: { holderName: string; connectPlanId: ConnectPlanId },
+  ) {
+    if (!body.holderName?.trim() || !body.connectPlanId?.trim()) {
+      throw new BadRequestException('Informe holderName e connectPlanId.');
+    }
+    const result = await this.partner.changeConnectSubscriptionPlan({
+      holderName: body.holderName.trim(),
+      connectPlanId: body.connectPlanId,
+    });
+    return { ok: true, ...result };
+  }
+
+  @Post('connect/subscription/checkout')
+  @ApiOperation({ summary: 'Assina plano Movly com cobrança recorrente no Asaas' })
+  async checkoutConnectSubscription(
+    @Body()
+    body: {
+      holderName: string;
+      connectPlanId: ConnectPlanId;
+      companyName?: string;
+      holderCpf?: string;
+      holderEmail?: string;
+      holderPhone?: string;
+      card: {
+        holderName: string;
+        number: string;
+        expiryMonth: string;
+        expiryYear: string;
+        cvv: string;
+      };
+    },
+  ) {
+    if (!body.holderName?.trim() || !body.connectPlanId?.trim() || !body.card) {
+      throw new BadRequestException('Dados de checkout incompletos.');
+    }
+    const result = await this.partner.checkoutConnectSubscription({
+      holderName: body.holderName.trim(),
+      connectPlanId: body.connectPlanId,
+      companyName: body.companyName?.trim() || undefined,
+      holderCpf: body.holderCpf?.trim() || undefined,
+      holderEmail: body.holderEmail?.trim() || undefined,
+      holderPhone: body.holderPhone?.trim() || undefined,
+      card: {
+        holderName: body.card.holderName?.trim() ?? '',
+        number: body.card.number ?? '',
+        expiryMonth: body.card.expiryMonth ?? '',
+        expiryYear: body.card.expiryYear ?? '',
+        cvv: body.card.cvv ?? '',
+      },
+    });
+    return {
+      ok: true,
+      profile: result.profile,
+      gateway: result.gateway,
+    };
   }
 
   @Put('connect/primary-gym')

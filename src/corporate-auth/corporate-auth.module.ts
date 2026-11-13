@@ -14,7 +14,7 @@ import { CorporateJwtStrategy } from './corporate-jwt.strategy';
 
 @Module({
   imports: [
-    UsersModule,
+    forwardRef(() => UsersModule),
     SmsModule,
     TypeOrmModule.forFeature([AuthOtp]),
     forwardRef(() => CorporateModule),

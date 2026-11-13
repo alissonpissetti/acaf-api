@@ -6,7 +6,7 @@ import { createEmptyStore } from './store-normalize';
 import { getDomain } from './store';
 import type { DayOfWeek, UnitWeeklySchedule } from './weeklySchedule';
 import { sanitizeUnitPhotosForApi } from './photoUrls';
-import type { AssociateImportSource } from './associate-meta';
+import type { AdminManualAssociateSource, AssociateImportSource } from './associate-meta';
 
 /** Uma linha do histórico diário de vidas pagantes (associados) para faixas de repasse. */
 export type AssociateRepasseDailySnapshot = {
@@ -169,7 +169,7 @@ export type AcafAssociateMeta = {
   /** ISO date (YYYY-MM-DD). */
   signedAt: string;
   contactEmail: string;
-  importSource: AssociateImportSource;
+  importSource: AssociateImportSource | AdminManualAssociateSource;
   importedAt: string;
   /** false = removido da planilha na última sincronização (some do catálogo app). */
   listed?: boolean;
@@ -345,6 +345,33 @@ export type ConnectMemberRecord = {
   primaryFirstCheckInAt: string | null;
   primaryCheckInsSinceFirst: number;
   companyName?: string;
+  /** IDs no Asaas após checkout com cartão. */
+  asaasCustomerId?: string;
+  asaasSubscriptionId?: string;
+  cardLastFour?: string;
+  /** Usuário da plataforma (cliente) vinculado no checkout ou cadastro. */
+  userId?: string;
+  holderCpf?: string;
+  holderEmail?: string;
+  holderPhone?: string;
+  /** Recebível da plataforma após downgrade (ciclo corrente já pago no tier anterior). */
+  planChangeReceivableAmount?: number;
+  planChangeReceivableId?: string;
+  lastPlanChangeAt?: string;
+  lastPlanChangeFromPlanId?: ConnectPlanId;
+  /** Unidade parceira vinculada para futuro adiantamento (cartão adiantado). */
+  financePartnerUnitId?: string | null;
+  financeAdvanceEligible?: boolean;
+  lastSyncedAsaasPaymentId?: string | null;
+  lastSyncedAsaasPaymentAt?: string | null;
+  financePartnerShare?: {
+    grossValue: number;
+    netValue: number | null;
+    gatewayFee: number | null;
+    estimatedCreditDate: string | null;
+    asaasPaymentId: string;
+    holderKey: string;
+  } | null;
 };
 
 export type PrimaryGymChangeRecord = {

@@ -21,6 +21,14 @@ import {
   buildPartnerTeamInviteSubject,
   buildPartnerTeamInviteText,
 } from './partner-team-invite.template';
+import {
+  buildPartnerOnboardingAlreadyConfiguredHtml,
+  buildPartnerOnboardingAlreadyConfiguredSubject,
+  buildPartnerOnboardingAlreadyConfiguredText,
+  buildPartnerOnboardingRecoveryCodeHtml,
+  buildPartnerOnboardingRecoveryCodeSubject,
+  buildPartnerOnboardingRecoveryCodeText,
+} from './partner-onboarding-recovery.template';
 
 const MAIL_LOGO_FILE = 'movly-logo-lime-on-purple.png';
 
@@ -420,6 +428,100 @@ export class MailService implements OnModuleInit {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`Falha ao enviar convite de equipe para ${input.to}: ${message}`);
+      return { sent: false, reason: this.friendlySendError(message) };
+    }
+  }
+
+  async sendPartnerOnboardingRecoveryCode(input: {
+    to: string;
+    networkName: string;
+    code: string;
+    ttlMinutes: number;
+  }): Promise<SendPartnerOnboardingInviteResult> {
+    const content = {
+      networkName: input.networkName,
+      code: input.code,
+      ttlMinutes: input.ttlMinutes,
+      logoUrl: await this.employeeInviteLogoUrl(),
+    };
+    return this.dispatchPartnerMail({
+      to: input.to,
+      subject: buildPartnerOnboardingRecoveryCodeSubject(input.networkName),
+      text: buildPartnerOnboardingRecoveryCodeText(content),
+      html: buildPartnerOnboardingRecoveryCodeHtml(content),
+      logLabel: 'código de verificação onboarding',
+      missingConfigHint: `Código: ${input.code}`,
+    });
+  }
+
+  async sendPartnerOnboardingAlreadyConfigured(input: {
+    to: string;
+    networkName: string;
+    loginUrl: string;
+  }): Promise<SendPartnerOnboardingInviteResult> {
+    const content = {
+      networkName: input.networkName,
+      loginUrl: input.loginUrl.trim(),
+      logoUrl: await this.employeeInviteLogoUrl(),
+    };
+    return this.dispatchPartnerMail({
+      to: input.to,
+      subject: buildPartnerOnboardingAlreadyConfiguredSubject(input.networkName),
+      text: buildPartnerOnboardingAlreadyConfiguredText(content),
+      html: buildPartnerOnboardingAlreadyConfiguredHtml(content),
+      logLabel: 'aviso de acesso já configurado',
+    });
+  }
+
+  private async dispatchPartnerMail(input: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+    logLabel: string;
+    missingConfigHint?: string;
+  }): Promise<SendPartnerOnboardingInviteResult> {
+    const provider = this.mailProvider();
+    if (!provider) {
+      const hint = input.missingConfigHint ? ` ${input.missingConfigHint}` : '';
+      this.logger.warn(
+        `E-mail não configurado — ${input.logLabel} não enviado para ${input.to}.${hint}`,
+      );
+      return {
+        sent: false,
+        reason:
+          'E-mail não configurado na API (SMTP ou Hostinger Mail API). Configure MAIL_PROVIDER.',
+      };
+    }
+
+    const from = this.defaultFromAddress();
+
+    try {
+      if (provider === 'hostinger') {
+        await this.sendViaHostinger({
+          to: input.to,
+          subject: input.subject,
+          text: input.text,
+          html: input.html,
+        });
+      } else {
+        const transporter = this.getTransporter();
+        if (!transporter) {
+          return { sent: false, reason: 'SMTP_HOST não configurado na API.' };
+        }
+        await transporter.sendMail({
+          from,
+          to: input.to,
+          subject: input.subject,
+          text: input.text,
+          html: input.html,
+        });
+      }
+      this.logger.log(`${input.logLabel} enviado para ${input.to}`);
+      return { sent: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Falha ao enviar ${input.logLabel} para ${input.to}: ${message}`);
       return { sent: false, reason: this.friendlySendError(message) };
     }
   }

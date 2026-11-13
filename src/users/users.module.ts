@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { AsaasModule } from '../asaas/asaas.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JobPosition } from '../access-control/job-position.entity';
 import { UserGroup } from '../access-control/user-group.entity';
@@ -12,7 +13,11 @@ import { UsersStoreSyncService } from './users-store-sync.service';
 import { UsersService } from './users.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, PlatformUser, UnitPartnerAccess, UserGroup, JobPosition]), StorageModule],
+  imports: [
+    TypeOrmModule.forFeature([User, PlatformUser, UnitPartnerAccess, UserGroup, JobPosition]),
+    StorageModule,
+    forwardRef(() => AsaasModule),
+  ],
   controllers: [UsersController],
   providers: [UsersService, UsersMigrationService, UsersStoreSyncService],
   exports: [UsersService, UsersStoreSyncService],

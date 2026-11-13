@@ -14,8 +14,13 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Post('login')
-  login(@Body() body: { email: string; password: string }) {
-    return this.auth.login(body.email, body.password);
+  login(@Body() body: { email?: string; password?: string }) {
+    const email = body.email?.trim();
+    const password = body.password ?? '';
+    if (!email) {
+      throw new BadRequestException('Informe o e-mail.');
+    }
+    return this.auth.login(email, password);
   }
 
   @Post('otp/request')

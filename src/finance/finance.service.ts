@@ -26,6 +26,12 @@ import {
 import { CostCenter } from './cost-center.entity';
 import { Company } from '../corporate/company.entity';
 import { AdminService } from '../partner/admin.service';
+import { AsaasClient } from '../asaas/asaas.client';
+import { AsaasInboundService } from '../asaas/asaas-inbound.service';
+import { isPlatformUserUuid } from '../asaas/connect-checkout-identity';
+import { ConnectFinanceReceivableService } from '../asaas/connect-finance-receivable.service';
+import { loadStore } from '../partner/store';
+import { UsersService } from '../users/users.service';
 import { User, UserRole, userHasRole } from '../users/user.entity';
 import { formatCpf, formatCnpj } from '../users/person.utils';
 import {
@@ -106,6 +112,7 @@ function mapPayable(row: AccountPayable) {
         }
       : null,
     category: row.category,
+    asaasPaymentId: row.asaasPaymentId,
     accountPlanId: row.accountPlanId,
     accountPlan: mapAccountPlanRef(row.accountPlan),
     notes: row.notes,
@@ -120,6 +127,9 @@ function mapPayable(row: AccountPayable) {
 }
 
 function mapReceivable(row: AccountReceivable) {
+  const userId =
+    row.platformUserId ??
+    (row.payerKind === 'client' && isPlatformUserUuid(row.payerRefId) ? row.payerRefId : null);
   return {
     id: row.id,
     type: 'receivable' as const,
@@ -138,8 +148,11 @@ function mapReceivable(row: AccountReceivable) {
       ? { id: row.costCenter.id, code: row.costCenter.code, name: row.costCenter.name }
       : null,
     counterpartName: row.counterpartName,
+    userId,
     payerKind: row.payerKind,
     payerRefId: row.payerRefId,
+    platformUserId: row.platformUserId ?? userId,
+    connectHolderKey: row.connectHolderKey,
     payerKey: row.payerKind && row.payerRefId ? buildPayerKey(row.payerKind, row.payerRefId) : null,
     payerKindLabel: payerKindLabel(row.payerKind),
     payer: row.payerKind && row.payerRefId
@@ -149,13 +162,17 @@ function mapReceivable(row: AccountReceivable) {
           key: buildPayerKey(row.payerKind, row.payerRefId),
           kindLabel: payerKindLabel(row.payerKind),
           name: row.counterpartName,
+          userId: row.payerKind === 'client' ? userId : null,
         }
       : null,
     category: row.category,
+    asaasPaymentId: row.asaasPaymentId,
+    asaasSubscriptionId: row.asaasSubscriptionId,
     accountPlanId: row.accountPlanId,
     accountPlan: mapAccountPlanRef(row.accountPlan),
     notes: row.notes,
     attachments: row.attachments ?? [],
+    transactionId: row.transactionId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -184,6 +201,10 @@ export class FinanceService {
     private readonly companies: Repository<Company>,
     private readonly admin: AdminService,
     private readonly storage: NextcloudService,
+    private readonly asaas: AsaasClient,
+    private readonly asaasInbound: AsaasInboundService,
+    private readonly connectReceivableFinance: ConnectFinanceReceivableService,
+    private readonly usersService: UsersService,
   ) {}
 
   private mapAccountPlan(row: AccountPlan) {
@@ -678,11 +699,16 @@ export class FinanceService {
     return this.costCenters.save(row);
   }
 
-  async listPayables(filters?: { status?: CashEntryStatus; costCenterId?: string }) {
+  async listPayables(filters?: {
+    status?: CashEntryStatus;
+    costCenterId?: string;
+    category?: string;
+  }) {
     const rows = await this.payables.find({
       where: {
         ...(filters?.status ? { status: filters.status } : {}),
         ...(filters?.costCenterId ? { costCenterId: filters.costCenterId } : {}),
+        ...(filters?.category ? { category: filters.category } : {}),
       },
       relations: [
         'costCenter',
@@ -1086,11 +1112,89 @@ export class FinanceService {
     return row;
   }
 
-  async listReceivables(filters?: { status?: CashEntryStatus; costCenterId?: string }) {
+  async relinkReceivableToPlatformUser(id: string) {
+    const row = await this.loadReceivable(id);
+    const holderKey = row.connectHolderKey?.trim().toLowerCase();
+    if (!holderKey) {
+      throw new BadRequestException('Recebível sem titular da assinatura (connectHolderKey).');
+    }
+
+    const store = loadStore();
+    const member = store.connectMembers?.find((m) => m.holderKey === holderKey);
+
+    let userId = row.platformUserId?.trim() || member?.userId?.trim() || null;
+    if (!userId || !isPlatformUserUuid(userId)) {
+      if (!member) {
+        throw new BadRequestException('Assinante não encontrado para este titular.');
+      }
+      if (!member.holderCpf && !member.holderPhone && !member.holderEmail) {
+        throw new BadRequestException(
+          'Não há CPF/celular/e-mail no assinante para resolver o usuário da plataforma.',
+        );
+      }
+      userId = await this.usersService.ensureConnectMemberUser({
+        name: member.holderName,
+        email: member.holderEmail,
+        cpf: member.holderCpf,
+        mobilePhone: member.holderPhone,
+      });
+    }
+
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new BadRequestException('Usuário da plataforma não encontrado para relink.');
+    }
+
+    row.payerKind = 'client';
+    row.payerRefId = userId;
+    row.platformUserId = userId;
+    row.counterpartName = user.name;
+    await this.receivables.save(row);
+
+    const batchUpdated = await this.connectReceivableFinance.relinkConnectReceivablesToUser(
+      holderKey,
+      userId,
+      user.name,
+    );
+
+    return {
+      receivable: mapReceivable(row),
+      relinkedCount: batchUpdated,
+    };
+  }
+
+  async resyncReceivableFromAsaas(id: string) {
+    const row = await this.loadReceivable(id);
+    const paymentId = row.asaasPaymentId?.trim();
+    if (!paymentId) {
+      throw new BadRequestException('Este recebível não possui cobrança Asaas vinculada.');
+    }
+    if (!this.asaas.isConfigured()) {
+      throw new BadRequestException('Gateway Asaas não configurado.');
+    }
+
+    const payment = await this.asaas.getPayment(paymentId);
+    const synced = await this.asaasInbound.syncPaymentToReceivable(payment);
+    if (!synced) {
+      throw new BadRequestException(
+        'Não foi possível resolver o titular desta cobrança no Asaas.',
+      );
+    }
+
+    const refreshed = await this.loadReceivable(id);
+    return mapReceivable(refreshed);
+  }
+
+  async listReceivables(filters?: {
+    status?: CashEntryStatus;
+    costCenterId?: string;
+    category?: string;
+  }) {
     const rows = await this.receivables.find({
       where: {
         ...(filters?.status ? { status: filters.status } : {}),
         ...(filters?.costCenterId ? { costCenterId: filters.costCenterId } : {}),
+        ...(filters?.category ? { category: filters.category } : {}),
       },
       relations: ['costCenter', 'accountPlan'],
       order: { dueDate: 'DESC', createdAt: 'DESC' },

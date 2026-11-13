@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Request } from 'express';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, Repository } from 'typeorm';
 import type { CommercialLeadType } from '../commercial/commercial-lead.entity';
 import { CommercialLeadsService } from '../commercial/commercial-leads.service';
 import { BrandFontsService } from '../branding/brand-fonts.service';
@@ -34,6 +34,7 @@ import {
   type MarketingLandingTheme,
 } from './marketing.types';
 import { buildMarketingFormPath, utmFromCreative, type MarketingUtmParams } from './marketing-url.utils';
+import { MarketingNotificationsService } from './marketing-notifications.service';
 
 @Injectable()
 export class MarketingLandingPagesService {
@@ -55,6 +56,7 @@ export class MarketingLandingPagesService {
     private readonly users: UsersService,
     private readonly storage: NextcloudService,
     private readonly brandFonts: BrandFontsService,
+    private readonly marketingNotifications: MarketingNotificationsService,
   ) {}
 
   getPublicBrandTypography() {
@@ -66,7 +68,10 @@ export class MarketingLandingPagesService {
       where: includeInactive ? {} : { active: true },
       order: { name: 'ASC' },
     });
-    return Promise.all(rows.map((row) => this.pageSummaryDto(row)));
+    const leadsCountByPageId = await this.leadsCountByLandingPageIds(rows.map((row) => row.id));
+    return Promise.all(
+      rows.map((row) => this.pageSummaryDto(row, leadsCountByPageId.get(row.id) ?? 0)),
+    );
   }
 
   async listPageOptions(campaignId?: string) {
@@ -650,6 +655,14 @@ export class MarketingLandingPagesService {
       `Lead captado pelo formulário "${page.name}" (${page.slug}).`,
     );
 
+    void this.marketingNotifications.onMarketingFormLeadCreated({
+      leadId: lead.id,
+      leadTitle: mapped.title || mapped.contactName || mapped.legalName || 'Lead de marketing',
+      formName: page.name,
+      formSlug: page.slug,
+      ownerUserId: ownerUserId ?? null,
+    });
+
     return {
       ok: true,
       submissionId: submission.id,
@@ -754,7 +767,32 @@ export class MarketingLandingPagesService {
     };
   }
 
-  private async pageSummaryDto(row: MarketingLandingPage) {
+  private async leadsCountByLandingPageIds(pageIds: string[]): Promise<Map<string, number>> {
+    if (pageIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.submissions
+      .createQueryBuilder('submission')
+      .select('submission.landingPageId', 'landingPageId')
+      .addSelect('COUNT(submission.id)', 'count')
+      .where('submission.leadId IS NOT NULL')
+      .andWhere('submission.landingPageId IN (:...pageIds)', { pageIds })
+      .groupBy('submission.landingPageId')
+      .getRawMany<{ landingPageId: string; count: string }>();
+
+    return new Map(rows.map((row) => [row.landingPageId, Number(row.count)]));
+  }
+
+  private async resolveLeadsCount(row: MarketingLandingPage, precomputed?: number): Promise<number> {
+    if (precomputed !== undefined) {
+      return precomputed;
+    }
+    return this.submissions.count({
+      where: { landingPageId: row.id, leadId: Not(IsNull()) },
+    });
+  }
+
+  private async pageSummaryDto(row: MarketingLandingPage, precomputedLeadsCount?: number) {
     const campaign = row.campaignId
       ? await this.campaigns.findOne({ where: { id: row.campaignId } })
       : null;
@@ -765,6 +803,8 @@ export class MarketingLandingPagesService {
     const sharePath = creative
       ? buildMarketingFormPath(row.slug, utmFromCreative(creative))
       : buildMarketingFormPath(row.slug);
+
+    const leadsCount = await this.resolveLeadsCount(row, precomputedLeadsCount);
 
     return {
       id: row.id,
@@ -785,6 +825,7 @@ export class MarketingLandingPagesService {
             : null,
       viewCount: row.viewCount,
       submissionCount: row.submissionCount,
+      leadsCount,
       conversionRate:
         row.viewCount > 0
           ? Number(((row.submissionCount / row.viewCount) * 100).toFixed(2))

@@ -2,7 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 const API_DESCRIPTION = [
-  'API do ecossistema Connect (NestJS).',
+  'API do ecossistema Movly (NestJS).',
   '',
   '## Autenticação',
   '',
@@ -33,7 +33,7 @@ const API_DESCRIPTION = [
 
 export function setupSwagger(app: INestApplication): void {
   const config = new DocumentBuilder()
-    .setTitle('Connect API')
+    .setTitle('Movly API')
     .setDescription(API_DESCRIPTION)
     .setVersion(process.env.npm_package_version ?? '1.0.0')
     .addBearerAuth(
@@ -79,7 +79,7 @@ export function setupSwagger(app: INestApplication): void {
 
   SwaggerModule.setup('docs', app, document, {
     useGlobalPrefix: false,
-    customSiteTitle: 'Connect API — Documentação',
+    customSiteTitle: 'Movly API — Documentação',
     jsonDocumentUrl: 'docs/openapi.json',
     swaggerOptions: {
       persistAuthorization: true,

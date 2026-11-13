@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AddressesModule } from '../addresses/addresses.module';
 import { CommercialLead } from '../commercial/commercial-lead.entity';
@@ -26,11 +26,13 @@ import { SystemSettingsModule } from '../system-settings/system-settings.module'
 import { EvolutionInstance } from '../evolution/evolution-instance.entity';
 import { AssociationsModule } from '../associations/associations.module';
 import { AssociateStoreMigrationService } from '../associations/associate-store-migration.service';
+import { AsaasModule } from '../asaas/asaas.module';
 
 @Module({
   imports: [
+    forwardRef(() => AsaasModule),
     AssociationsModule,
-    PartnerAuthModule,
+    forwardRef(() => PartnerAuthModule),
     TypeOrmModule.forFeature([
       UnitSchedule,
       PartnerStore,
@@ -42,10 +44,10 @@ import { AssociateStoreMigrationService } from '../associations/associate-store-
     ]),
     AddressesModule,
     StorageModule,
-    PlatformUsersModule,
-    UsersModule,
+    forwardRef(() => PlatformUsersModule),
+    forwardRef(() => UsersModule),
     ModalitiesModule,
-    CorporateModule,
+    forwardRef(() => CorporateModule),
     SystemSettingsModule,
   ],
   controllers: [PartnerController, SharedController, AdminController],

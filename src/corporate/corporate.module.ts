@@ -26,7 +26,7 @@ import { CorporateInvoicesService } from './corporate-invoices.service';
       CompanyInvoice,
       User,
     ]),
-    UsersModule,
+    forwardRef(() => UsersModule),
     MailModule,
     SmsModule,
     forwardRef(() => CorporateAuthModule),

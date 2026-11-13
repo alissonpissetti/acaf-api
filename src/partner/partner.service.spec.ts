@@ -7,6 +7,8 @@ import { createEmptyStore } from './store-normalize';
 import { registerStoreBackend } from './store';
 import { UnitCoordinatesService } from './unit-coordinates.service';
 import { UnitScheduleService } from './unit-schedule.service';
+import { ConnectCheckoutService } from '../asaas/connect-checkout.service';
+import { ConnectPlanChangeService } from '../asaas/connect-plan-change.service';
 
 describe('PartnerService', () => {
   let service: PartnerService;
@@ -49,6 +51,14 @@ describe('PartnerService', () => {
             updateNetworkForPartner: () => ({}),
             uploadNetworkLogoForPartner: async () => ({}),
           },
+        },
+        {
+          provide: ConnectCheckoutService,
+          useValue: { checkout: jest.fn() },
+        },
+        {
+          provide: ConnectPlanChangeService,
+          useValue: { changePlan: jest.fn() },
         },
       ],
     }).compile();

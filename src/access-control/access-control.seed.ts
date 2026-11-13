@@ -64,6 +64,13 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
         sortOrder: 5,
         permissionKey: 'plataforma.usuarios',
       },
+      {
+        slug: 'termos-parceiro',
+        label: 'Documentos',
+        route: '/m/operacao/documentos',
+        sortOrder: 6,
+        permissionKey: 'operacao.termos-parceiro',
+      },
     ],
   },
   {

@@ -86,6 +86,9 @@ export class AccountPayable {
   @Column({ type: 'varchar', length: 80, nullable: true })
   category: string | null;
 
+  @Column({ name: 'asaas_payment_id', type: 'varchar', length: 40, nullable: true, unique: true })
+  asaasPaymentId: string | null;
+
   @Column({ name: 'account_plan_id', type: 'uuid', nullable: true })
   accountPlanId: string | null;
 

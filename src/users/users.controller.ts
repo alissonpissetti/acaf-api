@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards, BadRequestException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+  BadRequestException,
+} from '@nestjs/common';
+import { ConnectCheckoutService } from '../asaas/connect-checkout.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -12,11 +24,20 @@ type AuthRequest = Request & { user: { userId: string } };
 @Controller('admin/users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly connectCheckout: ConnectCheckoutService,
+  ) {}
 
   @Get()
   list() {
     return this.users.findAll();
+  }
+
+  @Get(':id/connect-billing-statement')
+  async connectBillingStatement(@Param('id') id: string) {
+    const entries = await this.connectCheckout.listBillingStatementForPlatformUser(id);
+    return { entries };
   }
 
   @Post()

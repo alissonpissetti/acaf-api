@@ -7,6 +7,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
+import { AccountReceivable } from '../finance/account-receivable.entity';
+import {
+  CONNECT_RECEIVABLE_CATEGORY_SUBSCRIPTION,
+  CONNECT_RECEIVABLE_CATEGORY_UPGRADE,
+} from '../asaas/connect-finance-receivable';
 import type { UnitScope } from './aggregatePayout';
 import { applySuccessfulCheckIn, duplicateCheckInTodayMessage, normalizeHolderKey, requestGeoCheckIn as processGeoCheckInRequest, validateCheckInCode } from './checkIn';
 import {
@@ -65,6 +73,16 @@ import {
   validateConnectCheckInAtUnit,
   type ConnectMemberProfile,
 } from './connectMember';
+import {
+  ConnectCheckoutService,
+  type ConnectSubscriptionCheckoutInput,
+  type ConnectSubscriptionCheckoutResult,
+} from '../asaas/connect-checkout.service';
+import {
+  ConnectPlanChangeService,
+  type ConnectPlanChangeInput,
+  type ConnectPlanChangeResult,
+} from '../asaas/connect-plan-change.service';
 import { getPartnerClientDetail, listPartnerClients } from './partnerClients';
 
 function scopeFromQuery(scope?: string): UnitScope {
@@ -85,6 +103,11 @@ export class PartnerService {
     private readonly unitCoordinates: UnitCoordinatesService,
     private readonly corporateAccess: CorporateAccessService,
     private readonly admin: AdminService,
+    private readonly connectCheckout: ConnectCheckoutService,
+    private readonly connectPlanChange: ConnectPlanChangeService,
+    private readonly config: ConfigService,
+    @InjectRepository(AccountReceivable)
+    private readonly connectReceivables: Repository<AccountReceivable>,
   ) {}
 
   private resolvePartnerNetworkId(unitIds?: string[]): string {
@@ -582,6 +605,93 @@ export class PartnerService {
     }
   }
 
+  checkoutConnectSubscription(
+    body: ConnectSubscriptionCheckoutInput,
+  ): Promise<ConnectSubscriptionCheckoutResult> {
+    return this.connectCheckout.checkout(body);
+  }
+
+  listConnectBillingStatement(holderName: string) {
+    return this.connectCheckout.listMemberBillingStatement(holderName);
+  }
+
+  /**
+   * MVP cartão adiantado: lista recebíveis da assinatura dos titulares com academia principal nas unidades do parceiro.
+   */
+  async getConnectAdvanceFinancePreview(unitIds: string[]) {
+    if (!unitIds?.length) {
+      throw new ForbiddenException('Sem acesso.');
+    }
+    const enabled = this.isPartnerAdvanceFinanceEnabled();
+    const scopedUnits = new Set(unitIds);
+    const store = loadStore();
+    const holderKeys = [
+      ...new Set(
+        (store.connectMembers ?? [])
+          .filter((m) => m.active && m.primaryUnitId && scopedUnits.has(m.primaryUnitId))
+          .map((m) => m.holderKey),
+      ),
+    ];
+
+    if (!enabled || holderKeys.length === 0) {
+      return {
+        enabled,
+        feature: 'connect_advance' as const,
+        items: [] as Array<{
+          id: string;
+          description: string;
+          amount: string;
+          dueDate: string;
+          expectedSettledAt: string | null;
+          status: string;
+          category: string | null;
+          asaasPaymentId: string | null;
+          holderKey: string | null;
+        }>,
+      };
+    }
+
+    const rows = await this.connectReceivables.find({
+      where: [
+        {
+          connectHolderKey: In(holderKeys),
+          category: In([CONNECT_RECEIVABLE_CATEGORY_SUBSCRIPTION, CONNECT_RECEIVABLE_CATEGORY_UPGRADE]),
+        },
+        {
+          payerRefId: In(holderKeys),
+          category: In([CONNECT_RECEIVABLE_CATEGORY_SUBSCRIPTION, CONNECT_RECEIVABLE_CATEGORY_UPGRADE]),
+        },
+      ],
+      order: { dueDate: 'DESC', createdAt: 'DESC' },
+      take: 50,
+    });
+
+    return {
+      enabled,
+      feature: 'connect_advance' as const,
+      items: rows.map((row) => ({
+        id: row.id,
+        description: row.description,
+        amount: row.amount,
+        dueDate: row.dueDate,
+        expectedSettledAt: row.expectedSettledAt,
+        status: row.status,
+        category: row.category,
+        asaasPaymentId: row.asaasPaymentId,
+        holderKey: row.connectHolderKey ?? row.payerRefId,
+      })),
+    };
+  }
+
+  private isPartnerAdvanceFinanceEnabled(): boolean {
+    const raw = this.config.get<string>('CONNECT_FINANCE_PARTNER_ADVANCE_ENABLED')?.trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes';
+  }
+
+  changeConnectSubscriptionPlan(body: ConnectPlanChangeInput): Promise<ConnectPlanChangeResult> {
+    return this.connectPlanChange.changePlan(body);
+  }
+
   setConnectPrimaryGym(holderName: string, unitId: string): ConnectMemberProfile {
     try {
       return assignConnectPrimaryGym(holderName, unitId);
@@ -881,7 +991,7 @@ export class PartnerService {
       weeklySchedule: unit.weeklySchedule
         ? normalizeWeeklySchedule(unit.weeklySchedule)
         : undefined,
-      description: includeDescription ? unit.description : undefined,
+      description: unit.description?.trim() ?? '',
       modalities: unit.modalities,
       dailyPassPrice: unit.dailyPassPrice,
       dailyPassActive: unit.dailyPassActive,

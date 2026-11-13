@@ -59,7 +59,12 @@ import { currentMonthLabelBr } from './payoutMonth';
 import { buildNewUnit, emptyMonthlyPayout } from './unitFactory';
 import { isRemotePhotoUrl } from './photoUrls';
 import { UnitCoordinatesService } from './unit-coordinates.service';
-import { isImportedAssociateMeta } from './associate-meta';
+import {
+  ADMIN_MANUAL_ASSOCIATE_SOURCE,
+  isAdminManualAssociateMeta,
+  isImportedAssociateMeta,
+} from './associate-meta';
+import { isValidCnpj, normalizeCnpj } from '../users/person.utils';
 import { cancelCheckInEntry, listCheckInsForUnit, normalizeHolderKey } from './checkIn';
 import {
   getPartnerClientDetail,
@@ -959,19 +964,16 @@ export class AdminService {
     }
 
     if (acafPatch !== undefined) {
-      const prev = before.acafAssociate;
-      if (!prev || !isImportedAssociateMeta(prev)) {
-        throw new BadRequestException('Esta unidade não possui dados de importação movly. para editar.');
-      }
-      const cnpjLocked = prev.cnpj;
+      const priorAssociate: AcafAssociateMeta | undefined = before.acafAssociate;
       const {
-        cnpj: _ignoredCnpj,
+        cnpj: patchCnpj,
         associationId: patchAssociationId,
         importSource: _ignoredSource,
         importedAt: patchImportedAt,
         ...acafRest
       } = acafPatch as Partial<AcafAssociateMeta> & { cnpj?: string };
-      let nextAssociationId = prev.associationId;
+
+      let nextAssociationId = priorAssociate?.associationId;
       if (patchAssociationId !== undefined) {
         const raw = patchAssociationId == null ? '' : String(patchAssociationId).trim();
         if (!raw) {
@@ -984,20 +986,101 @@ export class AdminService {
           nextAssociationId = row.id;
         }
       }
+
       const listed =
-        acafRest.listed !== undefined ? acafRest.listed : (prev.listed ?? true);
-      next.acafAssociate = {
-        ...prev,
-        ...acafRest,
-        cnpj: cnpjLocked,
-        associationId: nextAssociationId,
-        importSource: prev.importSource,
-        importedAt:
-          patchImportedAt !== undefined && patchImportedAt !== null
-            ? String(patchImportedAt)
-            : prev.importedAt,
-        listed,
-      };
+        acafRest.listed !== undefined ? acafRest.listed : (priorAssociate?.listed ?? true);
+
+      if (priorAssociate && isImportedAssociateMeta(priorAssociate)) {
+        const cnpjLocked = priorAssociate.cnpj;
+        next.acafAssociate = {
+          ...priorAssociate,
+          ...acafRest,
+          cnpj: cnpjLocked,
+          associationId: nextAssociationId,
+          importSource: priorAssociate.importSource,
+          importedAt:
+            patchImportedAt !== undefined && patchImportedAt !== null
+              ? String(patchImportedAt)
+              : priorAssociate.importedAt,
+          listed,
+        };
+      } else {
+        const priorMeta = priorAssociate;
+        let nextCnpj = priorMeta?.cnpj ?? '';
+        if (patchCnpj !== undefined) {
+          const digits = normalizeCnpj(String(patchCnpj));
+          if (digits && !isValidCnpj(digits)) {
+            throw new BadRequestException('CNPJ inválido.');
+          }
+          nextCnpj = digits;
+        } else if (!priorMeta && patchCnpj === undefined) {
+          nextCnpj = '';
+        }
+
+        if (nextCnpj) {
+          const clash = current.units.find(
+            (u) => u.id !== unitId && u.acafAssociate?.cnpj === nextCnpj,
+          );
+          if (clash) {
+            throw new BadRequestException('CNPJ já cadastrado em outra unidade.');
+          }
+        }
+
+        const legalName =
+          acafRest.legalName !== undefined
+            ? String(acafRest.legalName).trim()
+            : (priorMeta?.legalName ?? '');
+        const association =
+          acafRest.association !== undefined
+            ? String(acafRest.association).trim()
+            : (priorMeta?.association ?? '');
+        const signedAt =
+          acafRest.signedAt !== undefined ? String(acafRest.signedAt) : (priorMeta?.signedAt ?? '');
+        const contactEmail =
+          acafRest.contactEmail !== undefined
+            ? String(acafRest.contactEmail).trim().toLowerCase()
+            : (priorMeta?.contactEmail ?? '');
+        const contactPhone =
+          acafRest.contactPhone !== undefined ? acafRest.contactPhone : priorMeta?.contactPhone;
+        const complement =
+          acafRest.complement !== undefined ? acafRest.complement : priorMeta?.complement;
+
+        const hasContent =
+          Boolean(nextCnpj) ||
+          Boolean(legalName) ||
+          Boolean(association) ||
+          Boolean(signedAt) ||
+          Boolean(contactEmail) ||
+          Boolean(contactPhone) ||
+          Boolean(complement) ||
+          nextAssociationId !== undefined ||
+          listed === false;
+
+        if (priorMeta || hasContent) {
+          const createdAt =
+            priorMeta && isAdminManualAssociateMeta(priorMeta)
+              ? priorMeta.importedAt
+              : new Date().toISOString();
+          next.acafAssociate = {
+            associationId: nextAssociationId,
+            cnpj: nextCnpj,
+            legalName,
+            association,
+            signedAt,
+            contactEmail,
+            contactPhone,
+            complement,
+            importSource:
+              priorMeta && isAdminManualAssociateMeta(priorMeta)
+                ? priorMeta.importSource
+                : ADMIN_MANUAL_ASSOCIATE_SOURCE,
+            importedAt: createdAt,
+            listed,
+          };
+        } else if (priorMeta && isAdminManualAssociateMeta(priorMeta)) {
+          next.acafAssociate = undefined;
+        }
+      }
     }
     if (heroPhotoDataUrl !== undefined && isRemotePhotoUrl(heroPhotoDataUrl)) {
       next.heroPhotoDataUrl = heroPhotoDataUrl;

@@ -27,11 +27,35 @@ export type ConnectMemberProfile = {
   canChangePrimary: boolean;
   remainingCheckInsBeforeChange: number;
   minCheckInsToChange: number;
+  asaasSubscriptionId?: string | null;
+  cardLastFour?: string | null;
+  planChangeReceivableAmount?: number | null;
+  planChangeReceivableId?: string | null;
+  lastPlanChangeAt?: string | null;
+  lastPlanChangeFromPlanId?: ConnectPlanId | null;
 };
 
 export function findConnectMember(store: ApiStore, holderName: string): ConnectMemberRecord | undefined {
   const key = normalizeHolderKey(holderName);
   return store.connectMembers?.find((m) => m.holderKey === key);
+}
+
+export function findConnectMemberByAsaasSubscriptionId(
+  store: ApiStore,
+  subscriptionId: string,
+): ConnectMemberRecord | undefined {
+  const id = subscriptionId.trim();
+  if (!id) return undefined;
+  return store.connectMembers?.find((m) => m.asaasSubscriptionId?.trim() === id);
+}
+
+export function findConnectMemberByUserId(
+  store: ApiStore,
+  userId: string,
+): ConnectMemberRecord | undefined {
+  const id = userId.trim();
+  if (!id) return undefined;
+  return store.connectMembers?.find((m) => m.userId?.trim() === id);
 }
 
 function ensureConnectMembersArray(store: ApiStore): ConnectMemberRecord[] {
@@ -74,6 +98,12 @@ export function toConnectMemberProfile(member: ConnectMemberRecord): ConnectMemb
     canChangePrimary: memberCanChangePrimary(member),
     remainingCheckInsBeforeChange: remainingCheckInsBeforeChange(member),
     minCheckInsToChange: MIN_PRIMARY_CHECKINS_TO_CHANGE,
+    asaasSubscriptionId: member.asaasSubscriptionId ?? null,
+    cardLastFour: member.cardLastFour ?? null,
+    planChangeReceivableAmount: member.planChangeReceivableAmount ?? null,
+    planChangeReceivableId: member.planChangeReceivableId ?? null,
+    lastPlanChangeAt: member.lastPlanChangeAt ?? null,
+    lastPlanChangeFromPlanId: member.lastPlanChangeFromPlanId ?? null,
   };
 }
 
@@ -82,6 +112,13 @@ export function upsertConnectSubscription(input: {
   connectPlanId: ConnectPlanId;
   active?: boolean;
   companyName?: string;
+  asaasCustomerId?: string;
+  asaasSubscriptionId?: string;
+  cardLastFour?: string;
+  userId?: string;
+  holderCpf?: string;
+  holderEmail?: string;
+  holderPhone?: string;
 }): ConnectMemberProfile {
   const holderName = input.holderName.trim();
   if (!holderName) {
@@ -107,6 +144,13 @@ export function upsertConnectSubscription(input: {
       primaryFirstCheckInAt: existing?.primaryFirstCheckInAt ?? null,
       primaryCheckInsSinceFirst: existing?.primaryCheckInsSinceFirst ?? 0,
       companyName: input.companyName?.trim() || existing?.companyName,
+      asaasCustomerId: input.asaasCustomerId ?? existing?.asaasCustomerId,
+      asaasSubscriptionId: input.asaasSubscriptionId ?? existing?.asaasSubscriptionId,
+      cardLastFour: input.cardLastFour ?? existing?.cardLastFour,
+      userId: input.userId ?? existing?.userId,
+      holderCpf: input.holderCpf ?? existing?.holderCpf,
+      holderEmail: input.holderEmail ?? existing?.holderEmail,
+      holderPhone: input.holderPhone ?? existing?.holderPhone,
     };
 
     if (idx >= 0) {

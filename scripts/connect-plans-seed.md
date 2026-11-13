@@ -1,6 +1,6 @@
-# Seed dos planos Connect (premium)
+# Seed dos planos Movly (premium)
 
-Os planos Connect **não** usam tabela no banco: ficam em `shared/connect_domain.json`, carregados em runtime por `getDomain()` (`acaf-api/src/partner/store.ts`). O admin **Operação → Planos Connect** (`/m/operacao/planos`, `ConnectPlansPage.jsx`) lê e grava via `GET`/`PATCH` do domínio Connect (`connectPlans`).
+Os planos **não** usam tabela no banco: ficam em `shared/connect_domain.json`, carregados em runtime por `getDomain()` (`acaf-api/src/partner/store.ts`). O admin **Operação → Planos** (`/m/operacao/planos`, `ConnectPlansPage.jsx`) lê e grava via `GET`/`PATCH` do domínio (`connectPlans`).
 
 O arquivo versionado `shared/connect_plans_premium_seed.json` define:
 
@@ -49,6 +49,6 @@ No portal parceiro você ainda pode usar `npm run sync:shared` (a partir de `aca
 
 ## API (manual)
 
-Sem seed: use o admin **Operação → Planos Connect** ou `PATCH` admin do domínio Connect com o array `connectPlans` (validação em `normalizeConnectPlans` em `admin.service.ts`).
+Sem seed: use o admin **Operação → Planos** ou `PATCH` admin do domínio com o array `connectPlans` (validação em `normalizeConnectPlans` em `admin.service.ts`).
 
 **Nota:** assinantes já gravados com `connectPlanId: connect-total` no store da API precisam de migração de dados separada; o seed só atualiza o catálogo de domínio.

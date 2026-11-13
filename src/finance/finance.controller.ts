@@ -116,8 +116,9 @@ export class FinanceController {
   listPayables(
     @Query('status') status?: CashEntryStatus,
     @Query('costCenterId') costCenterId?: string,
+    @Query('category') category?: string,
   ) {
-    return this.finance.listPayables({ status, costCenterId });
+    return this.finance.listPayables({ status, costCenterId, category });
   }
 
   @Post('payables')
@@ -177,8 +178,9 @@ export class FinanceController {
   listReceivables(
     @Query('status') status?: CashEntryStatus,
     @Query('costCenterId') costCenterId?: string,
+    @Query('category') category?: string,
   ) {
-    return this.finance.listReceivables({ status, costCenterId });
+    return this.finance.listReceivables({ status, costCenterId, category });
   }
 
   @Post('receivables')
@@ -197,6 +199,18 @@ export class FinanceController {
   @RequirePermissions('financeiro.contas-receber.manage')
   settleReceivable(@Param('id') id: string, @Body() body: { settledAt?: string }) {
     return this.finance.settleReceivable(id, body?.settledAt);
+  }
+
+  @Post('receivables/:id/resync-asaas')
+  @RequirePermissions('financeiro.contas-receber.manage')
+  resyncReceivableFromAsaas(@Param('id') id: string) {
+    return this.finance.resyncReceivableFromAsaas(id);
+  }
+
+  @Post('receivables/:id/relink-user')
+  @RequirePermissions('financeiro.contas-receber.manage')
+  relinkReceivableToPlatformUser(@Param('id') id: string) {
+    return this.finance.relinkReceivableToPlatformUser(id);
   }
 
   @Delete('receivables/:id')

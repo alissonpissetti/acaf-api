@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { Transaction } from './transaction.entity';
 import { CashEntryStatus } from './cash-entry.types';
 import { AccountPlan } from './account-plan.entity';
 import { CostCenter } from './cost-center.entity';
@@ -60,8 +61,29 @@ export class AccountReceivable {
   @Column({ name: 'payer_ref_id', type: 'varchar', length: 64, nullable: true })
   payerRefId: string | null;
 
+  /** Usuário MEMBER da plataforma vinculado à cobrança da assinatura (consulta direta no extrato/adm). */
+  @Column({ name: 'platform_user_id', type: 'uuid', nullable: true })
+  platformUserId: string | null;
+
+  /** Chave normalizada do titular da assinatura (parceiro / adiantamento), independente do pagador formal. */
+  @Column({ name: 'connect_holder_key', type: 'varchar', length: 64, nullable: true })
+  connectHolderKey: string | null;
+
   @Column({ type: 'varchar', length: 80, nullable: true })
   category: string | null;
+
+  @Column({ name: 'asaas_payment_id', type: 'varchar', length: 40, nullable: true, unique: true })
+  asaasPaymentId: string | null;
+
+  @Column({ name: 'asaas_subscription_id', type: 'varchar', length: 40, nullable: true })
+  asaasSubscriptionId: string | null;
+
+  @Column({ name: 'transaction_id', type: 'uuid', nullable: true })
+  transactionId: string | null;
+
+  @ManyToOne(() => Transaction, (row) => row.receivables, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'transaction_id' })
+  transaction: Transaction | null;
 
   @Column({ name: 'account_plan_id', type: 'uuid', nullable: true })
   accountPlanId: string | null;

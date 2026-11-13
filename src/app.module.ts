@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { AuthOtp } from './auth/auth-otp.entity';
 import { parseDatabaseUrl } from './database/parse-database-url';
 import { PartnerAuthModule } from './partner-auth/partner-auth.module';
+import { PartnerOnboardingCnpjChallenge } from './partner-auth/partner-onboarding-cnpj-challenge.entity';
 import { PartnerOnboardingEmailSend } from './partner-auth/partner-onboarding-email-send.entity';
 import { PartnerOnboardingInvite } from './partner-auth/partner-onboarding-invite.entity';
 import { PartnerModule } from './partner/partner.module';
@@ -37,6 +38,8 @@ import { CostCenter } from './finance/cost-center.entity';
 import { AccountPayable } from './finance/account-payable.entity';
 import { AccountPlan } from './finance/account-plan.entity';
 import { AccountReceivable } from './finance/account-receivable.entity';
+import { Transaction } from './finance/transaction.entity';
+import { TransactionGatewayAttempt } from './finance/transaction-gateway-attempt.entity';
 import { SupplierPixKey } from './finance/supplier-pix-key.entity';
 import { Supplier } from './finance/supplier.entity';
 import { CommercialModule } from './commercial/commercial.module';
@@ -76,10 +79,17 @@ import { ChangelogModule } from './changelog/changelog.module';
 import { ChangelogEntry } from './changelog/changelog-entry.entity';
 import { AssociationsModule } from './associations/associations.module';
 import { Association } from './associations/association.entity';
+import { PartnerLegalModule } from './partner-legal/partner-legal.module';
+import { PartnerLegalDocument } from './partner-legal/partner-legal-document.entity';
+import { PartnerTermsAcceptance } from './partner-legal/partner-terms-acceptance.entity';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      // `.env.local` precisa vir primeiro: o merge do Nest mantém o valor do arquivo carregado antes.
+      envFilePath: ['.env.local', '.env'],
+    }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -117,6 +127,8 @@ import { Association } from './associations/association.entity';
             AccountPlan,
             AccountPayable,
             AccountReceivable,
+            Transaction,
+            TransactionGatewayAttempt,
             Supplier,
             SupplierPixKey,
             CommercialLead,
@@ -138,6 +150,7 @@ import { Association } from './associations/association.entity';
             SupportQueue,
             PartnerOnboardingInvite,
             PartnerOnboardingEmailSend,
+            PartnerOnboardingCnpjChallenge,
             EvolutionInstance,
             EvolutionMessage,
             EvolutionContactProfile,
@@ -149,6 +162,8 @@ import { Association } from './associations/association.entity';
             SystemSetting,
             ChangelogEntry,
             Association,
+            PartnerLegalDocument,
+            PartnerTermsAcceptance,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,
@@ -189,6 +204,7 @@ import { Association } from './associations/association.entity';
     EvolutionModule,
     ChangelogModule,
     AssociationsModule,
+    PartnerLegalModule,
   ],
 })
 export class AppModule {}

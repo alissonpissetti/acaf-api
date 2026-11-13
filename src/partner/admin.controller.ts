@@ -104,6 +104,7 @@ export class AdminController {
     return this.admin.deleteAllAcafImportedNetworks();
   }
 
+  /** Link aberto (onboarding ou equipe). Sem limite diário — o teto de 1/dia vale só para e-mail. */
   @Post('networks/:id/partner-onboarding-invite')
   createPartnerOnboardingInvite(@Req() req: AuthRequest, @Param('id') networkId: string) {
     return this.partnerOnboarding.createInvite(networkId, req.user.userId);

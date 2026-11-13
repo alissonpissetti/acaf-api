@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { PartnerAuthService } from './partner-auth.service';
@@ -29,6 +29,18 @@ export class PartnerAuthController {
     return this.auth.me(req.user.platformUserId);
   }
 
+  @Post('onboarding/recover/request')
+  @HttpCode(200)
+  requestOnboardingCnpjRecovery(@Body() body: { cnpj?: string }) {
+    return this.onboarding.requestCnpjRecovery(body.cnpj ?? '');
+  }
+
+  @Post('onboarding/recover/verify')
+  @HttpCode(200)
+  verifyOnboardingCnpjRecovery(@Body() body: { cnpj?: string; code?: string }) {
+    return this.onboarding.verifyCnpjRecovery(body.cnpj ?? '', body.code ?? '');
+  }
+
   @Get('onboarding/:token/preview')
   onboardingPreview(@Param('token') token: string) {
     return this.onboarding.getPreviewByToken(token);
@@ -37,7 +49,15 @@ export class PartnerAuthController {
   @Post('onboarding/:token/complete')
   onboardingComplete(
     @Param('token') token: string,
-    @Body() body: { name: string; email: string; cpf: string; mobilePhone: string; password: string },
+    @Body()
+    body: {
+      name: string;
+      email: string;
+      cpf: string;
+      mobilePhone: string;
+      password: string;
+      confirmUpdateExisting?: boolean;
+    },
   ) {
     return this.onboarding.completeInvite(token, body);
   }
