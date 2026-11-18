@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "a9490e78-b6da-4e3d-9073-4b0e43f73f44",
+      "commitSha": "543f1d5584f906e322c5a1c478efc21ccb1f07bf",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-18T16:20:06-03:00",
+      "title": "Auth do membro, cartões Asaas e mensalidades do pagante.",
+      "summary": "Extratos corporativos, titulares da unidade, check-in e assinatura gym com cobertura de testes.",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "4238245b-fc7e-4a13-8f73-ff837ce9e199",
       "commitSha": "f8d4ba611035955948fe2b42d0ba5d5b02ebcff2",
       "repository": "api",
