@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { CorporateAccessService } from '../corporate/corporate-access.service';
+import { CorporateEmployeesService } from '../corporate/corporate-employees.service';
 import { ModalitiesService } from '../modalities/modalities.service';
 import { AdminService } from './admin.service';
 import { PartnerService } from './partner.service';
@@ -9,6 +12,7 @@ import { UnitCoordinatesService } from './unit-coordinates.service';
 import { UnitScheduleService } from './unit-schedule.service';
 import { ConnectCheckoutService } from '../asaas/connect-checkout.service';
 import { ConnectPlanChangeService } from '../asaas/connect-plan-change.service';
+import { AccountReceivable } from '../finance/account-receivable.entity';
 
 describe('PartnerService', () => {
   let service: PartnerService;
@@ -45,6 +49,12 @@ describe('PartnerService', () => {
           },
         },
         {
+          provide: CorporateEmployeesService,
+          useValue: {
+            verifyAppEnrollmentActivation: async () => ({ collaboratorName: 'Teste' }),
+          },
+        },
+        {
           provide: AdminService,
           useValue: {
             getNetworkForPartner: () => ({}),
@@ -59,6 +69,14 @@ describe('PartnerService', () => {
         {
           provide: ConnectPlanChangeService,
           useValue: { changePlan: jest.fn() },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: () => undefined },
+        },
+        {
+          provide: getRepositoryToken(AccountReceivable),
+          useValue: {},
         },
       ],
     }).compile();

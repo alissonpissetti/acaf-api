@@ -20,6 +20,8 @@ import { Transaction } from './transaction.entity';
 import { TransactionGatewayAttempt } from './transaction-gateway-attempt.entity';
 import { TransactionService } from './transaction.service';
 import { TransactionController } from './transaction.controller';
+import { PayerMembershipFeeStatementService } from './payer-membership-fee-statement.service';
+import { CompanyInvoice } from '../corporate/company-invoice.entity';
 
 @Module({
   imports: [
@@ -40,10 +42,11 @@ import { TransactionController } from './transaction.controller';
       SupplierPixKey,
       User,
       Company,
+      CompanyInvoice,
     ]),
   ],
   controllers: [FinanceController, TransactionController],
-  providers: [FinanceService, TransactionService],
-  exports: [FinanceService, TransactionService],
+  providers: [FinanceService, TransactionService, PayerMembershipFeeStatementService],
+  exports: [FinanceService, TransactionService, PayerMembershipFeeStatementService],
 })
 export class FinanceModule {}

@@ -2,6 +2,40 @@
   "version": 1,
   "entries": [
     {
+      "id": "4238245b-fc7e-4a13-8f73-ff837ce9e199",
+      "commitSha": "f8d4ba611035955948fe2b42d0ba5d5b02ebcff2",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-18T16:20:03-03:00",
+      "title": "Auth do membro, cartões Asaas e mensalidades do pagante.",
+      "summary": "Extratos corporativos, titulares da unidade, check-in e assinatura gym com cobertura de testes.",
+      "category": "feature",
+      "areas": [
+        "api"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
+      "id": "3788e157-c1e3-4181-8e58-78bd0013c0a7",
+      "commitSha": "a66b1df7262a159d265eef2ac2419e7ababb7581",
+      "repository": "app",
+      "source": "changelog",
+      "committedAt": "2026-11-18T16:20:02-03:00",
+      "title": "Login do membro, cartões salvos e histórico de check-in.",
+      "summary": "Atualiza branding, geolocalização no check-in e fluxos de plano e financeiro no Movly.",
+      "category": "feature",
+      "areas": [
+        "app"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "522b5de2-bb16-4b5e-ad6c-f76ba03f6592",
       "commitSha": "4fc34f503d18798f0ad6ffbbfa8b2083a3578e44",
       "repository": "api",

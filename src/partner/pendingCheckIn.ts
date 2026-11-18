@@ -1,5 +1,9 @@
 import type { ApiStore, CheckInLogEntry } from './types';
-import { applySuccessfulCheckIn, duplicateCheckInTodayMessage, validateCheckInCode } from './checkIn';
+import {
+  applySuccessfulCheckIn,
+  duplicateCheckInTodayMessage,
+  validateCheckInCode,
+} from './checkIn';
 
 export type PendingCheckInRequest = {
   id: string;

@@ -39,6 +39,15 @@ export class SmsService {
     return this.dispatch(input.to, message, 'MOVLYPTR');
   }
 
+  async sendMemberAuthCode(input: {
+    to: string;
+    code: string;
+    purpose: 'password_reset';
+  }): Promise<SendSmsResult> {
+    const message = `Movly — use o código ${input.code} para redefinir sua senha no app. Válido por 10 minutos.`;
+    return this.dispatch(input.to, message, 'MOVLYAPP');
+  }
+
   async sendCorporateAuthCode(input: {
     to: string;
     code: string;

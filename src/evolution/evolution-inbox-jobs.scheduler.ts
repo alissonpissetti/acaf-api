@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EvolutionMessageMediaStorageService } from './evolution-message-media-storage.service';
 import { EvolutionInstancesService } from './evolution-instances.service';
+import { EvolutionInboxService } from './evolution-inbox.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EvolutionInstance } from './evolution-instance.entity';
@@ -29,11 +30,13 @@ export class EvolutionInboxJobsScheduler implements OnModuleInit {
   private nightlyInboxDayKey = '';
   private catchupInFlight = false;
   private nightlyInFlight = false;
+  private inboxCatchupInFlight = false;
 
   constructor(
     private readonly config: ConfigService,
     private readonly messageMediaStorage: EvolutionMessageMediaStorageService,
     private readonly evolutionInstances: EvolutionInstancesService,
+    private readonly inbox: EvolutionInboxService,
     @InjectRepository(EvolutionInstance)
     private readonly instances: Repository<EvolutionInstance>,
   ) {}
@@ -72,6 +75,7 @@ export class EvolutionInboxJobsScheduler implements OnModuleInit {
   private async tick(): Promise<void> {
     try {
       await this.maybeRunCatchupMedia();
+      await this.maybeRunCatchupInboxRepair();
       await this.maybeRunNightlyMedia();
       await this.maybeRunNightlyInboxRepair();
     } catch (err) {
@@ -132,6 +136,44 @@ export class EvolutionInboxJobsScheduler implements OnModuleInit {
       );
     } finally {
       this.nightlyInFlight = false;
+    }
+  }
+
+  /** Delta leve a cada tick quando o webhook está parado (complementa o tempo real). */
+  private async maybeRunCatchupInboxRepair(): Promise<void> {
+    if (this.inboxCatchupInFlight) return;
+    const flag = String(this.config.get<string>('EVOLUTION_INBOX_CATCHUP_ENABLED', 'true')).toLowerCase();
+    if (flag === '0' || flag === 'false') return;
+
+    const rows = await this.instances.find({
+      where: { active: true },
+      select: ['id', 'name', 'connectionState'],
+    });
+    const connected = rows.filter((row) =>
+      /open|connected/i.test(String(row.connectionState ?? '')),
+    );
+    if (!connected.length) return;
+
+    this.inboxCatchupInFlight = true;
+    try {
+      let repaired = 0;
+      for (const inst of connected) {
+        const healthy = await this.inbox.isInstanceWebhookHealthy(inst.id);
+        if (healthy) continue;
+        try {
+          const imported = await this.evolutionInstances.repairInboxIncremental(inst.id);
+          if (imported > 0) repaired += 1;
+        } catch (err) {
+          this.logger.warn(
+            `Catch-up inbox (${inst.name}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      if (repaired > 0) {
+        this.logger.log(`Catch-up inbox: ${repaired} instância(s) com mensagens reimportadas.`);
+      }
+    } finally {
+      this.inboxCatchupInFlight = false;
     }
   }
 

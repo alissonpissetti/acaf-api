@@ -199,6 +199,11 @@ export class AdminController {
     return this.admin.listUnitCheckIns(id, todayOnly);
   }
 
+  @Get('units/:id/primary-members')
+  listUnitPrimaryMembers(@Param('id') id: string) {
+    return this.admin.listUnitPrimaryMembers(id);
+  }
+
   @Delete('units/:unitId/check-ins/:entryId')
   cancelUnitCheckIn(@Param('unitId') unitId: string, @Param('entryId') entryId: string) {
     return this.admin.cancelUnitCheckIn(unitId, entryId);
@@ -378,12 +383,47 @@ export class AdminController {
     return this.admin.removeCompanyEmployee(companyId, employeeId);
   }
 
+  @Patch('companies/:companyId/employees/:employeeId')
+  patchCompanyEmployee(
+    @Param('companyId') companyId: string,
+    @Param('employeeId') employeeId: string,
+    @Body() body: { cpf?: string | null },
+  ) {
+    return this.admin.patchCompanyEmployee(companyId, employeeId, body);
+  }
+
   @Get('companies/:companyId/employees/:employeeId/profile')
   getCompanyEmployeeProfile(
     @Param('companyId') companyId: string,
     @Param('employeeId') employeeId: string,
   ) {
     return this.admin.getCompanyEmployeeProfile(companyId, employeeId);
+  }
+
+  /** Extrato mensal corporativo — apenas meses já encerrados (histórico de fatura + uso). */
+  @Get('companies/:id/monthly-statements')
+  listCompanyMonthlyStatements(@Param('id') id: string) {
+    return this.admin.listCompanyMonthlyStatements(id);
+  }
+
+  @Get('companies/:id/monthly-statements/:monthKey')
+  getCompanyMonthlyStatement(
+    @Param('id') id: string,
+    @Param('monthKey') monthKey: string,
+  ) {
+    return this.admin.getCompanyMonthlyStatement(id, monthKey);
+  }
+
+  /** Extrato de mensalidades (contas a receber vinculadas à empresa + faturas corporativas). */
+  @Get('companies/:id/membership-fees')
+  listCompanyMembershipFees(@Param('id') id: string) {
+    return this.admin.listCompanyMembershipFees(id);
+  }
+
+  /** Extrato de mensalidades da rede parceira (academia) — recebíveis com pagador = rede. */
+  @Get('networks/:id/membership-fees')
+  listNetworkMembershipFees(@Param('id') id: string) {
+    return this.admin.listNetworkMembershipFees(id);
   }
 
   @Get('connect-domain')
@@ -397,6 +437,8 @@ export class AdminController {
     body: {
       connectFeePercent?: number;
       dailyFeePercent?: number;
+      checkInMaxRadiusKm?: number;
+      gymSwitchMinCheckinsAtUnit?: number;
       connectPlans?: Array<{
         id: string;
         name: string;

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type {
   AsaasCustomer,
@@ -86,11 +86,13 @@ export class AsaasClient {
     value: number;
     description: string;
     externalReference?: string;
-    creditCard: AsaasCreditCardInput;
-    creditCardHolderInfo: AsaasCreditCardHolderInfo;
+    creditCard?: AsaasCreditCardInput;
+    creditCardHolderInfo?: AsaasCreditCardHolderInfo;
+    creditCardToken?: string;
+    remoteIp?: string;
   }): Promise<AsaasSubscription> {
     const nextDueDate = formatAsaasDate(new Date());
-    return this.post<AsaasSubscription>('/subscriptions', {
+    const body: Record<string, unknown> = {
       customer: input.customerId,
       billingType: 'CREDIT_CARD',
       cycle: 'MONTHLY',
@@ -98,9 +100,19 @@ export class AsaasClient {
       nextDueDate,
       description: input.description,
       externalReference: input.externalReference,
-      creditCard: input.creditCard,
-      creditCardHolderInfo: input.creditCardHolderInfo,
-    });
+    };
+    const token = input.creditCardToken?.trim();
+    if (token) {
+      body.creditCardToken = token;
+      const remoteIp = input.remoteIp?.trim();
+      if (remoteIp) body.remoteIp = remoteIp;
+    } else if (input.creditCard && input.creditCardHolderInfo) {
+      body.creditCard = input.creditCard;
+      body.creditCardHolderInfo = input.creditCardHolderInfo;
+    } else {
+      throw new Error('Informe creditCardToken ou creditCard.');
+    }
+    return this.post<AsaasSubscription>('/subscriptions', body);
   }
 
   async getSubscription(subscriptionId: string): Promise<AsaasSubscription> {
@@ -112,6 +124,55 @@ export class AsaasClient {
     patch: { value?: number; description?: string; externalReference?: string },
   ): Promise<AsaasSubscription> {
     return this.put<AsaasSubscription>(`/subscriptions/${encodeURIComponent(subscriptionId)}`, patch);
+  }
+
+  /**
+   * Atualiza o cartão da recorrência (`PUT /subscriptions/{id}/creditCard`).
+   * Preferir `creditCardToken` tokenizado no cadastro — ver tokenizeCreditCard.
+   */
+  async updateCreditCardSubscription(
+    subscriptionId: string,
+    input: {
+      remoteIp: string;
+      creditCard?: AsaasCreditCardInput;
+      creditCardHolderInfo?: AsaasCreditCardHolderInfo;
+      creditCardToken?: string;
+    },
+  ): Promise<AsaasSubscription> {
+    const body: Record<string, unknown> = { remoteIp: input.remoteIp };
+    const token = input.creditCardToken?.trim();
+    if (token) {
+      body.creditCardToken = token;
+    } else if (input.creditCard && input.creditCardHolderInfo) {
+      body.creditCard = input.creditCard;
+      body.creditCardHolderInfo = input.creditCardHolderInfo;
+    } else {
+      throw new Error('Informe creditCardToken ou creditCard.');
+    }
+    return this.put<AsaasSubscription>(
+      `/subscriptions/${encodeURIComponent(subscriptionId)}/creditCard`,
+      body,
+    );
+  }
+
+  /** Tokeniza cartão do customer para reutilizar em assinaturas sem reenviar PAN/CVV. */
+  async tokenizeCreditCard(input: {
+    customerId: string;
+    creditCard: AsaasCreditCardInput;
+    creditCardHolderInfo: AsaasCreditCardHolderInfo;
+    remoteIp: string;
+  }): Promise<{ creditCardToken: string }> {
+    const row = await this.post<{ creditCardToken?: string }>('/creditCard/tokenizeCreditCard', {
+      customer: input.customerId,
+      creditCard: input.creditCard,
+      creditCardHolderInfo: input.creditCardHolderInfo,
+      remoteIp: input.remoteIp,
+    });
+    const token = row.creditCardToken?.trim();
+    if (!token) {
+      throw new Error('Token de cartão não retornado pelo Asaas.');
+    }
+    return { creditCardToken: token };
   }
 
   async createCustomerCreditCardPayment(input: {
@@ -180,7 +241,7 @@ export class AsaasClient {
       const response = await fetch(url, init);
       const data = (await response.json().catch(() => null)) as (T & AsaasErrorBody) | null;
       if (!response.ok) {
-        throw new Error(this.messageFromAsaas(data, response.status));
+        throw new BadRequestException(this.messageFromAsaas(data, response.status));
       }
       if (data == null) {
         throw new Error('Resposta vazia do Asaas.');

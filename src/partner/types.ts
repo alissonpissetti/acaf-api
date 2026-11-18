@@ -333,6 +333,34 @@ export type ApiStore = {
   associateRepasseEffective?: AssociateRepasseEffectiveState | null;
 };
 
+/** Plano mensal contratado em uma unidade parceira (tier alinhado ao plano Movly do titular). */
+export type UnitGymSubscriptionRecord = {
+  unitId: string;
+  unitName: string;
+  planId: string;
+  connectPlanId: ConnectPlanId;
+  planName: string;
+  pricePerMonth: number;
+  since: string;
+};
+
+export type ConnectSavedPaymentMethodRecord = {
+  id: string;
+  brand: string;
+  lastFour: string;
+  holderName: string;
+  expiryMonth: string;
+  expiryYear: string;
+  isDefault: boolean;
+  addedAt: string;
+  /** Cartão já confirmado no Asaas para cobrança recorrente (sem token armazenado). */
+  usedForSubscription?: boolean;
+  /** Token Asaas (`creditCardTokenization`) — reutilizado sem pedir PAN/CVV de novo. */
+  asaasToken?: string;
+  /** Usuário plataforma (MariaDB) que cadastrou o cartão. */
+  addedByUserId?: string;
+};
+
 export type ConnectMemberRecord = {
   holderKey: string;
   holderName: string;
@@ -344,11 +372,15 @@ export type ConnectMemberRecord = {
   primaryChosenAt: string | null;
   primaryFirstCheckInAt: string | null;
   primaryCheckInsSinceFirst: number;
+  /** Assinatura local do plano na unidade (carteira / check-in nesta academia). */
+  unitSubscription?: UnitGymSubscriptionRecord | null;
   companyName?: string;
   /** IDs no Asaas após checkout com cartão. */
   asaasCustomerId?: string;
   asaasSubscriptionId?: string;
   cardLastFour?: string;
+  /** Cartões salvos do titular (metadados — sem PAN). */
+  savedPaymentMethods?: ConnectSavedPaymentMethodRecord[];
   /** Usuário da plataforma (cliente) vinculado no checkout ou cadastro. */
   userId?: string;
   holderCpf?: string;

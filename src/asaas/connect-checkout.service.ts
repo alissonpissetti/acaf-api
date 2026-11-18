@@ -21,7 +21,14 @@ import { ConnectFinanceSyncService } from './connect-finance-sync.service';
 import {
   findConnectMember,
   findConnectMemberByUserId,
+  findConnectSavedPaymentMethod,
+  reconcileConnectMemberForPlatformUser,
+  setConnectSavedPaymentMethodDefault,
+  upsertConnectSavedPaymentMethod,
 } from '../partner/connectMember';
+import { resolveConnectAsaasCustomerId } from './connect-asaas-customer';
+import type { ConnectMemberRecord } from '../partner/types';
+import { inferCardBrand, parseConnectCardInput, resolveAsaasRemoteIp } from './connect-card-input';
 import { loadStore, updateStore } from '../partner/store';
 import { UsersService } from '../users/users.service';
 import { connectFallbackMemberEmail } from './connect-checkout-identity';
@@ -44,7 +51,12 @@ export type ConnectSubscriptionCheckoutInput = {
   holderCpf?: string;
   holderEmail?: string;
   holderPhone?: string;
-  card: {
+  /** Quando o app envia JWT de membro, força vínculo da assinatura ao usuário MariaDB. */
+  platformUserId?: string;
+  remoteIp?: string;
+  /** Cartão já tokenizado na carteira Movly (exige sessão autenticada). */
+  paymentMethodId?: string;
+  card?: {
     holderName: string;
     number: string;
     expiryMonth: string;
@@ -101,9 +113,20 @@ export class ConnectCheckoutService {
       );
     }
 
-    const holderName = input.holderName.trim();
+    let holderName = input.holderName.trim();
     if (!holderName) {
       throw new BadRequestException('Informe o nome do titular.');
+    }
+
+    const authenticatedUserId = input.platformUserId?.trim();
+    let platformUserId: string;
+    if (authenticatedUserId) {
+      const authUser = await this.usersService.findById(authenticatedUserId);
+      if (!authUser?.active) {
+        throw new BadRequestException('Sessão inválida. Faça login novamente.');
+      }
+      platformUserId = authUser.id;
+      holderName = authUser.name.trim() || holderName;
     }
 
     const plan = this.resolvePlan(input.connectPlanId);
@@ -112,19 +135,89 @@ export class ConnectCheckoutService {
       throw new BadRequestException('Plano inválido ou sem valor configurado.');
     }
 
-    const cardNumber = digitsOnly(input.card.number);
-    if (cardNumber.length < 13) {
-      throw new BadRequestException('Número do cartão inválido.');
-    }
-    const cvv = digitsOnly(input.card.cvv);
-    if (cvv.length < 3) {
-      throw new BadRequestException('CVV inválido.');
-    }
+    const paymentMethodId = input.paymentMethodId?.trim();
+    const remoteIp = resolveAsaasRemoteIp(this.config, input.remoteIp);
+    let savedCheckout:
+      | { paymentMethodId: string; member: ConnectMemberRecord; cardLastFour: string; asaasToken?: string }
+      | null = null;
+    let cardNumber = '';
+    let creditCard: AsaasCreditCardInput | undefined;
 
-    const expiryMonth = input.card.expiryMonth.padStart(2, '0');
-    const expiryYear = normalizeExpiryYear(input.card.expiryYear);
-    if (!isValidExpiry(expiryMonth, expiryYear)) {
-      throw new BadRequestException('Validade do cartão inválida.');
+    if (paymentMethodId) {
+      if (!authenticatedUserId) {
+        throw new BadRequestException('Faça login para usar um cartão salvo.');
+      }
+      const memberRecord = await this.resolveConnectMemberForSavedCheckout(
+        authenticatedUserId,
+        holderName,
+      );
+      if (!memberRecord) {
+        throw new BadRequestException(
+          'Não encontramos seu cadastro Movly com cartões salvos. Use «Cadastrar outro cartão».',
+        );
+      }
+      holderName = memberRecord.holderName.trim() || holderName;
+      const target = findConnectSavedPaymentMethod(memberRecord.savedPaymentMethods ?? [], paymentMethodId);
+      if (!target) {
+        throw new BadRequestException('Cartão não encontrado.');
+      }
+      const storedToken = target.asaasToken?.trim();
+      if (storedToken) {
+        savedCheckout = {
+          paymentMethodId,
+          member: memberRecord,
+          cardLastFour: target.lastFour,
+          asaasToken: storedToken,
+        };
+      } else {
+        if (!input.card) {
+          throw new BadRequestException(
+            'Este cartão ainda não está tokenizado no gateway. Cadastre-o novamente ou escolha outro.',
+          );
+        }
+        const parsed = parseConnectCardInput({
+          holderName: input.card.holderName || target.holderName,
+          number: input.card.number,
+          expiryMonth: input.card.expiryMonth || target.expiryMonth,
+          expiryYear: input.card.expiryYear || target.expiryYear,
+          cvv: input.card.cvv,
+          brandHint: target.brand,
+        });
+        if (parsed.lastFour !== target.lastFour) {
+          throw new BadRequestException('Os dados do cartão não conferem com o cartão selecionado.');
+        }
+        cardNumber = digitsOnly(input.card.number);
+        creditCard = parsed.creditCard;
+        savedCheckout = {
+          paymentMethodId,
+          member: memberRecord,
+          cardLastFour: target.lastFour,
+        };
+      }
+    } else {
+      if (!input.card) {
+        throw new BadRequestException('Informe os dados do cartão.');
+      }
+      cardNumber = digitsOnly(input.card.number);
+      if (cardNumber.length < 13) {
+        throw new BadRequestException('Número do cartão inválido.');
+      }
+      const cvv = digitsOnly(input.card.cvv);
+      if (cvv.length < 3) {
+        throw new BadRequestException('CVV inválido.');
+      }
+      const expiryMonth = input.card.expiryMonth.padStart(2, '0');
+      const expiryYear = normalizeExpiryYear(input.card.expiryYear);
+      if (!isValidExpiry(expiryMonth, expiryYear)) {
+        throw new BadRequestException('Validade do cartão inválida.');
+      }
+      creditCard = {
+        holderName: input.card.holderName.trim() || holderName,
+        number: cardNumber,
+        expiryMonth,
+        expiryYear,
+        ccv: cvv,
+      };
     }
 
     const cpfCnpj = this.resolveCpf(input.holderCpf);
@@ -132,41 +225,60 @@ export class ConnectCheckoutService {
     const email = input.holderEmail?.trim() || connectFallbackMemberEmail(holderName);
     const phone = resolveCheckoutMobilePhone(input.holderPhone, this.config);
 
-    const platformUserId = await this.usersService.ensureConnectMemberUser({
-      name: holderName,
-      email,
-      cpf: cpfCnpj.length === 11 ? cpfCnpj : undefined,
-      mobilePhone: phone,
-    });
-    const linkedUser = await this.usersService.findById(platformUserId);
-
-    const customerExternalRef = buildConnectAsaasCustomerExternalReference(holderKey, platformUserId);
-    let customer =
-      (await this.asaas.findCustomerByExternalReference(customerExternalRef)) ??
-      (await this.asaas.findCustomerByExternalReference(holderKey));
-    if (!customer) {
-      customer = await this.asaas.createCustomer({
+    if (!authenticatedUserId) {
+      platformUserId = await this.usersService.ensureConnectMemberUser({
         name: holderName,
-        cpfCnpj,
         email,
-        phone,
-        externalReference: customerExternalRef,
+        cpf: cpfCnpj.length === 11 ? cpfCnpj : undefined,
+        mobilePhone: phone,
       });
-    } else if (customer.externalReference?.trim() !== customerExternalRef) {
-      customer = await this.asaas.updateCustomer(customer.id, {
-        externalReference: customerExternalRef,
+    } else {
+      platformUserId = authenticatedUserId;
+      await this.usersService.ensureConnectMemberUser({
         name: holderName,
-        email,
+        email: input.holderEmail?.trim() || email,
+        cpf: cpfCnpj.length === 11 ? cpfCnpj : undefined,
+        mobilePhone: phone,
       });
     }
+    const linkedUser = await this.usersService.findById(platformUserId);
 
-    const creditCard: AsaasCreditCardInput = {
-      holderName: input.card.holderName.trim() || holderName,
-      number: cardNumber,
-      expiryMonth,
-      expiryYear,
-      ccv: cvv,
-    };
+    let customerId: string;
+    if (savedCheckout?.member) {
+      customerId = await resolveConnectAsaasCustomerId(
+        this.asaas,
+        this.config,
+        savedCheckout.member,
+        holderName,
+        {
+          holderCpf: input.holderCpf,
+          holderEmail: input.holderEmail,
+          holderPhone: input.holderPhone,
+          platformUserId,
+        },
+      );
+    } else {
+      const customerExternalRef = buildConnectAsaasCustomerExternalReference(holderKey, platformUserId);
+      let customer =
+        (await this.asaas.findCustomerByExternalReference(customerExternalRef)) ??
+        (await this.asaas.findCustomerByExternalReference(holderKey));
+      if (!customer) {
+        customer = await this.asaas.createCustomer({
+          name: holderName,
+          cpfCnpj,
+          email,
+          phone,
+          externalReference: customerExternalRef,
+        });
+      } else if (customer.externalReference?.trim() !== customerExternalRef) {
+        customer = await this.asaas.updateCustomer(customer.id, {
+          externalReference: customerExternalRef,
+          name: holderName,
+          email,
+        });
+      }
+      customerId = customer.id;
+    }
 
     const creditCardHolderInfo: AsaasCreditCardHolderInfo = {
       name: holderName,
@@ -178,16 +290,32 @@ export class ConnectCheckoutService {
       mobilePhone: phone,
     };
 
+    let subscriptionToken = savedCheckout?.asaasToken?.trim();
+    if (savedCheckout && !subscriptionToken && creditCard) {
+      try {
+        const tokenized = await this.asaas.tokenizeCreditCard({
+          customerId,
+          creditCard,
+          creditCardHolderInfo,
+          remoteIp,
+        });
+        subscriptionToken = tokenized.creditCardToken;
+      } catch {
+        subscriptionToken = undefined;
+      }
+    }
+
     const subscription = await this.asaas.createCreditCardSubscription({
-      customerId: customer.id,
+      customerId,
       value,
       description: `Movly — ${plan.name}`,
       externalReference: buildConnectAsaasPaymentExternalReference(
         `${holderKey}:${input.connectPlanId}`,
         platformUserId,
       ),
-      creditCard,
-      creditCardHolderInfo,
+      ...(subscriptionToken
+        ? { creditCardToken: subscriptionToken, remoteIp }
+        : { creditCard: creditCard!, creditCardHolderInfo }),
     });
 
     const firstPayment = await this.waitForFirstPayment(subscription.id);
@@ -200,14 +328,14 @@ export class ConnectCheckoutService {
       );
     }
 
-    const cardLastFour = cardNumber.slice(-4);
+    const cardLastFour = savedCheckout?.cardLastFour ?? cardNumber.slice(-4);
 
-    const profile = upsertConnectSubscription({
+    upsertConnectSubscription({
       holderName,
       connectPlanId: input.connectPlanId,
       active: true,
       companyName: input.companyName,
-      asaasCustomerId: customer.id,
+      asaasCustomerId: customerId,
       asaasSubscriptionId: subscription.id,
       cardLastFour,
       userId: platformUserId,
@@ -215,6 +343,56 @@ export class ConnectCheckoutService {
       holderEmail: email,
       holderPhone: phone,
     });
+
+    let profileWithCards: ConnectMemberProfile;
+    if (savedCheckout) {
+      profileWithCards = setConnectSavedPaymentMethodDefault(
+        holderName,
+        savedCheckout.paymentMethodId,
+        cardLastFour,
+        true,
+        subscriptionToken,
+      );
+    } else if (input.card && creditCard) {
+      const parsedCard = parseConnectCardInput({
+        holderName: input.card.holderName,
+        number: input.card.number,
+        expiryMonth: input.card.expiryMonth,
+        expiryYear: input.card.expiryYear,
+        cvv: input.card.cvv,
+        brandHint: inferCardBrand(cardNumber),
+      });
+
+      let checkoutAsaasToken: string;
+      try {
+        const tokenized = await this.asaas.tokenizeCreditCard({
+          customerId,
+          creditCard,
+          creditCardHolderInfo,
+          remoteIp,
+        });
+        checkoutAsaasToken = tokenized.creditCardToken;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Falha ao tokenizar cartão.';
+        throw new BadRequestException(`Não foi possível salvar o cartão no gateway: ${message}`);
+      }
+
+      profileWithCards = upsertConnectSavedPaymentMethod({
+        holderName,
+        brand: parsedCard.brand,
+        lastFour: parsedCard.lastFour,
+        holderNameOnCard: parsedCard.holderName,
+        expiryMonth: parsedCard.expiryMonth,
+        expiryYear: parsedCard.expiryYear,
+        makeDefault: true,
+        billingCardLastFour: parsedCard.lastFour,
+        usedForSubscription: true,
+        asaasToken: checkoutAsaasToken,
+        addedByUserId: platformUserId,
+      });
+    } else {
+      throw new BadRequestException('Informe os dados do cartão.');
+    }
 
     if (linkedUser) {
       await this.receivableFinance.relinkConnectReceivablesToUser(
@@ -240,9 +418,9 @@ export class ConnectCheckoutService {
     }
 
     return {
-      profile,
+      profile: profileWithCards,
       gateway: {
-        customerId: customer.id,
+        customerId,
         subscriptionId: subscription.id,
         firstPaymentId: firstPayment?.id ?? null,
         firstPaymentStatus: paymentStatus,
@@ -374,6 +552,42 @@ export class ConnectCheckoutService {
     } catch {
       // Relink ocorre na próxima sincronização financeira.
     }
+  }
+
+  /** Vincula titular ao usuário da sessão (como GET /connect/member/me) antes do checkout com cartão salvo. */
+  private async resolveConnectMemberForSavedCheckout(
+    platformUserId: string,
+    holderNameHint: string,
+  ): Promise<ConnectMemberRecord | undefined> {
+    const user = await this.usersService.findById(platformUserId);
+    if (!user?.active) return undefined;
+
+    updateStore((s) => {
+      reconcileConnectMemberForPlatformUser(s, {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        cpf: user.cpf,
+      });
+    });
+
+    const store = loadStore();
+    const hints = [holderNameHint.trim(), user.name.trim(), user.email.trim()].filter(
+      (v) => v.length > 0,
+    );
+    for (const hint of hints) {
+      const byName = findConnectMember(store, hint);
+      if (byName) return byName;
+    }
+
+    const byUser = findConnectMemberByUserId(store, platformUserId);
+    if (byUser) return byUser;
+
+    const cpf = user.cpf ? normalizeCpf(user.cpf) : '';
+    if (cpf) {
+      return store.connectMembers?.find((m) => m.holderCpf && normalizeCpf(m.holderCpf) === cpf);
+    }
+    return undefined;
   }
 
   private resolvePlan(planId: ConnectPlanId): { name: string; pricePerMonth: number } {

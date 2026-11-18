@@ -117,4 +117,104 @@ export class AuthOtpService {
 
     return { userId: row.userId };
   }
+
+  normalizeEmail(raw: string): string {
+    const email = String(raw ?? '')
+      .trim()
+      .toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('Informe um e-mail válido.');
+    }
+    return email;
+  }
+
+  async createEmailOtp(input: {
+    email: string;
+    purpose: AuthOtpPurpose;
+    userId?: string | null;
+  }): Promise<{ code: string }> {
+    const email = this.normalizeEmail(input.email);
+
+    const recent = await this.otps.findOne({
+      where: {
+        email,
+        purpose: input.purpose,
+        consumedAt: IsNull(),
+        expiresAt: MoreThan(new Date()),
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (recent && Date.now() - recent.createdAt.getTime() < OTP_COOLDOWN_MS) {
+      throw new BadRequestException('Aguarde um minuto antes de solicitar um novo código.');
+    }
+
+    await this.otps.update(
+      {
+        email,
+        purpose: input.purpose,
+        consumedAt: IsNull(),
+      },
+      { consumedAt: new Date() },
+    );
+
+    const code = String(randomInt(100000, 1000000));
+    const codeHash = await bcrypt.hash(code, 10);
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+
+    await this.otps.save(
+      this.otps.create({
+        mobilePhone: null,
+        email,
+        purpose: input.purpose,
+        codeHash,
+        userId: input.userId ?? null,
+        expiresAt,
+      }),
+    );
+
+    return { code };
+  }
+
+  async verifyEmailOtp(input: {
+    email: string;
+    purpose: AuthOtpPurpose;
+    code: string;
+  }): Promise<{ userId: string | null }> {
+    const email = this.normalizeEmail(input.email);
+    const trimmedCode = String(input.code ?? '').trim();
+    if (!/^\d{6}$/.test(trimmedCode)) {
+      throw new BadRequestException('Informe o código de 6 dígitos recebido no e-mail.');
+    }
+
+    const row = await this.otps.findOne({
+      where: {
+        email,
+        purpose: input.purpose,
+        consumedAt: IsNull(),
+        expiresAt: MoreThan(new Date()),
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (!row) {
+      throw new UnauthorizedException('Código inválido ou expirado.');
+    }
+
+    if (row.attempts >= MAX_ATTEMPTS) {
+      throw new UnauthorizedException('Código inválido ou expirado.');
+    }
+
+    const valid = await bcrypt.compare(trimmedCode, row.codeHash);
+    if (!valid) {
+      row.attempts += 1;
+      await this.otps.save(row);
+      throw new UnauthorizedException('Código inválido ou expirado.');
+    }
+
+    row.consumedAt = new Date();
+    await this.otps.save(row);
+
+    return { userId: row.userId };
+  }
 }

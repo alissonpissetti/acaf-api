@@ -21,18 +21,22 @@ import { UnitCoordinatesService } from './unit-coordinates.service';
 import { AcafAssociatesImportService } from './acaf-associates-import.service';
 import { PartnerStorePersistenceService } from './partner-store-persistence.service';
 import { PartnerAuthModule } from '../partner-auth/partner-auth.module';
+import { MemberAuthModule } from '../member-auth/member-auth.module';
 import { AssociateRepasseDailyScheduler } from './associate-repasse-daily.scheduler';
 import { SystemSettingsModule } from '../system-settings/system-settings.module';
 import { EvolutionInstance } from '../evolution/evolution-instance.entity';
 import { AssociationsModule } from '../associations/associations.module';
 import { AssociateStoreMigrationService } from '../associations/associate-store-migration.service';
 import { AsaasModule } from '../asaas/asaas.module';
+import { FinanceModule } from '../finance/finance.module';
 
 @Module({
   imports: [
     forwardRef(() => AsaasModule),
+    forwardRef(() => FinanceModule),
     AssociationsModule,
     forwardRef(() => PartnerAuthModule),
+    MemberAuthModule,
     TypeOrmModule.forFeature([
       UnitSchedule,
       PartnerStore,

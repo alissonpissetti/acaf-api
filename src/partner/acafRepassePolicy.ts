@@ -1,6 +1,6 @@
 /**
- * Faixas de % de repasse para academias associadas à ACAF (vidas pagantes = membros com plano ativo
- * e academia principal em unidade com cadastro ACAF listado).
+ * Faixas de % de repasse para academias associadas à ACAF (vidas pagantes = titulares únicos com
+ * plano Movly ativo e/ou check-in de plano confirmado no mês em qualquer unidade).
  *
  * Limites inclusivos: 0–2499, 2500–4999, 5000–9999, ≥10 000.
  */

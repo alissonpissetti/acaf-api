@@ -17,8 +17,11 @@ export class AuthOtp {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'mobile_phone', type: 'char', length: 11 })
-  mobilePhone: string;
+  @Column({ name: 'mobile_phone', type: 'char', length: 11, nullable: true })
+  mobilePhone: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  email: string | null;
 
   @Column({ type: 'varchar', length: 32 })
   purpose: AuthOtpPurpose;

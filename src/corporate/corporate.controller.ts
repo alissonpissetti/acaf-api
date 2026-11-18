@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -14,7 +15,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { CorporateAccessService } from './corporate-access.service';
 import { CorporateCompaniesService } from './corporate-companies.service';
-import { CorporateEmployeesService } from './corporate-employees.service';
+import { CorporateEmployeesService, type EmployeeDto } from './corporate-employees.service';
 import { CorporateInvoicesService } from './corporate-invoices.service';
 import { CorporateJwtAuthGuard } from '../corporate-auth/corporate-jwt-auth.guard';
 import { currentMonthKey } from './corporate-domain';
@@ -93,10 +94,42 @@ export class CorporateController {
   async patchEmployee(
     @Req() req: CorpRequest,
     @Param('id') id: string,
-    @Body() body: { status: 'active' | 'inactive' },
+    @Body()
+    body: {
+      status?: 'active' | 'inactive';
+      name?: string;
+      email?: string;
+      cpf?: string | null;
+      mobilePhone?: string;
+    },
   ) {
     const company = await this.companyFromReq(req);
-    return this.employees.updateEmployeeStatus(company.id, id, body.status);
+    const hasProfileFields =
+      body.name !== undefined ||
+      body.email !== undefined ||
+      body.cpf !== undefined ||
+      body.mobilePhone !== undefined;
+
+    let dto: EmployeeDto | null = null;
+
+    if (hasProfileFields) {
+      dto = await this.employees.updateEmployeeProfile(company.id, id, {
+        name: body.name,
+        email: body.email,
+        cpf: body.cpf,
+        mobilePhone: body.mobilePhone,
+      });
+    }
+
+    if (body.status) {
+      dto = await this.employees.updateEmployeeStatus(company.id, id, body.status);
+    }
+
+    if (!dto) {
+      throw new BadRequestException('Nenhuma alteração informada.');
+    }
+
+    return dto;
   }
 
   @Delete('employees/:id')

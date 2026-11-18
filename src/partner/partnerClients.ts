@@ -9,6 +9,7 @@ import { normalizeHolderKey } from './checkIn';
 import { currentMonthPrefix } from './student-stats';
 import { getDomain } from './store';
 import type { UnitScope } from './aggregatePayout';
+import { isConnectSyntheticEmail } from '../asaas/connect-checkout-identity';
 
 export type PartnerClientRelationship = 'primary' | 'daily_pass' | 'visitor' | 'mixed';
 
@@ -103,7 +104,10 @@ function unitName(store: ApiStore, unitId: string): string {
 }
 
 function mergeStudentFields(acc: ClientAccumulator, student: GymStudent): void {
-  if (!acc.email && student.email?.trim()) acc.email = student.email.trim();
+  const studentEmail = student.email?.trim();
+  if (!acc.email && studentEmail && !isConnectSyntheticEmail(studentEmail)) {
+    acc.email = studentEmail;
+  }
   if (!acc.cpf && student.cpf?.trim()) acc.cpf = student.cpf.trim();
   if (!acc.companyName && student.companyName?.trim()) acc.companyName = student.companyName.trim();
   if (!acc.connectPlanId && student.connectPlanId) acc.connectPlanId = student.connectPlanId;
@@ -243,6 +247,11 @@ export function listPartnerClients(
     acc.connectPlanId = member.connectPlanId;
     if (member.companyName?.trim()) acc.companyName = member.companyName.trim();
     if (member.holderName.trim().length >= acc.name.trim().length) acc.name = member.holderName.trim();
+    const holderEmail = member.holderEmail?.trim();
+    if (holderEmail && !isConnectSyntheticEmail(holderEmail)) {
+      acc.email = holderEmail;
+    }
+    if (member.holderCpf?.trim() && !acc.cpf) acc.cpf = member.holderCpf.trim();
   }
 
   for (const student of store.students) {
@@ -256,9 +265,67 @@ export function listPartnerClients(
     enrichClientFromGlobalStore(store, acc);
   }
 
-  return [...map.values()]
-    .map(toSummary)
-    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
+  const summaries = [...map.values()].map(toSummary);
+  return dedupePartnerClientSummaries(store, summaries).sort((a, b) =>
+    a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }),
+  );
+}
+
+function memberUserIdForHolder(store: ApiStore, holderKey: string): string | undefined {
+  return store.connectMembers?.find((m) => m.holderKey === holderKey)?.userId?.trim() || undefined;
+}
+
+function dedupePartnerClientSummaries(
+  store: ApiStore,
+  summaries: PartnerClientSummary[],
+): PartnerClientSummary[] {
+  const orphans: PartnerClientSummary[] = [];
+  const byUser = new Map<string, PartnerClientSummary[]>();
+
+  for (const summary of summaries) {
+    const userId = memberUserIdForHolder(store, summary.holderKey);
+    if (!userId) {
+      orphans.push(summary);
+      continue;
+    }
+    const group = byUser.get(userId) ?? [];
+    group.push(summary);
+    byUser.set(userId, group);
+  }
+
+  const picked: PartnerClientSummary[] = [...orphans];
+  for (const group of byUser.values()) {
+    if (group.length === 1) {
+      picked.push(group[0]);
+      continue;
+    }
+    group.sort((a, b) => {
+      if (a.isPrimaryMember !== b.isPrimaryMember) return a.isPrimaryMember ? -1 : 1;
+      if (a.totalCheckIns !== b.totalCheckIns) return b.totalCheckIns - a.totalCheckIns;
+      const aSynthetic = isConnectSyntheticEmail(a.email);
+      const bSynthetic = isConnectSyntheticEmail(b.email);
+      if (aSynthetic !== bSynthetic) return aSynthetic ? 1 : -1;
+      return b.name.length - a.name.length;
+    });
+    const canonical = group[0];
+    for (let i = 1; i < group.length; i++) {
+      const other = group[i];
+      canonical.totalCheckIns += other.totalCheckIns;
+      canonical.checkInsThisMonth += other.checkInsThisMonth;
+      canonical.dailyPassesTotal += other.dailyPassesTotal;
+      canonical.dailyPassesThisMonth += other.dailyPassesThisMonth;
+      if (!canonical.email && other.email && !isConnectSyntheticEmail(other.email)) {
+        canonical.email = other.email;
+      }
+      if (!canonical.cpf && other.cpf) canonical.cpf = other.cpf;
+      if (!canonical.lastVisit || (other.lastVisit && other.lastVisit > canonical.lastVisit)) {
+        canonical.lastVisit = other.lastVisit;
+      }
+    }
+    picked.push(canonical);
+  }
+
+  return picked;
 }
 
 export function getPartnerClientDetail(

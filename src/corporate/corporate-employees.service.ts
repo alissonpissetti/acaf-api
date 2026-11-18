@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { QueryFailedError, Repository } from 'typeorm';
 import { MailService } from '../mail/mail.service';
 import { normalizeHolderKey } from '../partner/checkIn';
+import { findConnectMemberForPlatformUser } from '../partner/connectMember';
 import { getDomain, loadStore } from '../partner/store';
 import type { ConnectPlanId } from '../partner/types';
 import {
@@ -224,6 +225,13 @@ export class CorporateEmployeesService {
       order: { createdAt: 'DESC' },
     });
     const company = await this.companies.findOne({ where: { id: companyId } });
+    if (company) {
+      for (const row of rows) {
+        if (row.status === 'invited' || row.status === 'pending') {
+          await this.tryReconcileEmployeeActivation(company, row);
+        }
+      }
+    }
     let billingBase: { monthKey: string; invoiceStatus: 'open' | 'paid' | null } | null = null;
     if (company) {
       const mk = currentMonthKey();
@@ -265,7 +273,8 @@ export class CorporateEmployeesService {
 
     const store = loadStore();
     const unitIds = store.units.map((u) => u.id);
-    const holderKey = normalizeHolderKey(row.user.name);
+    const linkedMember = this.resolveConnectMemberForEmployeeUser(row.user);
+    const holderKey = linkedMember?.holderKey ?? normalizeHolderKey(row.user.name);
     let detail = getPartnerClientDetail(store, unitIds, holderKey, 'all');
     if (!detail) {
       const empty: PartnerClientDetail = {
@@ -356,7 +365,8 @@ export class CorporateEmployeesService {
     for (const row of rows) {
       if (!row.user) continue;
 
-      const holderKey = normalizeHolderKey(row.user.name);
+      const linkedMember = this.resolveConnectMemberForEmployeeUser(row.user);
+      const holderKey = linkedMember?.holderKey ?? normalizeHolderKey(row.user.name);
       let detail = getPartnerClientDetail(store, unitIds, holderKey, 'all');
       if (!detail) {
         employeeRows.push({
@@ -753,6 +763,117 @@ export class CorporateEmployeesService {
     return this.toDto(saved);
   }
 
+  /**
+   * Admin corporativo: atualiza o CPF do usuário vinculado ao colaborador (chave empresa + CPF no app).
+   */
+  async updateEmployeeCpf(
+    companyId: string,
+    employeeId: string,
+    cpfInput: string | null,
+  ): Promise<EmployeeDto> {
+    const row = await this.getEmployeeOrThrow(companyId, employeeId);
+    const user = row.user;
+    if (!user) {
+      throw new NotFoundException('Usuário do colaborador não encontrado.');
+    }
+
+    await this.applyUserCpfUpdate(user, cpfInput);
+    try {
+      await this.users.save(user);
+    } catch (error) {
+      this.rethrowDuplicateUser(error);
+    }
+
+    return this.toDto(row);
+  }
+
+  private async applyUserCpfUpdate(user: User, cpfInput: string | null | undefined): Promise<void> {
+    if (cpfInput === undefined) return;
+
+    let cpfDigits: string | null = null;
+    if (cpfInput != null && String(cpfInput).trim() !== '') {
+      cpfDigits = normalizeCpf(cpfInput);
+      if (!isValidCpf(cpfDigits)) {
+        throw new BadRequestException('CPF inválido.');
+      }
+      const holder = await this.users.findOne({ where: { cpf: cpfDigits } });
+      if (holder && holder.id !== user.id) {
+        throw new ConflictException('CPF já cadastrado em outro usuário.');
+      }
+    }
+
+    user.cpf = cpfDigits;
+  }
+
+  /**
+   * Portal corporativo: corrige nome, e-mail, celular e CPF antes da ativação no app
+   * (código da empresa + CPF). Apenas colaboradores Cadastrado ou Convite enviado.
+   */
+  async updateEmployeeProfile(
+    companyId: string,
+    employeeId: string,
+    input: {
+      name?: string;
+      email?: string;
+      cpf?: string | null;
+      mobilePhone?: string;
+    },
+  ): Promise<EmployeeDto> {
+    const row = await this.getEmployeeOrThrow(companyId, employeeId);
+    const user = row.user;
+    if (!user) {
+      throw new NotFoundException('Usuário do colaborador não encontrado.');
+    }
+
+    if (row.status !== 'pending' && row.status !== 'invited') {
+      throw new BadRequestException(
+        'Só é possível editar dados de colaboradores com status Cadastrado ou Convite enviado.',
+      );
+    }
+
+    if (input.name !== undefined) {
+      const name = input.name.trim();
+      if (!name) {
+        throw new BadRequestException('Informe o nome do colaborador.');
+      }
+      user.name = name;
+    }
+
+    if (input.email !== undefined) {
+      const email = input.email.toLowerCase().trim();
+      if (!email || !email.includes('@')) {
+        throw new BadRequestException('Informe um e-mail válido do colaborador.');
+      }
+      const byEmail = await this.users.findOne({ where: { email } });
+      if (byEmail && byEmail.id !== user.id) {
+        throw new ConflictException('Já existe um usuário com este e-mail.');
+      }
+      user.email = email;
+    }
+
+    if (input.mobilePhone !== undefined) {
+      const mobilePhone = normalizeMobilePhone(input.mobilePhone);
+      if (!isValidMobilePhone(mobilePhone)) {
+        throw new BadRequestException('Informe um celular válido do colaborador.');
+      }
+      const byPhone = await this.users.findOne({ where: { mobilePhone } });
+      if (byPhone && byPhone.id !== user.id) {
+        throw new ConflictException('Já existe um usuário com este celular.');
+      }
+      user.mobilePhone = mobilePhone;
+    }
+
+    await this.applyUserCpfUpdate(user, input.cpf);
+
+    try {
+      await this.users.save(user);
+    } catch (error) {
+      this.rethrowDuplicateUser(error);
+    }
+
+    return this.toDto(row);
+  }
+
   async resendInvite(company: Company, employeeId: string): Promise<EmployeeDto> {
     return this.sendInviteEmail(company, employeeId);
   }
@@ -814,6 +935,189 @@ export class CorporateEmployeesService {
           : undefined,
       },
     };
+  }
+
+  private async findEmployeeRowByCompanyAndCpf(
+    companyId: string,
+    cpfDigits: string,
+  ): Promise<CompanyEmployee | null> {
+    if (!cpfDigits) return null;
+    return (
+      (await this.employees
+        .createQueryBuilder('employee')
+        .innerJoinAndSelect('employee.user', 'user')
+        .where('employee.companyId = :companyId', { companyId })
+        .andWhere('user.cpf = :cpf', { cpf: cpfDigits })
+        .getOne()) ?? null
+    );
+  }
+
+  private resolveConnectMemberForEmployeeUser(user: User): ReturnType<typeof findConnectMemberForPlatformUser> {
+    if (!user) return undefined;
+    const store = loadStore();
+    return findConnectMemberForPlatformUser(store, {
+      id: user.id,
+      name: user.name ?? '',
+      email: user.email ?? '',
+      cpf: user.cpf,
+    });
+  }
+
+  private async relinkEmployeeUserIdIfNeeded(
+    row: CompanyEmployee,
+    cpfDigits: string,
+    platformUserId?: string,
+  ): Promise<void> {
+    const platformId = platformUserId?.trim();
+    if (!platformId || platformId === row.userId) return;
+
+    const platformUser = await this.users.findOne({ where: { id: platformId } });
+    if (!platformUser) return;
+
+    const platformCpf = platformUser.cpf ? normalizeCpf(platformUser.cpf) : '';
+    if (platformCpf && platformCpf === cpfDigits) {
+      row.userId = platformId;
+      return;
+    }
+
+    const hrUser = row.user;
+    const hrCpf = hrUser?.cpf ? normalizeCpf(hrUser.cpf) : '';
+    if (hrCpf && hrCpf === cpfDigits && !platformCpf) {
+      row.userId = platformId;
+    }
+  }
+
+  /**
+   * Sincroniza colaborador pendente quando o titular já está ativo no Movly (app).
+   * Usado em listagem corporativa, /member/auth/me e pós check-in.
+   */
+  async reconcilePendingEmployeesForPlatformUser(user: User): Promise<void> {
+    const cpfDigits = user.cpf ? normalizeCpf(user.cpf) : '';
+    if (!cpfDigits) return;
+
+    const rows = await this.employees
+      .createQueryBuilder('employee')
+      .innerJoinAndSelect('employee.user', 'user')
+      .innerJoinAndSelect('employee.company', 'company')
+      .where('user.cpf = :cpf', { cpf: cpfDigits })
+      .getMany();
+
+    const store = loadStore();
+    const member = findConnectMemberForPlatformUser(store, {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      cpf: user.cpf,
+    });
+    if (!member?.active) return;
+
+    for (const row of rows) {
+      const company = row.company;
+      if (!company || row.status === 'inactive') continue;
+      const matchesCompany =
+        !member.companyName?.trim() || this.companyNameMatches(company, member.companyName);
+      if (!matchesCompany) continue;
+      await this.completeAppEnrollmentActivation(company.id, cpfDigits, {
+        platformUserId: user.id,
+      });
+    }
+  }
+
+  private async tryReconcileEmployeeActivation(company: Company, row: CompanyEmployee): Promise<void> {
+    if (row.status !== 'invited' && row.status !== 'pending') return;
+    const hrUser = row.user;
+    if (!hrUser) return;
+
+    const cpfDigits = hrUser.cpf ? normalizeCpf(hrUser.cpf) : '';
+    if (!cpfDigits) return;
+
+    let member = this.resolveConnectMemberForEmployeeUser(hrUser);
+    if (!member?.active && cpfDigits) {
+      const store = loadStore();
+      const byCpf = store.connectMembers?.find(
+        (m) =>
+          m.active &&
+          m.holderCpf &&
+          normalizeCpf(m.holderCpf) === cpfDigits &&
+          (!m.companyName?.trim() || this.companyNameMatches(company, m.companyName)),
+      );
+      if (byCpf) member = byCpf;
+    }
+
+    if (!member?.active) return;
+
+    const platformUserId =
+      member.userId?.trim() ||
+      (await this.users.findOne({ where: { cpf: cpfDigits } }))?.id;
+    await this.completeAppEnrollmentActivation(company.id, cpfDigits, {
+      platformUserId,
+    });
+  }
+
+  /**
+   * Valida CPF do colaborador na lista da empresa antes de liberar o código no app.
+   */
+  async verifyAppEnrollmentActivation(
+    companyId: string,
+    cpfInput: string,
+  ): Promise<{ collaboratorName: string; email?: string }> {
+    const cpfDigits = normalizeCpf(cpfInput);
+    if (!cpfDigits || !isValidCpf(cpfDigits)) {
+      throw new BadRequestException(
+        'Informe um CPF válido cadastrado pelo RH da sua empresa.',
+      );
+    }
+
+    const row = await this.findEmployeeRowByCompanyAndCpf(companyId, cpfDigits);
+
+    if (!row?.user) {
+      throw new BadRequestException(
+        'CPF não consta na lista da empresa para este código. Confira o código e o CPF com o RH.',
+      );
+    }
+
+    if (row.status === 'inactive') {
+      throw new BadRequestException(
+        'Seu cadastro corporativo está inativo. Fale com o RH da sua empresa.',
+      );
+    }
+
+    const collaboratorName = row.user.name?.trim() || 'Colaborador';
+    const email = row.user.email?.trim().toLowerCase();
+    return {
+      collaboratorName,
+      email: email && email.includes('@') ? email : undefined,
+    };
+  }
+
+  /**
+   * Confirma adesão no app (signup/login com código) e promove colaborador de pending/invited → active.
+   */
+  async completeAppEnrollmentActivation(
+    companyId: string,
+    cpfInput: string,
+    options?: { platformUserId?: string },
+  ): Promise<{ collaboratorName: string; email?: string }> {
+    const validated = await this.verifyAppEnrollmentActivation(companyId, cpfInput);
+    const cpfDigits = normalizeCpf(cpfInput);
+
+    const row = await this.findEmployeeRowByCompanyAndCpf(companyId, cpfDigits);
+    if (!row) return validated;
+
+    let changed = false;
+    if (row.status !== 'active' && row.status !== 'inactive') {
+      row.status = 'active';
+      if (!row.activatedAt) row.activatedAt = new Date();
+      changed = true;
+    }
+
+    const prevUserId = row.userId;
+    await this.relinkEmployeeUserIdIfNeeded(row, cpfDigits, options?.platformUserId);
+    if (row.userId !== prevUserId) changed = true;
+
+    if (changed) await this.employees.save(row);
+
+    return validated;
   }
 
   /** Legado — redireciona fluxo ao código compartilhado no app. */

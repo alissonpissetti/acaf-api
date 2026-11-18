@@ -80,6 +80,7 @@ import { ChangelogEntry } from './changelog/changelog-entry.entity';
 import { AssociationsModule } from './associations/associations.module';
 import { Association } from './associations/association.entity';
 import { PartnerLegalModule } from './partner-legal/partner-legal.module';
+import { MemberAuthModule } from './member-auth/member-auth.module';
 import { PartnerLegalDocument } from './partner-legal/partner-legal-document.entity';
 import { PartnerTermsAcceptance } from './partner-legal/partner-terms-acceptance.entity';
 
@@ -205,6 +206,7 @@ import { PartnerTermsAcceptance } from './partner-legal/partner-terms-acceptance
     ChangelogModule,
     AssociationsModule,
     PartnerLegalModule,
+    MemberAuthModule,
   ],
 })
 export class AppModule {}

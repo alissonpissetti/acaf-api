@@ -21,7 +21,6 @@ import {
   approvePendingCheckIn,
   dismissPendingCheckIn,
   pendingForUnit,
-  processAutoApproveForUnit,
 } from './pendingCheckIn';
 import {
   cancelReservation,
@@ -41,6 +40,10 @@ import {
   validateDailyPassPricingRules,
 } from './dailyPassPricing';
 import { ModalitiesService } from '../modalities/modalities.service';
+import {
+  getCheckInMaxRadiusKmFromMemory,
+  getGymSwitchMinCheckinsAtUnitFromMemory,
+} from '../system-settings/system-settings.service';
 import { getDomain, loadStore, updateStore } from './store';
 import { assertUnitAccess, filterStoreByUnitIds } from './partnerAccess';
 import {
@@ -62,17 +65,23 @@ import { AdminService } from './admin.service';
 import { currentMonthLabelBr } from './payoutMonth';
 import { buildNewUnit, emptyMonthlyPayout, type CreateUnitInput } from './unitFactory';
 import { CorporateAccessService } from '../corporate/corporate-access.service';
+import { CorporateEmployeesService } from '../corporate/corporate-employees.service';
 import { registerDailyPassPurchase } from './dailyPassSales';
 import { isRemotePhotoUrl, resolveCatalogPhotoUrl, sanitizeUnitPhotosForApi } from './photoUrls';
 import { UnitScheduleService } from './unit-schedule.service';
 import { UnitCoordinatesService } from './unit-coordinates.service';
 import {
   getConnectMemberProfile,
+  getConnectMemberProfileByUserId,
+  listConnectMemberCheckInsForUser as queryConnectMemberCheckInsForUser,
+  reconcileConnectMemberForPlatformUser,
   setConnectPrimaryGym as assignConnectPrimaryGym,
   upsertConnectSubscription,
   validateConnectCheckInAtUnit,
   type ConnectMemberProfile,
 } from './connectMember';
+import { UsersService } from '../users/users.service';
+import { subscribeUnitGymPlan, type SubscribeUnitGymInput } from './unit-gym-subscription';
 import {
   ConnectCheckoutService,
   type ConnectSubscriptionCheckoutInput,
@@ -83,6 +92,11 @@ import {
   type ConnectPlanChangeInput,
   type ConnectPlanChangeResult,
 } from '../asaas/connect-plan-change.service';
+import {
+  ConnectPaymentMethodService,
+  type AddConnectPaymentMethodInput,
+  type SetDefaultConnectPaymentMethodInput,
+} from '../asaas/connect-payment-method.service';
 import { getPartnerClientDetail, listPartnerClients } from './partnerClients';
 
 function scopeFromQuery(scope?: string): UnitScope {
@@ -102,10 +116,13 @@ export class PartnerService {
     private readonly unitSchedule: UnitScheduleService,
     private readonly unitCoordinates: UnitCoordinatesService,
     private readonly corporateAccess: CorporateAccessService,
+    private readonly corporateEmployees: CorporateEmployeesService,
     private readonly admin: AdminService,
     private readonly connectCheckout: ConnectCheckoutService,
     private readonly connectPlanChange: ConnectPlanChangeService,
+    private readonly connectPaymentMethods: ConnectPaymentMethodService,
     private readonly config: ConfigService,
+    private readonly users: UsersService,
     @InjectRepository(AccountReceivable)
     private readonly connectReceivables: Repository<AccountReceivable>,
   ) {}
@@ -167,9 +184,18 @@ export class PartnerService {
 
   async getDomain() {
     const domain = getDomain() as Record<string, unknown>;
+    const maxRadiusKm = getCheckInMaxRadiusKmFromMemory();
+    const gymSwitchMinCheckinsAtUnit = getGymSwitchMinCheckinsAtUnitFromMemory();
+    const checkInGeo =
+      typeof domain.checkInGeo === 'object' && domain.checkInGeo !== null
+        ? (domain.checkInGeo as Record<string, unknown>)
+        : {};
     return {
       ...domain,
       modalityCatalog: await this.modalities.listActiveNames(),
+      checkInMaxRadiusKm: maxRadiusKm,
+      checkInGeo: { ...checkInGeo, maxRadiusKm },
+      gymSwitchMinCheckinsAtUnit,
     };
   }
 
@@ -340,6 +366,7 @@ export class PartnerService {
     scope?: string,
     unitIds?: string[],
     holderName?: string,
+    memberUserId?: string | null,
   ) {
     if (unitIds?.length) assertUnitAccess(unitId, unitIds);
     const store = loadStore();
@@ -354,7 +381,9 @@ export class PartnerService {
 
     if (effectiveResult.type === 'connect_member') {
       const nameForPrimary = trimmedHolder || effectiveResult.holderName;
-      const primaryBlock = validateConnectCheckInAtUnit(store, nameForPrimary, unitId);
+      const primaryBlock = validateConnectCheckInAtUnit(store, nameForPrimary, unitId, {
+        userId: memberUserId,
+      });
       if (primaryBlock) {
         throw new BadRequestException({ ok: false, message: primaryBlock });
       }
@@ -443,18 +472,20 @@ export class PartnerService {
     return { ok: true, issued: body.code, pricePaid: pricePaid ?? unit.dailyPassPrice };
   }
 
-  requestGeoCheckIn(body: {
+  async requestGeoCheckIn(body: {
     unitId: string;
     code: string;
     holderName: string;
     latitude: number;
     longitude: number;
+    memberUserId?: string | null;
   }) {
     const unitId = body.unitId?.trim();
     const code = body.code?.trim() ?? '';
     const holderName = body.holderName?.trim() ?? '';
     const latitude = Number(body.latitude);
     const longitude = Number(body.longitude);
+    const memberUserId = body.memberUserId?.trim() ?? '';
 
     if (!unitId || !code) {
       throw new BadRequestException('Informe unidade e código de check-in.');
@@ -463,23 +494,35 @@ export class PartnerService {
       throw new BadRequestException('Localização inválida. Ative o GPS no celular.');
     }
 
-    let entry:
-      | import('./types').CheckInLogEntry
-      | undefined;
+    const platformUser = memberUserId ? await this.users.findById(memberUserId) : null;
+
     let message = '';
     let failed = '';
+    let status: 'pending_partner' | undefined;
+    let pendingId: string | undefined;
 
     const store = updateStore((s) => {
-      const result = processGeoCheckInRequest(s, unitId, code, holderName, latitude, longitude);
+      if (platformUser?.active) {
+        reconcileConnectMemberForPlatformUser(s, {
+          id: platformUser.id,
+          name: platformUser.name,
+          email: platformUser.email,
+          cpf: platformUser.cpf,
+        });
+      }
+      const result = processGeoCheckInRequest(s, unitId, code, holderName, latitude, longitude, {
+        memberUserId: memberUserId || null,
+      });
       if (!result.ok) {
         failed = result.message;
         return;
       }
-      entry = result.entry;
       message = result.message;
+      status = result.status;
+      pendingId = result.pendingId;
     });
 
-    if (failed || !entry) {
+    if (failed || !status) {
       throw new BadRequestException({
         ok: false,
         message: failed || 'Não foi possível registrar o check-in.',
@@ -489,7 +532,8 @@ export class PartnerService {
     return {
       ok: true,
       message,
-      entry,
+      status,
+      pendingId,
       portal: portalPayloadFromStore(store, true, 'single'),
     };
   }
@@ -499,24 +543,11 @@ export class PartnerService {
       throw new BadRequestException('Informe a unidade.');
     }
     if (unitIds?.length) assertUnitAccess(unitId, unitIds);
-    const unitScope = scopeFromQuery(scope);
-    let approvedCount = 0;
-    const store = updateStore((s) => {
-      approvedCount = processAutoApproveForUnit(s, unitId);
-    });
-    const body: {
-      pending: ReturnType<typeof pendingForUnit>;
-      approvedCount: number;
-      portal?: ReturnType<typeof portalPayloadFromStore>;
-    } = {
+    const store = loadStore();
+    return {
       pending: pendingForUnit(store, unitId),
-      approvedCount,
+      approvedCount: 0,
     };
-    if (approvedCount > 0) {
-      const filtered = unitIds?.length ? filterStoreByUnitIds(store, unitIds) : store;
-      body.portal = portalPayloadFromStore(filtered, true, unitScope);
-    }
-    return body;
   }
 
   approvePending(pendingId: string, unitId: string, scope?: string, unitIds?: string[]) {
@@ -567,6 +598,34 @@ export class PartnerService {
     return getConnectMemberProfile(holderName);
   }
 
+  async getConnectMemberForUser(userId: string): Promise<ConnectMemberProfile | null> {
+    const id = userId.trim();
+    if (!id) return null;
+    const user = await this.users.findById(id);
+    if (user?.active) {
+      updateStore((s) => {
+        reconcileConnectMemberForPlatformUser(s, {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          cpf: user.cpf,
+        });
+      });
+    }
+    return getConnectMemberProfileByUserId(id);
+  }
+
+  getConnectMemberByUserId(userId: string): ConnectMemberProfile | null {
+    return getConnectMemberProfileByUserId(userId);
+  }
+
+  listConnectMemberCheckInsForUser(
+    userId: string,
+    options?: { limit?: number; offset?: number },
+  ) {
+    return queryConnectMemberCheckInsForUser(userId, options);
+  }
+
   listActiveDailyPasses(holderName: string) {
     const key = normalizeHolderKey(holderName);
     if (!key) return [];
@@ -611,8 +670,32 @@ export class PartnerService {
     return this.connectCheckout.checkout(body);
   }
 
+  addConnectPaymentMethod(body: AddConnectPaymentMethodInput) {
+    return this.connectPaymentMethods.addPaymentMethod(body);
+  }
+
+  setDefaultConnectPaymentMethod(body: SetDefaultConnectPaymentMethodInput) {
+    return this.connectPaymentMethods.setDefaultPaymentMethod(body);
+  }
+
+  removeConnectPaymentMethod(body: {
+    holderName: string;
+    paymentMethodId: string;
+    platformUserId?: string;
+  }) {
+    return this.connectPaymentMethods.removePaymentMethod(
+      body.holderName,
+      body.paymentMethodId,
+      body.platformUserId,
+    );
+  }
+
   listConnectBillingStatement(holderName: string) {
     return this.connectCheckout.listMemberBillingStatement(holderName);
+  }
+
+  listConnectBillingStatementForUser(userId: string) {
+    return this.connectCheckout.listBillingStatementForPlatformUser(userId);
   }
 
   /**
@@ -700,8 +783,24 @@ export class PartnerService {
     }
   }
 
+  subscribeUnitGym(body: SubscribeUnitGymInput): ConnectMemberProfile {
+    try {
+      return subscribeUnitGymPlan(body);
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : 'Não foi possível assinar na unidade.');
+    }
+  }
+
   getSharedDomainJson() {
-    return readFileSync(join(process.cwd(), 'shared', 'connect_domain.json'), 'utf-8');
+    const raw = readFileSync(join(process.cwd(), 'shared', 'connect_domain.json'), 'utf-8');
+    const domain = JSON.parse(raw) as Record<string, unknown>;
+    const maxRadiusKm = getCheckInMaxRadiusKmFromMemory();
+    const checkInGeo =
+      typeof domain.checkInGeo === 'object' && domain.checkInGeo !== null
+        ? (domain.checkInGeo as Record<string, unknown>)
+        : {};
+    domain.checkInGeo = { ...checkInGeo, maxRadiusKm };
+    return `${JSON.stringify(domain)}\n`;
   }
 
   async getModalitySlots(unitId: string, unitIds?: string[]) {
@@ -856,19 +955,29 @@ export class PartnerService {
     };
   }
 
-  async validateConnectEnrollmentCode(rawCode: string) {
+  async validateConnectEnrollmentCode(rawCode: string, rawCpf?: string) {
     const trimmed = rawCode.trim();
     if (!trimmed) {
       throw new BadRequestException('Informe o código de adesão.');
+    }
+    const cpf = rawCpf?.trim() ?? '';
+    if (!cpf) {
+      throw new BadRequestException('Informe o CPF cadastrado pelo RH da sua empresa.');
     }
     const company = await this.corporateAccess.findActiveByEnrollmentCode(trimmed);
     if (!company) {
       throw new BadRequestException('Código inválido ou expirado. Verifique com o RH da sua empresa.');
     }
+    const { collaboratorName, email } = await this.corporateEmployees.verifyAppEnrollmentActivation(
+      company.id,
+      cpf,
+    );
     return {
       companyName: company.tradeName,
       code: company.enrollmentCode!,
-      hint: 'Código validado pela empresa parceira.',
+      collaboratorName,
+      collaboratorEmail: email,
+      hint: 'Código e CPF confirmados com o cadastro do RH.',
     };
   }
 

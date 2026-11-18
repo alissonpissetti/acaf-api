@@ -21,6 +21,7 @@ Cada entrega de mensagem atualiza `acaf_evolution_inbox_sync_state.last_webhook_
   - omitido ou não = **`auto`**: só chama Evolution se não há mensagem local na thread **ou** o webhook não foi visto há ~25 min;
   - `remote=0` = nunca puxa;
   - `remote=1` = força delta na Evolution (reparo manual).
+  - Com histórico local e webhook saudável, `remote=auto` **não** bloqueia o GET em mensagens novas (`watch`); o ADM usa Socket.io (`evolution-inbox`) para append.
 
 ### 3. Pull incremental por conversa
 
@@ -59,6 +60,7 @@ Roda na própria API (tick a cada **15 min**). Liga/desliga com `EVOLUTION_INBOX
 | Job | Quando | O que faz |
 |-----|--------|-----------|
 | **Catch-up mídia** | A cada tick (se houver pendente) | Até `EVOLUTION_MEDIA_CATCHUP_MAX` mensagens por instância (padrão **24**) |
+| **Catch-up inbox** | A cada tick | `repairInboxIncremental` só em instâncias conectadas **sem** webhook saudável |
 | **Mídia noturna** | Uma vez por dia, `EVOLUTION_NIGHTLY_HOUR_START`–`END` (padrão **2h–6h** America/Sao_Paulo) | Até `EVOLUTION_NIGHTLY_MEDIA_MAX` por instância (padrão **500**) |
 | **Inbox noturno** | Mesma janela, 1×/dia | `repairInboxIncremental` em instâncias **conectadas** (delta vs watermark local) |
 
@@ -67,6 +69,7 @@ Variáveis úteis:
 - `EVOLUTION_INBOX_JOBS_ENABLED=0` — desliga todos os jobs.
 - `EVOLUTION_MEDIA_CATCHUP_ENABLED=0` — só noturno.
 - `EVOLUTION_NIGHTLY_MEDIA_ENABLED=0` / `EVOLUTION_NIGHTLY_INBOX_ENABLED=0` — desliga job específico.
+- `EVOLUTION_INBOX_CATCHUP_ENABLED=0` — desliga catch-up incremental entre ticks.
 
 ## Próximos passos (roadmap)
 

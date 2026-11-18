@@ -264,6 +264,49 @@ export class MailService implements OnModuleInit {
     return this.transporter;
   }
 
+  async sendMemberPasswordResetCode(input: { to: string; code: string }): Promise<SendPartnerOnboardingInviteResult> {
+    const subject = 'Código para redefinir sua senha — Movly';
+    const text = [
+      'Você solicitou redefinição de senha no app Movly.',
+      '',
+      `Código: ${input.code}`,
+      '',
+      'Válido por 10 minutos. Se não foi você, ignore este e-mail.',
+    ].join('\n');
+    const html = `<p>Você solicitou redefinição de senha no app <strong>Movly</strong>.</p>
+<p style="font-size:22px;letter-spacing:4px;font-weight:700;margin:20px 0">${input.code}</p>
+<p>Válido por 10 minutos. Se não foi você, ignore este e-mail.</p>`;
+
+    const provider = this.mailProvider();
+    if (!provider) {
+      this.logger.warn(`E-mail não configurado — código de recuperação não enviado para ${input.to}`);
+      return {
+        sent: false,
+        reason:
+          'E-mail não configurado na API (SMTP ou Hostinger Mail API). Tente recuperar pelo SMS ou contate o suporte.',
+      };
+    }
+
+    const from = this.defaultFromAddress();
+    try {
+      if (provider === 'hostinger') {
+        await this.sendViaHostinger({ to: input.to, subject, text, html });
+      } else {
+        const transporter = this.getTransporter();
+        if (!transporter) {
+          return { sent: false, reason: 'SMTP_HOST não configurado na API.' };
+        }
+        await transporter.sendMail({ from, to: input.to, subject, text, html });
+      }
+      this.logger.log(`Código de recuperação de senha (app) enviado para ${input.to}`);
+      return { sent: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Falha ao enviar recuperação de senha para ${input.to}: ${message}`);
+      return { sent: false, reason: this.friendlySendError(message) };
+    }
+  }
+
   async sendEmployeeEnrollmentCode(input: {
     to: string;
     employeeName: string;

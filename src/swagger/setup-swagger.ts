@@ -11,6 +11,7 @@ const API_DESCRIPTION = [
   '| **Admin JWT** (Authorization: Bearer) | Painel connect-adm — login em POST /api/auth/login |',
   '| **Partner JWT** | Portal connect-partner — login em POST /api/partner/auth/login |',
   '| **Corporate JWT** | Portal connect-corporate — login em POST /api/corporate/auth/login |',
+  '| **Member JWT** | App Movly (associado) — login em POST /api/member/auth/login |',
   '',
   'Rotas públicas (catálogo, check-in do app, validação de código de empresa) não exigem token.',
   '',
@@ -63,6 +64,15 @@ export function setupSwagger(app: INestApplication): void {
       },
       'corporate-jwt',
     )
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Token do app associado (`POST /api/member/auth/login`)',
+      },
+      'member-jwt',
+    )
     .addTag('Público', 'Health, test, configuração compartilhada e assets')
     .addTag(
       'App & Parceiro',
@@ -73,6 +83,7 @@ export function setupSwagger(app: INestApplication): void {
     .addTag('Parceiro · Auth', 'Login do portal da academia')
     .addTag('Corporativo', 'Colaboradores, faturas e convites (JWT empresa)')
     .addTag('Corporativo · Auth', 'Cadastro e login de empresas')
+    .addTag('App · Auth', 'Cadastro e login do associado no app Movly')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

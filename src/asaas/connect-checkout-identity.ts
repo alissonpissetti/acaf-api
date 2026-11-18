@@ -6,6 +6,13 @@ export function connectFallbackMemberEmail(holderName: string): string {
   return `${holderKey.replace(/\s+/g, '.')}@connect.movly.app`;
 }
 
+/** Placeholder de titular sem login (checkout/finance) ou espelho legacy em students (@connect.app). */
+export function isConnectSyntheticEmail(email: string | null | undefined): boolean {
+  const normalized = email?.trim().toLowerCase() ?? '';
+  if (!normalized || !normalized.includes('@')) return false;
+  return normalized.endsWith('@connect.movly.app') || normalized.endsWith('@connect.app');
+}
+
 export function isPlatformUserUuid(value: string | null | undefined): boolean {
   const trimmed = value?.trim() ?? '';
   if (!trimmed) return false;

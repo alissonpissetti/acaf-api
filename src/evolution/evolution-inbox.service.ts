@@ -187,6 +187,7 @@ export class EvolutionInboxService {
   private readonly connectBootstrapAt = new Map<string, number>();
   private readonly lidPhoneAliasCache = new Map<string, { at: number; map: Map<string, LidPhoneAlias> }>();
   private readonly connectBootstrapInFlight = new Set<string>();
+  private readonly threadContactKeysCache = new Map<string, { at: number; keys: string[] }>();
 
   constructor(
     @InjectRepository(EvolutionMessage)
@@ -783,7 +784,7 @@ export class EvolutionInboxService {
     }
 
     if (!chatRows.length) {
-      throw new NotFoundException('Nenhuma mensagem nesta conversa.');
+      return [];
     }
 
     const siblingsByExternalId = new Map<string, EvolutionMessage>();
@@ -1672,6 +1673,12 @@ export class EvolutionInboxService {
   }
 
   async resolveThreadContactKeys(instanceId: string, contactKey: string): Promise<string[]> {
+    const cacheKey = `${instanceId}:${contactKey}`;
+    const cached = this.threadContactKeysCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < 5 * 60_000) {
+      return cached.keys;
+    }
+
     const keys = new Set<string>([contactKey]);
 
     if (contactKey.startsWith('group:')) {
@@ -1734,15 +1741,25 @@ export class EvolutionInboxService {
       for (const row of profiles) keys.add(row.contactKey);
     }
 
-    return [...keys].filter((key) => key.trim() && key !== 'unknown');
+    const resolved = [...keys].filter((key) => key.trim() && key !== 'unknown');
+    this.threadContactKeysCache.set(cacheKey, { at: Date.now(), keys: resolved });
+    return resolved;
   }
 
-  async markThreadRead(userId: string, instanceId: string, contactKey: string): Promise<void> {
+  async markThreadRead(
+    userId: string,
+    instanceId: string,
+    contactKey: string,
+    knownContactKeys?: string[],
+  ): Promise<void> {
     const key = String(contactKey ?? '').trim();
     if (!userId || !instanceId || !key) return;
 
     const now = new Date();
-    const aliases = await this.resolveThreadContactKeys(instanceId, key);
+    const aliases =
+      knownContactKeys?.length && knownContactKeys.every((item) => String(item ?? '').trim())
+        ? [...new Set(knownContactKeys.map((item) => String(item ?? '').trim()).filter(Boolean))]
+        : await this.resolveThreadContactKeys(instanceId, key);
     for (const alias of aliases) {
       const existing = await this.inboxReads.findOne({
         where: { userId, instanceId, contactKey: alias },
@@ -2371,9 +2388,15 @@ export class EvolutionInboxService {
     if (!light && !instanceId && instanceIds.length) {
       this.queueBackgroundMaintenance(instanceIds);
     }
-    const profileRows = instanceIds.length
-      ? await this.contactProfiles.find({ where: { instanceId: In(instanceIds) } })
-      : [];
+    const contactKeysOnPage = [
+      ...new Set(rows.map((row) => String(row.contactPhone ?? '').trim()).filter(Boolean)),
+    ];
+    const profileRows =
+      instanceIds.length && contactKeysOnPage.length
+        ? await this.contactProfiles.find({
+            where: { instanceId: In(instanceIds), contactKey: In(contactKeysOnPage) },
+          })
+        : [];
     const localGroupTitles = new Map<string, string>();
     for (const profile of profileRows) {
       if (!isGroupContactKey(profile.contactKey)) continue;
@@ -2432,8 +2455,10 @@ export class EvolutionInboxService {
       rows.map(async (latest, rowIndex) => {
         const contactPhone = String(latest.contactPhone ?? '').trim();
         if (!userId || !contactPhone || contactPhone === 'unknown') return 0;
+        if (latest.direction !== 'in') return 0;
         const contactKeys = contactKeysByRow[rowIndex] ?? [];
         const since = this.readSinceFromIndex(readIndex, latest.instanceId, contactKeys);
+        if (since && latest.messageAt <= since) return 0;
         return this.countUnreadWithSince(latest.instanceId, contactKeys, since);
       }),
     );
@@ -2587,50 +2612,51 @@ export class EvolutionInboxService {
 
     const syncMode = options?.syncRemote ?? 'auto';
     const contactKeys = await this.resolveThreadContactKeys(instanceId, contactKey);
-    const localMax = await this.latestMessageAtForContactKeys(instanceId, contactKeys);
 
-    const markReadPromise = userId ? this.markThreadRead(userId, instanceId, contactKey) : Promise.resolve();
-
-    const watching = Boolean(options?.watch);
-    let pullBlocking = false;
-    let pullBackground = false;
-    if (syncMode === true) {
-      pullBlocking = true;
-    } else if (syncMode === 'auto') {
-      pullBlocking = !localMax || watching;
-      if (localMax && !watching) {
-        const webhookHealthy = await this.isInstanceWebhookHealthy(instanceId);
-        pullBackground = !webhookHealthy;
-      }
+    if (userId) {
+      void this.markThreadRead(userId, instanceId, contactKey, contactKeys).catch(() => {});
     }
 
-    const pullOptions = {
-      force: syncMode === true,
-      watch: watching && syncMode !== true,
-    };
-
-    if (pullBlocking) {
-      try {
-        await this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey, pullOptions);
-      } catch {
-        /* Evolution indisponível: exibe histórico local */
-      }
-    } else if (pullBackground) {
-      void this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey, pullOptions).catch(() => {});
-    }
-
-    const skipRepair = syncMode === false;
     const take = Math.max(1, Math.min(limit, 500));
 
-    const [, initialRows] = await Promise.all([
-      markReadPromise,
-      this.queryThreadMessageRows(instanceId, contactKeys, take),
-    ]);
+    if (syncMode !== false) {
+      const watching = Boolean(options?.watch);
+      const localMax = await this.latestMessageAtForContactKeys(instanceId, contactKeys);
+      let pullBlocking = false;
+      let pullBackground = false;
+      if (syncMode === true) {
+        pullBlocking = true;
+      } else if (syncMode === 'auto') {
+        const webhookHealthy = await this.isInstanceWebhookHealthy(instanceId);
+        if (!localMax) {
+          pullBlocking = true;
+        } else {
+          pullBlocking = false;
+          pullBackground = !webhookHealthy;
+        }
+      }
 
-    let rows = initialRows;
-    if (!skipRepair) {
-      await this.repairReactionMessages(instanceId, Math.max(take, 400), contactKeys);
-      rows = await this.queryThreadMessageRows(instanceId, contactKeys, take);
+      const pullOptions = {
+        force: syncMode === true,
+        watch: watching && syncMode !== true,
+      };
+
+      if (pullBlocking) {
+        try {
+          await this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey, pullOptions);
+        } catch {
+          /* Evolution indisponível: exibe histórico local */
+        }
+      } else if (pullBackground) {
+        void this.pullRemoteMessagesForThreadIfDue(instanceId, contactKey, pullOptions).catch(() => {});
+      }
+    }
+
+    const rows = await this.queryThreadMessageRows(instanceId, contactKeys, take);
+    if (syncMode === true) {
+      void this.repairReactionMessages(instanceId, Math.min(Math.max(take, 80), 200), contactKeys).catch(
+        () => {},
+      );
     }
 
     const chronological = [...rows].reverse();

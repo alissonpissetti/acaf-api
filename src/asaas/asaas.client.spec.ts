@@ -48,6 +48,39 @@ describe('AsaasClient', () => {
     expect(JSON.stringify(body)).not.toMatch(/\d{13,}/);
   });
 
+  it('tokenizeCreditCard usa POST /creditCard/tokenizeCreditCard', async () => {
+    const asaas = client();
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ creditCardToken: 'tok_1' }),
+    });
+    global.fetch = fetchMock;
+
+    const row = await asaas.tokenizeCreditCard({
+      customerId: 'cus_1',
+      remoteIp: '203.0.113.10',
+      creditCard: {
+        holderName: 'A',
+        number: '4111111111111111',
+        expiryMonth: '12',
+        expiryYear: '2030',
+        ccv: '123',
+      },
+      creditCardHolderInfo: {
+        name: 'A',
+        email: 'a@a.com',
+        cpfCnpj: '24971563792',
+        postalCode: '01310100',
+        addressNumber: '1',
+        phone: '47999999999',
+      },
+    });
+
+    expect(row.creditCardToken).toBe('tok_1');
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toContain('/creditCard/tokenizeCreditCard');
+  });
+
   it('propaga mensagens de erro do Asaas', async () => {
     const asaas = client();
     global.fetch = jest.fn().mockResolvedValue({

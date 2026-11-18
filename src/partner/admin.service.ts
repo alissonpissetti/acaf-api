@@ -18,8 +18,12 @@ import { ModalitiesService } from '../modalities/modalities.service';
 import { CorporateAccessService } from '../corporate/corporate-access.service';
 import { CorporateCompaniesService } from '../corporate/corporate-companies.service';
 import { CorporateEmployeesService } from '../corporate/corporate-employees.service';
+import { CorporateMonthlyStatementsService } from '../corporate/corporate-monthly-statements.service';
+import { PayerMembershipFeeStatementService } from '../finance/payer-membership-fee-statement.service';
 import type { Company, CompanyStatus } from '../corporate/company.entity';
 import {
+  normalizeCheckInMaxRadiusKmInput,
+  normalizeGymSwitchMinCheckinsAtUnitInput,
   normalizeEvolutionBaseUrl,
   SYSTEM_SETTING_KEYS,
   SystemSettingsService,
@@ -34,6 +38,7 @@ import type {
   NetworkSocialContacts,
 } from './types';
 import { emptyNetworkSocialContacts } from './types';
+import { diagnoseAssociatePayingLives } from './associatePayingLives';
 import {
   formatOpenHoursSummary,
   normalizeWeeklySchedule,
@@ -53,6 +58,7 @@ import {
   DAYS_TO_REDUCE_REPASSE,
   MAX_NET_CHURN_PERCENT_MONTHLY,
   getAssociateRepasseOverview,
+  normalizeAssociateRepasseSnapshots,
   syncAssociateRepasseState,
 } from './associateRepasseHysteresis';
 import { currentMonthLabelBr } from './payoutMonth';
@@ -64,13 +70,16 @@ import {
   isAdminManualAssociateMeta,
   isImportedAssociateMeta,
 } from './associate-meta';
-import { isValidCnpj, normalizeCnpj } from '../users/person.utils';
+import { isValidCnpj, normalizeCnpj, normalizeCpf } from '../users/person.utils';
 import { cancelCheckInEntry, listCheckInsForUnit, normalizeHolderKey } from './checkIn';
+import { findConnectMemberForPlatformUser } from './connectMember';
 import {
   getPartnerClientDetail,
   type PartnerClientDetail,
 } from './partnerClients';
+import { listUnitPrimaryMemberRows } from './unit-primary-members';
 import { PartnerOnboardingService } from '../partner-auth/partner-onboarding.service';
+import { isConnectSyntheticEmail } from '../asaas/connect-checkout-identity';
 
 type ConnectPlan = {
   id: string;
@@ -124,6 +133,8 @@ export class AdminService {
     private readonly corporateAccess: CorporateAccessService,
     private readonly corporateCompanies: CorporateCompaniesService,
     private readonly corporateEmployees: CorporateEmployeesService,
+    private readonly corporateMonthlyStatements: CorporateMonthlyStatementsService,
+    private readonly payerMembershipFees: PayerMembershipFeeStatementService,
     private readonly unitCoordinates: UnitCoordinatesService,
     @InjectRepository(CommercialLead)
     private readonly commercialLeads: Repository<CommercialLead>,
@@ -340,6 +351,11 @@ export class AdminService {
     const domain = getDomain() as ConnectDomain;
     const ar = getAssociateRepasseOverview(store, now);
     const instantaneousTier = resolveAcafRepasseTier(ar.payingLivesCount);
+    const payingDiagnostics = diagnoseAssociatePayingLives(store);
+    const payingLivesSnapshots = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots).map((s) => ({
+      date: s.date,
+      payingLivesCount: s.payingLivesCount,
+    }));
     return {
       networks: store.networks,
       unitCount: store.units.length,
@@ -347,6 +363,8 @@ export class AdminService {
       connectFeePercent: domain.connectFeePercent,
       dailyFeePercent: domain.dailyFeePercent,
       acafPayingLivesCount: ar.payingLivesCount,
+      acafPayingLivesDiagnostics: payingDiagnostics,
+      acafPayingLivesSnapshots: payingLivesSnapshots,
       acafRepassePercent: ar.effectiveRepassePercent,
       acafRepasseTierId: ar.effectiveTierId,
       acafInstantaneousRepassePercent: ar.instantaneousRepassePercent,
@@ -1121,6 +1139,47 @@ export class AdminService {
     };
   }
 
+  async listUnitPrimaryMembers(unitId: string) {
+    const unit = this.getUnitOrThrow(unitId);
+    const store = loadStore();
+    let clients = listUnitPrimaryMemberRows(store, unitId);
+    const userIds = [...new Set(clients.map((row) => row.userId).filter(Boolean))] as string[];
+    if (userIds.length) {
+      const usersById = new Map<string, Awaited<ReturnType<UsersService['toSafeUser']>>>();
+      await Promise.all(
+        userIds.map(async (id) => {
+          const user = await this.users.findById(id);
+          if (user) usersById.set(id, this.users.toSafeUser(user));
+        }),
+      );
+      clients = clients.map((row) => {
+        if (!row.userId) return row;
+        const platform = usersById.get(row.userId);
+        if (!platform) return row;
+        const platformEmail = platform.email?.trim();
+        const rowEmail = row.email?.trim();
+        const email =
+          platformEmail && !isConnectSyntheticEmail(platformEmail)
+            ? platformEmail
+            : rowEmail && !isConnectSyntheticEmail(rowEmail)
+              ? rowEmail
+              : platformEmail || rowEmail;
+        return {
+          ...row,
+          name: platform.name?.trim() || row.name,
+          email,
+          cpf: platform.cpf || row.cpf,
+        };
+      });
+    }
+    return {
+      unitId,
+      unitName: unit.unitName,
+      total: clients.length,
+      clients,
+    };
+  }
+
   cancelUnitCheckIn(unitId: string, entryId: string) {
     const current = loadStore();
     const unit = current.units.find((u) => u.id === unitId);
@@ -1241,6 +1300,10 @@ export class AdminService {
     domain.evolutionApiKey = snapshot.evolutionApiKeySet ? '••••••••' : '';
     domain.apiPublicBaseUrl = snapshot.apiPublicBaseUrl;
     domain.evolutionWebhookUrl = snapshot.evolutionWebhookUrl;
+    domain.checkInMaxRadiusKm = snapshot.checkInMaxRadiusKm;
+    const checkInGeo = (domain.checkInGeo as { maxRadiusKm?: number } | undefined) ?? {};
+    domain.checkInGeo = { ...checkInGeo, maxRadiusKm: snapshot.checkInMaxRadiusKm };
+    domain.gymSwitchMinCheckinsAtUnit = snapshot.gymSwitchMinCheckinsAtUnit;
     domain.modalityCatalog = await this.modalities.listActiveNames();
     return domain;
   }
@@ -1248,6 +1311,8 @@ export class AdminService {
   async updateConnectDomain(body: {
     connectFeePercent?: number;
     dailyFeePercent?: number;
+    checkInMaxRadiusKm?: number;
+    gymSwitchMinCheckinsAtUnit?: number;
     connectPlans?: ConnectPlan[];
     evolutionApiBaseUrl?: string;
     evolutionApiKey?: string;
@@ -1262,6 +1327,14 @@ export class AdminService {
     if (body.dailyFeePercent != null) {
       await this.systemSettings.set('dailyFeePercent', String(body.dailyFeePercent));
       domain.dailyFeePercent = body.dailyFeePercent;
+    }
+    if (body.checkInMaxRadiusKm != null) {
+      const km = normalizeCheckInMaxRadiusKmInput(body.checkInMaxRadiusKm);
+      await this.systemSettings.set(SYSTEM_SETTING_KEYS.checkInMaxRadiusKm, String(km));
+    }
+    if (body.gymSwitchMinCheckinsAtUnit != null) {
+      const n = normalizeGymSwitchMinCheckinsAtUnitInput(body.gymSwitchMinCheckinsAtUnit);
+      await this.systemSettings.set(SYSTEM_SETTING_KEYS.gymSwitchMinCheckinsAtUnit, String(n));
     }
     if (body.connectPlans) {
       domain.connectPlans = normalizeConnectPlans(body.connectPlans);
@@ -1425,6 +1498,45 @@ export class AdminService {
     return { ok: true };
   }
 
+  async patchCompanyEmployee(
+    companyId: string,
+    employeeId: string,
+    body: { cpf?: string | null },
+  ) {
+    const company = await this.corporateAccess.findCompanyById(companyId);
+    if (!company) {
+      throw new NotFoundException('Empresa não encontrada.');
+    }
+
+    if (body.cpf === undefined) {
+      throw new BadRequestException('Informe o CPF para atualizar.');
+    }
+
+    const employee = await this.corporateEmployees.updateEmployeeCpf(
+      companyId,
+      employeeId,
+      body.cpf,
+    );
+    return { employee };
+  }
+
+  listCompanyMonthlyStatements(companyId: string) {
+    return this.corporateMonthlyStatements.listClosedStatements(companyId);
+  }
+
+  getCompanyMonthlyStatement(companyId: string, monthKey: string) {
+    return this.corporateMonthlyStatements.getStatement(companyId, monthKey);
+  }
+
+  listCompanyMembershipFees(companyId: string) {
+    return this.payerMembershipFees.listForCompany(companyId);
+  }
+
+  listNetworkMembershipFees(networkId: string) {
+    const network = this.getNetworkOrThrow(networkId);
+    return this.payerMembershipFees.listForPartnerNetwork(network.id);
+  }
+
   async getCompanyEmployeeProfile(companyId: string, employeeId: string) {
     const company = await this.corporateAccess.findCompanyById(companyId);
     if (!company) {
@@ -1438,7 +1550,13 @@ export class AdminService {
     }
 
     const store = loadStore();
-    const holderKey = normalizeHolderKey(employee.name);
+    const linkedMember = findConnectMemberForPlatformUser(store, {
+      id: employee.userId,
+      name: employee.name,
+      email: employee.email,
+      cpf: employee.cpf ? normalizeCpf(employee.cpf) : null,
+    });
+    const holderKey = linkedMember?.holderKey ?? normalizeHolderKey(employee.name);
     const unitIds = store.units.map((unit) => unit.id);
     const client =
       getPartnerClientDetail(store, unitIds, holderKey, 'all') ??
@@ -1463,6 +1581,14 @@ export class AdminService {
         id: company.id,
         tradeName: company.tradeName,
         legalName: company.legalName,
+      },
+      appActivation: {
+        employeeStatus: employee.status,
+        activatedAt: employee.activatedAt,
+        connectActive: Boolean(linkedMember?.active),
+        connectUserId: linkedMember?.userId?.trim() || null,
+        connectHolderEmail: linkedMember?.holderEmail?.trim() || null,
+        employeeUserId: employee.userId,
       },
       client: {
         ...client,

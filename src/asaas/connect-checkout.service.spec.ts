@@ -19,6 +19,25 @@ jest.mock('../partner/connectMember', () => ({
     asaasSubscriptionId: 'sub_test',
     cardLastFour: '8829',
   })),
+  upsertConnectSavedPaymentMethod: jest.fn(() => ({
+    holderName: 'Titular',
+    connectPlanId: 'connect-start',
+    active: true,
+    since: new Date().toISOString(),
+    asaasSubscriptionId: 'sub_test',
+    cardLastFour: '8829',
+    savedPaymentMethods: [],
+  })),
+  findConnectMember: jest.fn(() => undefined),
+  findConnectMemberByUserId: jest.fn(() => undefined),
+  findConnectSavedPaymentMethod: jest.fn(() => undefined),
+  setConnectSavedPaymentMethodDefault: jest.fn(() => ({
+    holderName: 'Titular',
+    connectPlanId: 'connect-start',
+    active: true,
+    since: new Date().toISOString(),
+    cardLastFour: '8829',
+  })),
 }));
 
 describe('ConnectCheckoutService', () => {
@@ -33,6 +52,7 @@ describe('ConnectCheckoutService', () => {
       listSubscriptionPayments: jest
         .fn()
         .mockResolvedValue([{ id: 'pay_1', status: 'CONFIRMED' }]),
+      tokenizeCreditCard: jest.fn().mockResolvedValue({ creditCardToken: 'tok_test' }),
     } as unknown as AsaasClient;
 
     const config = {

@@ -1,6 +1,12 @@
+import { getCheckInMaxRadiusKmFromMemory } from '../system-settings/system-settings.service';
 import type { GymUnit } from './types';
 
+/** Legado — preferir {@link getCheckInMaxRadiusKm}. */
 export const CHECK_IN_MAX_RADIUS_KM = 1;
+
+export function getCheckInMaxRadiusKm(): number {
+  return getCheckInMaxRadiusKmFromMemory();
+}
 
 /** Distância em km entre dois pontos (Haversine). */
 export function distanceKm(
@@ -32,9 +38,11 @@ export function isWithinCheckInRadius(
   unit: GymUnit,
   latitude: number,
   longitude: number,
-  maxRadiusKm = CHECK_IN_MAX_RADIUS_KM,
+  maxRadiusKm?: number,
 ): boolean {
+  const limit = maxRadiusKm ?? getCheckInMaxRadiusKm();
+  if (limit <= 0) return true;
   const dist = distanceToUnitKm(unit, latitude, longitude);
   if (dist == null) return false;
-  return dist <= maxRadiusKm;
+  return dist <= limit;
 }

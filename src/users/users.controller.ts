@@ -11,6 +11,11 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ConnectCheckoutService } from '../asaas/connect-checkout.service';
+import {
+  listConnectSavedPaymentMethodsForPlatformUser,
+  reconcileConnectMemberForPlatformUser,
+} from '../partner/connectMember';
+import { updateStore } from '../partner/store';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -38,6 +43,27 @@ export class UsersController {
   async connectBillingStatement(@Param('id') id: string) {
     const entries = await this.connectCheckout.listBillingStatementForPlatformUser(id);
     return { entries };
+  }
+
+  @Get(':id/saved-payment-methods')
+  async savedPaymentMethods(@Param('id') id: string) {
+    const user = await this.users.findById(id);
+    if (!user) {
+      throw new BadRequestException('Usuário não encontrado.');
+    }
+    updateStore((s) => {
+      reconcileConnectMemberForPlatformUser(s, {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        cpf: user.cpf,
+      });
+    });
+    const methods = listConnectSavedPaymentMethodsForPlatformUser(id);
+    return {
+      holderName: methods[0]?.movlyHolderName ?? user.name,
+      methods,
+    };
   }
 
   @Post()

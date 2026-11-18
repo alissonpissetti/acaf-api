@@ -12,6 +12,7 @@ import { User } from '../users/user.entity';
 import { Company } from '../corporate/company.entity';
 import { ConnectCheckoutService } from './connect-checkout.service';
 import { ConnectPlanChangeService } from './connect-plan-change.service';
+import { ConnectPaymentMethodService } from './connect-payment-method.service';
 import { ConnectFinanceReceivableService } from './connect-finance-receivable.service';
 import { ConnectFinancePayableService } from './connect-finance-payable.service';
 import { ConnectFinanceSyncService } from './connect-finance-sync.service';
@@ -35,6 +36,7 @@ import { ConnectTransactionBackfillService } from './connect-transaction-backfil
     ConnectFinanceSyncService,
     ConnectCheckoutService,
     ConnectPlanChangeService,
+    ConnectPaymentMethodService,
     AsaasInboundService,
     ConnectTransactionBackfillService,
   ],
@@ -43,6 +45,7 @@ import { ConnectTransactionBackfillService } from './connect-transaction-backfil
     AsaasInboundService,
     ConnectCheckoutService,
     ConnectPlanChangeService,
+    ConnectPaymentMethodService,
     ConnectFinanceReceivableService,
     ConnectFinancePayableService,
     ConnectFinanceSyncService,

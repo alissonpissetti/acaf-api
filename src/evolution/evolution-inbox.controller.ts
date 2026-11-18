@@ -147,7 +147,7 @@ export class EvolutionInboxController {
     @Query('remote') remote?: string,
     @Query('watch') watch?: string,
   ) {
-    const parsedLimit = limit ? Number.parseInt(limit, 10) : 200;
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : 100;
     const userId = req.user?.userId ?? null;
     const remoteFlag = String(remote ?? '')
       .trim()
@@ -163,7 +163,7 @@ export class EvolutionInboxController {
       userId,
       instanceId,
       decodeURIComponent(contactPhone),
-      Number.isFinite(parsedLimit) ? parsedLimit : 200,
+      Number.isFinite(parsedLimit) ? parsedLimit : 100,
       { syncRemote, watch: watchThread },
     );
   }

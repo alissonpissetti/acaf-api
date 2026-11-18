@@ -21,6 +21,8 @@ import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { PartnerJwtAuthGuard } from '../partner-auth/partner-jwt-auth.guard';
+import { MemberJwtAuthGuard } from '../member-auth/member-jwt-auth.guard';
+import { MemberOptionalJwtAuthGuard } from '../member-auth/member-optional-jwt.guard';
 import type { GymUnit, ModalitySlotOverride, ModalitySlotTemplate, ConnectPlanId } from './types';
 import type { CreateUnitInput } from './unitFactory';
 import { AdminService } from './admin.service';
@@ -30,6 +32,21 @@ import { AddressesService } from '../addresses/addresses.service';
 type PartnerRequest = Request & {
   user: { platformUserId: string; unitIds: string[] };
 };
+
+type MemberRequest = Request & {
+  user: { userId: string; email: string; name: string };
+};
+
+function partnerRequestClientIp(req: Request): string | null {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0]?.trim() ?? null;
+  }
+  if (Array.isArray(forwarded) && forwarded[0]) {
+    return String(forwarded[0]).split(',')[0]?.trim() ?? null;
+  }
+  return req.ip ?? null;
+}
 
 @ApiTags('App & Parceiro')
 @ApiBearerAuth('partner-jwt')
@@ -252,6 +269,9 @@ export class PartnerController {
   }
 
   @Post('check-ins/request')
+  @UseGuards(MemberOptionalJwtAuthGuard)
+  @ApiBearerAuth('member-jwt')
+  @ApiOperation({ summary: 'Check-in automático pelo app (GPS + código do dia)' })
   requestGeoCheckIn(
     @Body()
     body: {
@@ -261,8 +281,12 @@ export class PartnerController {
       latitude: number;
       longitude: number;
     },
+    @Req() req: Request & { user?: { userId: string } | null },
   ) {
-    return this.partner.requestGeoCheckIn(body);
+    return this.partner.requestGeoCheckIn({
+      ...body,
+      memberUserId: req.user?.userId ?? null,
+    });
   }
 
   @Get('check-ins/pending')
@@ -369,8 +393,8 @@ export class PartnerController {
   }
 
   @Get('connect/enrollment/validate')
-  validateEnrollment(@Query('code') code?: string) {
-    return this.partner.validateConnectEnrollmentCode(code ?? '');
+  validateEnrollment(@Query('code') code?: string, @Query('cpf') cpf?: string) {
+    return this.partner.validateConnectEnrollmentCode(code ?? '', cpf);
   }
 
   @Get('connect/daily-passes')
@@ -388,6 +412,41 @@ export class PartnerController {
     }
     const profile = this.partner.getConnectMember(holderName);
     return { profile };
+  }
+
+  @Get('connect/member/me')
+  @UseGuards(MemberJwtAuthGuard)
+  @ApiBearerAuth('member-jwt')
+  @ApiOperation({ summary: 'Perfil Movly do associado autenticado (app)' })
+  async getConnectMemberForSession(@Req() req: MemberRequest) {
+    const profile = await this.partner.getConnectMemberForUser(req.user.userId);
+    return { profile };
+  }
+
+  @Get('connect/member/me/check-ins')
+  @UseGuards(MemberJwtAuthGuard)
+  @ApiBearerAuth('member-jwt')
+  @ApiOperation({ summary: 'Histórico de check-ins do associado autenticado (app)' })
+  getConnectMemberCheckInsForSession(
+    @Req() req: MemberRequest,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const parsedLimit = limit != null ? Number(limit) : undefined;
+    const parsedOffset = offset != null ? Number(offset) : undefined;
+    return this.partner.listConnectMemberCheckInsForUser(req.user.userId, {
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+      offset: Number.isFinite(parsedOffset) ? parsedOffset : undefined,
+    });
+  }
+
+  @Get('connect/billing-statement/me')
+  @UseGuards(MemberJwtAuthGuard)
+  @ApiBearerAuth('member-jwt')
+  @ApiOperation({ summary: 'Extrato da assinatura do usuário autenticado (app)' })
+  async getConnectBillingStatementForSession(@Req() req: MemberRequest) {
+    const entries = await this.partner.listConnectBillingStatementForUser(req.user.userId);
+    return { entries };
   }
 
   @Get('connect/advance-finance-preview')
@@ -446,9 +505,128 @@ export class PartnerController {
     return { ok: true, ...result };
   }
 
+  @Post('connect/payment-methods')
+  @UseGuards(MemberJwtAuthGuard)
+  @ApiBearerAuth('member-jwt')
+  @ApiOperation({ summary: 'Cadastra cartão (opcionalmente na cobrança recorrente da assinatura Movly)' })
+  async addConnectPaymentMethod(
+    @Req() req: MemberRequest & Request,
+    @Body()
+    body: {
+      holderName: string;
+      holderCpf?: string;
+      holderEmail?: string;
+      holderPhone?: string;
+      useForSubscription?: boolean;
+      card: {
+        holderName: string;
+        number: string;
+        expiryMonth: string;
+        expiryYear: string;
+        cvv: string;
+        brand?: string;
+      };
+    },
+  ) {
+    if (!body.holderName?.trim() || !body.card) {
+      throw new BadRequestException('Dados do cartão incompletos.');
+    }
+    const profile = await this.partner.addConnectPaymentMethod({
+      holderName: body.holderName.trim(),
+      holderCpf: body.holderCpf?.trim(),
+      holderEmail: body.holderEmail?.trim(),
+      holderPhone: body.holderPhone?.trim(),
+      platformUserId: req.user.userId,
+      remoteIp: partnerRequestClientIp(req) ?? undefined,
+      useForSubscription: body.useForSubscription,
+      card: {
+        holderName: body.card.holderName?.trim() ?? '',
+        number: body.card.number ?? '',
+        expiryMonth: body.card.expiryMonth ?? '',
+        expiryYear: body.card.expiryYear ?? '',
+        cvv: body.card.cvv ?? '',
+        brand: body.card.brand?.trim(),
+      },
+    });
+    return { ok: true, profile };
+  }
+
+  @Patch('connect/payment-methods/default')
+  @UseGuards(MemberOptionalJwtAuthGuard)
+  @ApiBearerAuth('member-jwt')
+  @ApiOperation({ summary: 'Define cartão principal na carteira; cobrança recorrente só com applyToSubscription' })
+  async setDefaultConnectPaymentMethod(
+    @Req() req: MemberRequest & Request,
+    @Body()
+    body: {
+      holderName: string;
+      paymentMethodId: string;
+      holderCpf?: string;
+      holderEmail?: string;
+      holderPhone?: string;
+      applyToSubscription?: boolean;
+      card?: {
+        holderName?: string;
+        number?: string;
+        expiryMonth?: string;
+        expiryYear?: string;
+        cvv?: string;
+        brand?: string;
+      };
+    },
+  ) {
+    if (!body.holderName?.trim() || !body.paymentMethodId?.trim()) {
+      throw new BadRequestException('Informe titular e cartão.');
+    }
+    const profile = await this.partner.setDefaultConnectPaymentMethod({
+      holderName: body.holderName.trim(),
+      paymentMethodId: body.paymentMethodId.trim(),
+      platformUserId: req.user?.userId,
+      holderCpf: body.holderCpf?.trim(),
+      holderEmail: body.holderEmail?.trim(),
+      holderPhone: body.holderPhone?.trim(),
+      remoteIp: partnerRequestClientIp(req) ?? undefined,
+      applyToSubscription: body.applyToSubscription === true,
+      card: body.card
+        ? {
+            holderName: body.card.holderName?.trim() ?? '',
+            number: body.card.number ?? '',
+            expiryMonth: body.card.expiryMonth ?? '',
+            expiryYear: body.card.expiryYear ?? '',
+            cvv: body.card.cvv ?? '',
+            brand: body.card.brand?.trim(),
+          }
+        : undefined,
+    });
+    return { ok: true, profile };
+  }
+
+  @Delete('connect/payment-methods/:paymentMethodId')
+  @UseGuards(MemberOptionalJwtAuthGuard)
+  @ApiBearerAuth('member-jwt')
+  @ApiOperation({ summary: 'Remove cartão salvo (exceto o da assinatura ativa)' })
+  removeConnectPaymentMethod(
+    @Req() req: MemberRequest & Request,
+    @Param('paymentMethodId') paymentMethodId: string,
+    @Query('holderName') holderName?: string,
+  ) {
+    if (!holderName?.trim() || !paymentMethodId?.trim()) {
+      throw new BadRequestException('Informe holderName e paymentMethodId.');
+    }
+    const profile = this.partner.removeConnectPaymentMethod({
+      holderName: holderName.trim(),
+      paymentMethodId: paymentMethodId.trim(),
+      platformUserId: req.user?.userId,
+    });
+    return { ok: true, profile };
+  }
+
   @Post('connect/subscription/checkout')
+  @UseGuards(MemberOptionalJwtAuthGuard)
+  @ApiBearerAuth('member-jwt')
   @ApiOperation({ summary: 'Assina plano Movly com cobrança recorrente no Asaas' })
   async checkoutConnectSubscription(
+    @Req() req: MemberRequest & Request,
     @Body()
     body: {
       holderName: string;
@@ -457,7 +635,8 @@ export class PartnerController {
       holderCpf?: string;
       holderEmail?: string;
       holderPhone?: string;
-      card: {
+      paymentMethodId?: string;
+      card?: {
         holderName: string;
         number: string;
         expiryMonth: string;
@@ -466,8 +645,15 @@ export class PartnerController {
       };
     },
   ) {
-    if (!body.holderName?.trim() || !body.connectPlanId?.trim() || !body.card) {
+    const paymentMethodId = body.paymentMethodId?.trim();
+    if (!body.holderName?.trim() || !body.connectPlanId?.trim()) {
       throw new BadRequestException('Dados de checkout incompletos.');
+    }
+    if (!paymentMethodId && !body.card) {
+      throw new BadRequestException('Informe o cartão ou selecione um cartão salvo.');
+    }
+    if (paymentMethodId && !req.user?.userId) {
+      throw new BadRequestException('Faça login para usar um cartão salvo.');
     }
     const result = await this.partner.checkoutConnectSubscription({
       holderName: body.holderName.trim(),
@@ -476,13 +662,18 @@ export class PartnerController {
       holderCpf: body.holderCpf?.trim() || undefined,
       holderEmail: body.holderEmail?.trim() || undefined,
       holderPhone: body.holderPhone?.trim() || undefined,
-      card: {
-        holderName: body.card.holderName?.trim() ?? '',
-        number: body.card.number ?? '',
-        expiryMonth: body.card.expiryMonth ?? '',
-        expiryYear: body.card.expiryYear ?? '',
-        cvv: body.card.cvv ?? '',
-      },
+      platformUserId: req.user?.userId,
+      remoteIp: partnerRequestClientIp(req) ?? undefined,
+      paymentMethodId,
+      card: body.card
+        ? {
+            holderName: body.card.holderName?.trim() ?? '',
+            number: body.card.number ?? '',
+            expiryMonth: body.card.expiryMonth ?? '',
+            expiryYear: body.card.expiryYear ?? '',
+            cvv: body.card.cvv ?? '',
+          }
+        : undefined,
     });
     return {
       ok: true,
@@ -497,6 +688,43 @@ export class PartnerController {
       throw new BadRequestException('Informe holderName e unitId.');
     }
     const profile = this.partner.setConnectPrimaryGym(body.holderName.trim(), body.unitId.trim());
+    return { ok: true, profile };
+  }
+
+  @Post('connect/unit-subscription')
+  @ApiOperation({
+    summary: 'Assinatura de plano na unidade',
+    description:
+      'Registra o plano mensal na academia, define academia principal quando ainda não houver e sincroniza o aluno na unidade.',
+  })
+  subscribeUnitGym(
+    @Body()
+    body: {
+      holderName: string;
+      unitId: string;
+      planId: string;
+      connectPlanId: ConnectPlanId;
+      planName: string;
+      pricePerMonth: number;
+    },
+  ) {
+    if (
+      !body.holderName?.trim() ||
+      !body.unitId?.trim() ||
+      !body.planId?.trim() ||
+      !body.connectPlanId?.trim() ||
+      !body.planName?.trim()
+    ) {
+      throw new BadRequestException('Dados da assinatura incompletos.');
+    }
+    const profile = this.partner.subscribeUnitGym({
+      holderName: body.holderName.trim(),
+      unitId: body.unitId.trim(),
+      planId: body.planId.trim(),
+      connectPlanId: body.connectPlanId,
+      planName: body.planName.trim(),
+      pricePerMonth: Number(body.pricePerMonth),
+    });
     return { ok: true, profile };
   }
 

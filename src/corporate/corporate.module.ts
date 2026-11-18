@@ -15,6 +15,7 @@ import { CorporateCompaniesService } from './corporate-companies.service';
 import { CorporateController } from './corporate.controller';
 import { CorporateEmployeesService } from './corporate-employees.service';
 import { CorporateInvoicesService } from './corporate-invoices.service';
+import { CorporateMonthlyStatementsService } from './corporate-monthly-statements.service';
 
 @Module({
   imports: [
@@ -37,12 +38,14 @@ import { CorporateInvoicesService } from './corporate-invoices.service';
     CorporateCompaniesService,
     CorporateEmployeesService,
     CorporateInvoicesService,
+    CorporateMonthlyStatementsService,
   ],
   exports: [
     CorporateAccessService,
     CorporateCompaniesService,
     CorporateEmployeesService,
     CorporateInvoicesService,
+    CorporateMonthlyStatementsService,
   ],
 })
 export class CorporateModule {}

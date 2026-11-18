@@ -3,20 +3,22 @@ import { clampCheckInsThisMonth } from './studentLimits';
 import { formatDailyPassWindowMessage, isWithinDailyPassWindow } from './dailyPassPricing';
 import { markReservationCheckedIn } from './modalitySchedule';
 import {
-  CHECK_IN_MAX_RADIUS_KM,
   distanceToUnitKm,
+  getCheckInMaxRadiusKm,
   isWithinCheckInRadius,
   unitHasCoordinates,
 } from './checkInGeo';
 import { brDateKeyFromIso, brDateKeyToday } from './gymLocalTime';
 import {
   findConnectMember,
+  findConnectMemberForCheckIn,
   recordConnectMemberCheckIn,
   refreshConnectMemberPrimaryStatsFromLog,
   validateConnectCheckInAtUnit,
 } from './connectMember';
 import { recomputeConnectPayouts } from './connectPayout';
 import { applyStudentStatsFromLog, currentMonthPrefix } from './student-stats';
+import type { PendingCheckInRequest } from './pendingCheckIn';
 
 export type ValidateResult =
   | { ok: true; type: CheckInLogEntry['type']; holderName: string; message: string }
@@ -105,6 +107,7 @@ export function resolveCheckInHolderName(
   return student?.name ?? result.holderName;
 }
 
+/** Entrada confirmada = presente no log (recepção ou confirmação manual). Pendências não contam. */
 export function hasCheckInTodayForPerson(
   store: ApiStore,
   unitId: string,
@@ -133,6 +136,54 @@ export function hasCheckInTodayForPerson(
 
     return entry.unitId === unitId;
   });
+}
+
+export function upsertPendingGeoCheckIn(
+  store: ApiStore,
+  unitId: string,
+  holderName: string,
+  code: string,
+  type: CheckInLogEntry['type'],
+): PendingCheckInRequest {
+  const holderKey = normalizeHolderKey(holderName);
+  const today = brDateKeyToday();
+  const codeNorm = code.trim().toUpperCase();
+
+  store.pendingCheckIns = store.pendingCheckIns.filter((p) => {
+    if (p.status !== 'pending') return true;
+    if (normalizeHolderKey(p.holderName) !== holderKey) return true;
+    if (brDateKeyFromIso(p.requestedAt) !== today) return true;
+    return false;
+  });
+
+  const entry: PendingCheckInRequest = {
+    id: `pci-${Date.now()}`,
+    unitId,
+    holderName,
+    code: codeNorm,
+    type,
+    requestedAt: new Date().toISOString(),
+    status: 'pending',
+  };
+  store.pendingCheckIns.push(entry);
+  return entry;
+}
+
+export function hasPendingCheckInTodayForPerson(
+  store: ApiStore,
+  holderName: string,
+  type: CheckInLogEntry['type'],
+): boolean {
+  const holderKey = normalizeHolderKey(holderName);
+  if (!holderKey) return false;
+  const today = brDateKeyToday();
+  return store.pendingCheckIns.some(
+    (p) =>
+      p.status === 'pending' &&
+      p.type === type &&
+      normalizeHolderKey(p.holderName) === holderKey &&
+      brDateKeyFromIso(p.requestedAt) === today,
+  );
 }
 
 export function duplicateCheckInTodayMessage(
@@ -302,7 +353,12 @@ export function applySuccessfulCheckIn(
 }
 
 export type GeoCheckInResult =
-  | { ok: true; entry: CheckInLogEntry; message: string }
+  | {
+      ok: true;
+      status: 'pending_partner';
+      pendingId: string;
+      message: string;
+    }
   | { ok: false; message: string };
 
 /** Check-in automático solicitado pelo app (geolocalização + validação de código). */
@@ -313,6 +369,7 @@ export function requestGeoCheckIn(
   holderName: string,
   latitude: number,
   longitude: number,
+  options?: { memberUserId?: string | null },
 ): GeoCheckInResult {
   const unit = store.units.find((u) => u.id === unitId);
   if (!unit) {
@@ -326,12 +383,13 @@ export function requestGeoCheckIn(
     };
   }
 
-  if (!isWithinCheckInRadius(unit, latitude, longitude)) {
+  const maxRadiusKm = getCheckInMaxRadiusKm();
+  if (maxRadiusKm > 0 && !isWithinCheckInRadius(unit, latitude, longitude, maxRadiusKm)) {
     const dist = distanceToUnitKm(unit, latitude, longitude);
     const distLabel = dist != null ? dist.toFixed(1).replace('.', ',') : '—';
     return {
       ok: false,
-      message: `Check-in só é permitido dentro de ${CHECK_IN_MAX_RADIUS_KM} km da academia. Distância atual: ${distLabel} km.`,
+      message: `Check-in só é permitido dentro de ${maxRadiusKm} km da academia. Distância atual: ${distLabel} km.`,
     };
   }
 
@@ -341,7 +399,7 @@ export function requestGeoCheckIn(
   }
 
   const trimmedHolder = holderName.trim();
-  const effectiveResult =
+  let effectiveResult =
     trimmedHolder.length > 0
       ? { ...codeResult, holderName: trimmedHolder }
       : codeResult;
@@ -352,14 +410,33 @@ export function requestGeoCheckIn(
   }
 
   if (effectiveResult.type === 'connect_member') {
-    const primaryBlock = validateConnectCheckInAtUnit(store, trimmedHolder || effectiveResult.holderName, unitId);
+    const lookupName = trimmedHolder || effectiveResult.holderName;
+    const primaryBlock = validateConnectCheckInAtUnit(store, lookupName, unitId, {
+      userId: options?.memberUserId,
+    });
     if (primaryBlock) {
       return { ok: false, message: primaryBlock };
     }
+    const member = findConnectMemberForCheckIn(store, lookupName, options?.memberUserId);
+    if (member) {
+      effectiveResult = { ...effectiveResult, holderName: member.holderName };
+    }
   }
 
-  const entry = applySuccessfulCheckIn(store, unitId, effectiveResult, rawCode);
-  return { ok: true, entry, message: effectiveResult.message };
+  const pending = upsertPendingGeoCheckIn(
+    store,
+    unitId,
+    effectiveResult.holderName,
+    rawCode,
+    effectiveResult.type,
+  );
+  return {
+    ok: true,
+    status: 'pending_partner',
+    pendingId: pending.id,
+    message:
+      'Check-in registrado no app. Aguarde a confirmação na recepção da academia para liberar a entrada.',
+  };
 }
 
 export function listCheckInsForUnit(
