@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "1f8b90b1-b03a-45bc-8527-246d6ad5c9bb",
+      "commitSha": "7d890a5f6ef7abb718396e0c03c2c7bfb476a3e0",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-21T18:34:07-03:00",
+      "title": "Atualiza changelog após registro do hook",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "9bf9ee3c-5465-475e-9380-e0af7c0a3b33",
       "commitSha": "127d64f18f9cffa469df0bcc60f6b94bea816a7b",
       "repository": "api",
