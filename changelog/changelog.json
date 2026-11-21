@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "9bf9ee3c-5465-475e-9380-e0af7c0a3b33",
+      "commitSha": "127d64f18f9cffa469df0bcc60f6b94bea816a7b",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-21T18:33:59-03:00",
+      "title": "Project-tasks, cronograma no portal e vidas pagantes",
+      "summary": "Expõe tarefas do projeto no admin e leitura no portal da associação, reforça",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "4a893683-5899-4918-9694-09af950cf604",
       "commitSha": "8b39c4232f9c347947e21a4f6da693b912241bca",
       "repository": "api",
