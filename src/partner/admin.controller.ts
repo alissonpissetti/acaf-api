@@ -44,6 +44,11 @@ export class AdminController {
     return this.admin.getOverview();
   }
 
+  @Get('associations/:id/users')
+  listAssociationPortalUsers(@Param('id') id: string) {
+    return this.admin.listAssociationPortalUsers(id);
+  }
+
   @Get('networks')
   networks() {
     return this.admin.listNetworks();

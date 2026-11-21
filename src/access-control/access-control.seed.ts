@@ -71,6 +71,13 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
         sortOrder: 6,
         permissionKey: 'operacao.termos-parceiro',
       },
+      {
+        slug: 'cronograma',
+        label: 'Cronograma',
+        route: '/m/operacao/cronograma',
+        sortOrder: 7,
+        permissionKey: 'operacao.cronograma',
+      },
     ],
   },
   {

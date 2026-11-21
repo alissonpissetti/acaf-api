@@ -24,6 +24,19 @@ export class UsersMigrationService implements OnModuleInit {
     await this.migratePlatformUsers();
     await this.migratePartnerAccess();
     await this.fixRolesColumn();
+    await this.ensureAssociationIdColumn();
+  }
+
+  private async ensureAssociationIdColumn() {
+    if (!(await this.tableExists('acaf_users'))) return;
+
+    const rows = await this.dataSource.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'acaf_users' AND column_name = 'association_id' LIMIT 1`,
+    );
+    if (rows.length) return;
+
+    await this.dataSource.query(`ALTER TABLE acaf_users ADD COLUMN association_id CHAR(36) NULL`);
+    this.logger.log('Coluna acaf_users.association_id criada.');
   }
 
   private async fixRolesColumn() {

@@ -428,27 +428,37 @@ export function getAssociateRepasseOverview(store: ApiStore, now = new Date()): 
  */
 export function syncAssociateRepasseState(store: ApiStore, now = new Date()): boolean {
   const dateStr = formatDateYyyyMmDdInTimeZone(now, ASSOCIATE_REPASSE_TIMEZONE);
-  const rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
+  let rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
+  const liveCount = countAssociatePayingLives(store);
 
-  if (!rows.some((r) => r.date === dateStr)) {
-    return recordAssociateRepasseDailySnapshotIfNeeded(store, now);
+  let snapshotChanged = false;
+  const todayIdx = rows.findIndex((r) => r.date === dateStr);
+  if (todayIdx < 0) {
+    snapshotChanged = recordAssociateRepasseDailySnapshotIfNeeded(store, now);
+    rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
+  } else if (rows[todayIdx].payingLivesCount !== liveCount) {
+    rows = [...rows];
+    rows[todayIdx] = buildDailySnapshot(liveCount, dateStr);
+    store.associateRepasseSnapshots = capAssociateRepasseSnapshots(rows);
+    snapshotChanged = true;
   }
 
   const replayed =
-    recomputeAssociateRepasseEffective(rows, now.toISOString()) ??
-    defaultEffectiveFromInstant(countAssociatePayingLives(store), dateStr, now.toISOString());
+    recomputeAssociateRepasseEffective(
+      normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots),
+      now.toISOString(),
+    ) ?? defaultEffectiveFromInstant(liveCount, dateStr, now.toISOString());
 
   const cur = store.associateRepasseEffective;
-  if (
+  const effectiveChanged =
     !cur ||
     cur.tierId !== replayed.tierId ||
     cur.repassePercent !== replayed.repassePercent ||
-    cur.sinceDate !== replayed.sinceDate
-  ) {
+    cur.sinceDate !== replayed.sinceDate;
+  if (effectiveChanged) {
     store.associateRepasseEffective = replayed;
-    return true;
   }
-  return false;
+  return snapshotChanged || effectiveChanged;
 }
 
 /**

@@ -1,84 +1,180 @@
-import type { ApiStore, ConnectMemberRecord, GymUnit } from './types';
+import type { ApiStore } from './types';
 import { normalizeHolderKey } from './checkIn';
 import { brDateKeyFromIso, brDateKeyToday } from './gymLocalTime';
 
-function isListedAssociateUnit(unit: GymUnit): boolean {
-  if (!unit.acafAssociate) return false;
-  return unit.acafAssociate.listed !== false;
+function currentMonthPrefixBr(): string {
+  return brDateKeyToday().slice(0, 7);
 }
 
-function listedAssociateUnitIds(store: ApiStore): Set<string> {
-  return new Set(store.units.filter((u) => isListedAssociateUnit(u)).map((u) => u.id));
+/** Tipos de check-in que representam plano Movly (inclui legado do store). */
+function isConnectPlanCheckInType(type: string | undefined): boolean {
+  const t = String(type ?? '');
+  return t === 'connect_member' || t === 'connect_visitor';
 }
 
-/** Plano mensal válido para vidas pagantes (ativa explícita ou assinatura Asaas vinculada). */
-export function countsAsPayingConnectMember(member: ConnectMemberRecord): boolean {
-  if (member.active === true) return true;
-  if (member.asaasSubscriptionId?.trim()) return true;
-  return false;
-}
-
-function payingLifeHolderKeys(store: ApiStore): Set<string> {
-  const keys = new Set<string>();
-
-  for (const m of store.connectMembers ?? []) {
-    if (!countsAsPayingConnectMember(m)) continue;
-    const key = m.holderKey || normalizeHolderKey(m.holderName);
-    if (key) keys.add(key);
+/** Data do check-in no fuso Brasil, alinhada ao mês civil de vidas pagantes. */
+function checkInValidatedInMonth(validatedAt: string, monthPrefix: string): boolean {
+  const raw = String(validatedAt ?? '').trim();
+  if (!raw) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw.slice(0, 7) === monthPrefix;
   }
+  return brDateKeyFromIso(raw).startsWith(monthPrefix);
+}
 
-  const monthPrefix = brDateKeyToday().slice(0, 7);
+function unitAllowed(unitIds: Set<string> | undefined, unitId: string): boolean {
+  return !unitIds || unitIds.has(unitId);
+}
+
+/**
+ * Titulares únicos com check-in de plano no mês (confirmado no log ou pendente na recepção).
+ * Esta é a definição de vida pagante: sem check-in no mês, não há mensalidade da empresa naquele período.
+ */
+function collectCheckInHolderKeysThisMonth(
+  store: ApiStore,
+  monthPrefix: string,
+  keys: Set<string>,
+  unitIds?: Set<string>,
+): void {
   for (const entry of store.checkInLog ?? []) {
-    if (entry.type !== 'connect_member') continue;
-    if (!brDateKeyFromIso(entry.validatedAt).startsWith(monthPrefix)) continue;
+    if (!isConnectPlanCheckInType(entry.type)) continue;
+    if (!unitAllowed(unitIds, entry.unitId)) continue;
+    if (!checkInValidatedInMonth(entry.validatedAt, monthPrefix)) continue;
     const key = normalizeHolderKey(entry.holderName);
     if (key) keys.add(key);
   }
+  for (const pending of store.pendingCheckIns ?? []) {
+    if (pending.status !== 'pending') continue;
+    if (!isConnectPlanCheckInType(pending.type)) continue;
+    if (!unitAllowed(unitIds, pending.unitId)) continue;
+    if (!checkInValidatedInMonth(pending.requestedAt, monthPrefix)) continue;
+    const key = normalizeHolderKey(pending.holderName);
+    if (key) keys.add(key);
+  }
+}
 
+function payingLifeHolderKeys(
+  store: ApiStore,
+  unitIds?: Set<string>,
+  monthPrefix = currentMonthPrefixBr(),
+): Set<string> {
+  const keys = new Set<string>();
+  collectCheckInHolderKeysThisMonth(store, monthPrefix, keys, unitIds);
   return keys;
 }
 
-export type PayingLivesDiagnostics = {
-  count: number;
-  connectMembersTotal: number;
-  payingMembersActiveFlag: number;
-  payingMembersWithAsaasSubscription: number;
-  checkInHoldersThisMonth: number;
-  listedAssociateUnits: number;
-  monthPrefix: string;
+export function currentAssociatePayingLivesMonthPrefix(): string {
+  return currentMonthPrefixBr();
+}
+
+/** Titulares únicos com check-in de plano no mês civil (confirmado ou pendente). */
+export function countCheckInPayingHoldersThisMonth(
+  store: ApiStore,
+  unitIds?: Set<string>,
+  monthPrefix = currentMonthPrefixBr(),
+): number {
+  return payingLifeHolderKeys(store, unitIds, monthPrefix).size;
+}
+
+/** Quantidade de check-ins de plano confirmados no log no mês (pode ser > titulares únicos). */
+export function countCheckInEventsThisMonth(
+  store: ApiStore,
+  unitIds?: Set<string>,
+  monthPrefix = currentMonthPrefixBr(),
+): number {
+  let count = 0;
+  for (const entry of store.checkInLog ?? []) {
+    if (!isConnectPlanCheckInType(entry.type)) continue;
+    if (!unitAllowed(unitIds, entry.unitId)) continue;
+    if (!checkInValidatedInMonth(entry.validatedAt, monthPrefix)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * Vidas pagantes no escopo de unidades (portal da associação).
+ * Somente check-ins de plano nas unidades informadas.
+ */
+export function countAssociatePayingLivesForUnits(store: ApiStore, unitIds: Set<string>): number {
+  if (!unitIds.size) return 0;
+  return payingLifeHolderKeys(store, unitIds).size;
+}
+
+export type PlanCheckInLogSummary = {
+  validatedAt: string;
+  type: string;
+  holderName: string;
+  unitId: string;
 };
 
-export function diagnoseAssociatePayingLives(store: ApiStore): PayingLivesDiagnostics {
-  const members = store.connectMembers ?? [];
-  const monthPrefix = brDateKeyToday().slice(0, 7);
-  let payingMembersActiveFlag = 0;
-  let payingMembersWithAsaasSubscription = 0;
-  for (const m of members) {
-    if (m.active === true) payingMembersActiveFlag += 1;
-    if (m.asaasSubscriptionId?.trim()) payingMembersWithAsaasSubscription += 1;
+export type PayingLivesDiagnostics = {
+  /** Titulares únicos com check-in de plano no mês — igual ao KPI de vidas pagantes. */
+  count: number;
+  monthPrefix: string;
+  checkInHoldersThisMonth: number;
+  checkInEventsThisMonth: number;
+  pendingHoldersThisMonth: number;
+  connectMembersTotal: number;
+  /** Entradas totais no log (qualquer tipo) — útil para suporte. */
+  checkInLogTotal: number;
+  /** Último check-in de plano no log (independente do mês). */
+  lastPlanCheckIn: PlanCheckInLogSummary | null;
+};
+
+function countPendingHoldersThisMonth(
+  store: ApiStore,
+  unitIds?: Set<string>,
+  monthPrefix = currentMonthPrefixBr(),
+): number {
+  const keys = new Set<string>();
+  for (const pending of store.pendingCheckIns ?? []) {
+    if (pending.status !== 'pending') continue;
+    if (!isConnectPlanCheckInType(pending.type)) continue;
+    if (!unitAllowed(unitIds, pending.unitId)) continue;
+    if (!checkInValidatedInMonth(pending.requestedAt, monthPrefix)) continue;
+    const key = normalizeHolderKey(pending.holderName);
+    if (key) keys.add(key);
   }
-  const checkInHolders = new Set<string>();
+  return keys.size;
+}
+
+function lastPlanCheckInInLog(store: ApiStore): PlanCheckInLogSummary | null {
+  let best: PlanCheckInLogSummary | null = null;
   for (const entry of store.checkInLog ?? []) {
-    if (entry.type !== 'connect_member') continue;
-    if (!brDateKeyFromIso(entry.validatedAt).startsWith(monthPrefix)) continue;
-    const key = normalizeHolderKey(entry.holderName);
-    if (key) checkInHolders.add(key);
+    if (!isConnectPlanCheckInType(entry.type)) continue;
+    const row: PlanCheckInLogSummary = {
+      validatedAt: entry.validatedAt,
+      type: String(entry.type ?? ''),
+      holderName: entry.holderName,
+      unitId: entry.unitId,
+    };
+    if (!best || String(entry.validatedAt).localeCompare(best.validatedAt) > 0) {
+      best = row;
+    }
   }
+  return best;
+}
+
+export function diagnoseAssociatePayingLives(store: ApiStore): PayingLivesDiagnostics {
+  const monthPrefix = currentMonthPrefixBr();
+  const holders = countCheckInPayingHoldersThisMonth(store);
   return {
-    count: payingLifeHolderKeys(store).size,
-    connectMembersTotal: members.length,
-    payingMembersActiveFlag,
-    payingMembersWithAsaasSubscription,
-    checkInHoldersThisMonth: checkInHolders.size,
-    listedAssociateUnits: listedAssociateUnitIds(store).size,
+    count: holders,
     monthPrefix,
+    checkInHoldersThisMonth: holders,
+    checkInEventsThisMonth: countCheckInEventsThisMonth(store),
+    pendingHoldersThisMonth: countPendingHoldersThisMonth(store),
+    connectMembersTotal: store.connectMembers?.length ?? 0,
+    checkInLogTotal: store.checkInLog?.length ?? 0,
+    lastPlanCheckIn: lastPlanCheckInInLog(store),
   };
 }
 
 /**
- * Vidas pagantes para faixas de repasse ACAF: titulares únicos com plano Movly ativo (ou assinatura
- * Asaas no cadastro) e titulares com check-in de plano confirmado no mês civil (America/Sao_Paulo)
- * em qualquer unidade. Pendências na recepção não entram.
+ * Vidas pagantes para faixas de repasse e evolução mensal: titulares únicos com
+ * pelo menos um check-in de plano Movly no mês civil (America/Sao_Paulo) — confirmado
+ * ou ainda pendente na recepção. Assinatura sem check-in no mês não conta.
  */
 export function countAssociatePayingLives(store: ApiStore): number {
   return payingLifeHolderKeys(store).size;

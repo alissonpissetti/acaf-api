@@ -6,6 +6,7 @@ import {
   AssociationPortalService,
   type AssociationAssociateUnitPatch,
 } from './association-portal.service';
+import { ProjectTasksService } from '../project-tasks/project-tasks.service';
 
 type AuthRequest = Request & { user: { userId: string } };
 
@@ -14,7 +15,23 @@ type AuthRequest = Request & { user: { userId: string } };
 @Controller('association-portal/:slug')
 @UseGuards(JwtAuthGuard)
 export class AssociationPortalController {
-  constructor(private readonly portal: AssociationPortalService) {}
+  constructor(
+    private readonly portal: AssociationPortalService,
+    private readonly projectTasks: ProjectTasksService,
+  ) {}
+
+  @Get('summary')
+  async summary(@Req() req: AuthRequest, @Param('slug') slug: string) {
+    await this.portal.assertPortalAccess(req.user.userId, slug);
+    return this.portal.getPortalSummary(slug);
+  }
+
+  /** Cronograma do projeto Movly (somente leitura para o portal da associação). */
+  @Get('project-tasks')
+  async listProjectTasks(@Req() req: AuthRequest, @Param('slug') slug: string) {
+    await this.portal.assertPortalAccess(req.user.userId, slug);
+    return this.projectTasks.list();
+  }
 
   @Get('units')
   async listUnits(@Req() req: AuthRequest, @Param('slug') slug: string) {

@@ -17,6 +17,7 @@ import {
 } from '../asaas/connect-finance-receivable';
 import type { UnitScope } from './aggregatePayout';
 import { applySuccessfulCheckIn, duplicateCheckInTodayMessage, normalizeHolderKey, requestGeoCheckIn as processGeoCheckInRequest, validateCheckInCode } from './checkIn';
+import { syncAssociateRepasseState } from './associateRepasseHysteresis';
 import {
   approvePendingCheckIn,
   dismissPendingCheckIn,
@@ -45,6 +46,7 @@ import {
   getGymSwitchMinCheckinsAtUnitFromMemory,
 } from '../system-settings/system-settings.service';
 import { getDomain, loadStore, updateStore } from './store';
+import { PartnerStorePersistenceService } from './partner-store-persistence.service';
 import { assertUnitAccess, filterStoreByUnitIds } from './partnerAccess';
 import {
   formatOpenHoursSummary,
@@ -125,7 +127,12 @@ export class PartnerService {
     private readonly users: UsersService,
     @InjectRepository(AccountReceivable)
     private readonly connectReceivables: Repository<AccountReceivable>,
+    private readonly partnerStorePersistence: PartnerStorePersistenceService,
   ) {}
+
+  private async ensureOperationalStoreReady(): Promise<void> {
+    await this.partnerStorePersistence.whenReady();
+  }
 
   private resolvePartnerNetworkId(unitIds?: string[]): string {
     if (!unitIds?.length) {
@@ -360,7 +367,7 @@ export class PartnerService {
     };
   }
 
-  validateCheckIn(
+  async validateCheckIn(
     unitId: string,
     code: string,
     scope?: string,
@@ -368,6 +375,7 @@ export class PartnerService {
     holderName?: string,
     memberUserId?: string | null,
   ) {
+    await this.ensureOperationalStoreReady();
     if (unitIds?.length) assertUnitAccess(unitId, unitIds);
     const store = loadStore();
     const result = validateCheckInCode(store, unitId, code);
@@ -395,6 +403,7 @@ export class PartnerService {
     }
     const updated = updateStore((s) => {
       applySuccessfulCheckIn(s, unitId, effectiveResult, code);
+      syncAssociateRepasseState(s, new Date());
     });
     const log = updated.checkInLog[updated.checkInLog.length - 1];
     const unitScope = scopeFromQuery(scope);
@@ -480,6 +489,7 @@ export class PartnerService {
     longitude: number;
     memberUserId?: string | null;
   }) {
+    await this.ensureOperationalStoreReady();
     const unitId = body.unitId?.trim();
     const code = body.code?.trim() ?? '';
     const holderName = body.holderName?.trim() ?? '';
@@ -520,6 +530,9 @@ export class PartnerService {
       message = result.message;
       status = result.status;
       pendingId = result.pendingId;
+      if (result.status === 'pending_partner') {
+        syncAssociateRepasseState(s, new Date());
+      }
     });
 
     if (failed || !status) {
@@ -550,7 +563,8 @@ export class PartnerService {
     };
   }
 
-  approvePending(pendingId: string, unitId: string, scope?: string, unitIds?: string[]) {
+  async approvePending(pendingId: string, unitId: string, scope?: string, unitIds?: string[]) {
+    await this.ensureOperationalStoreReady();
     if (!unitId) {
       throw new BadRequestException('Informe a unidade.');
     }
@@ -564,6 +578,7 @@ export class PartnerService {
         return;
       }
       message = result.message;
+      syncAssociateRepasseState(s, new Date());
     });
     if (failed) {
       throw new BadRequestException({ ok: false, message: failed });

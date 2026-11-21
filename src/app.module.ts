@@ -83,6 +83,9 @@ import { PartnerLegalModule } from './partner-legal/partner-legal.module';
 import { MemberAuthModule } from './member-auth/member-auth.module';
 import { PartnerLegalDocument } from './partner-legal/partner-legal-document.entity';
 import { PartnerTermsAcceptance } from './partner-legal/partner-terms-acceptance.entity';
+import { ProjectTasksModule } from './project-tasks/project-tasks.module';
+import { ProjectTask } from './project-tasks/project-task.entity';
+import { ProjectTaskEvent } from './project-tasks/project-task-event.entity';
 
 @Module({
   imports: [
@@ -165,6 +168,8 @@ import { PartnerTermsAcceptance } from './partner-legal/partner-terms-acceptance
             Association,
             PartnerLegalDocument,
             PartnerTermsAcceptance,
+            ProjectTask,
+            ProjectTaskEvent,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,
@@ -207,6 +212,7 @@ import { PartnerTermsAcceptance } from './partner-legal/partner-terms-acceptance
     AssociationsModule,
     PartnerLegalModule,
     MemberAuthModule,
+    ProjectTasksModule,
   ],
 })
 export class AppModule {}

@@ -6,6 +6,7 @@ import { CorporateEmployeesService } from '../corporate/corporate-employees.serv
 import { ModalitiesService } from '../modalities/modalities.service';
 import { AdminService } from './admin.service';
 import { PartnerService } from './partner.service';
+import { PartnerStorePersistenceService } from './partner-store-persistence.service';
 import { createEmptyStore } from './store-normalize';
 import { registerStoreBackend } from './store';
 import { UnitCoordinatesService } from './unit-coordinates.service';
@@ -73,6 +74,10 @@ describe('PartnerService', () => {
         {
           provide: ConfigService,
           useValue: { get: () => undefined },
+        },
+        {
+          provide: PartnerStorePersistenceService,
+          useValue: { whenReady: async () => undefined },
         },
         {
           provide: getRepositoryToken(AccountReceivable),

@@ -344,6 +344,10 @@ export class AdminService {
     await this.uploadNetworkLogo(networkId, file);
     return this.getNetworkForPartner(networkId, unitIds);
   }
+  listAssociationPortalUsers(associationId: string) {
+    return this.users.listByAssociationId(associationId);
+  }
+
   getOverview() {
     const now = new Date();
     updateStoreIf((draft) => syncAssociateRepasseState(draft, now));

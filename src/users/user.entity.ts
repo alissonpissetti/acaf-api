@@ -43,6 +43,10 @@ export class User {
   @Column({ name: 'job_position_id', type: 'uuid', nullable: true })
   jobPositionId: string | null;
 
+  /** Portal de parceiros associados: usuário só acessa dados desta associação. */
+  @Column({ name: 'association_id', type: 'uuid', nullable: true })
+  associationId: string | null;
+
   @Column({ default: true })
   active: boolean;
 

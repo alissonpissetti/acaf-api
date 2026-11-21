@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ApiStore } from './types';
 import { createEmptyStore, normalizeStoreSnapshot } from './store-normalize';
+import { mergeStoreOperationalData } from './store-merge';
 
 const DOMAIN_PATH = join(process.cwd(), 'shared', 'connect_domain.json');
 
@@ -17,8 +18,16 @@ let storeReadyPromise: Promise<void> | null = null;
 let storeReadyResolve: (() => void) | null = null;
 
 export function registerStoreBackend(next: StoreBackend) {
+  const fromBackend = normalizeStoreSnapshot(structuredClone(next.getStore()));
+  const merged = normalizeStoreSnapshot(mergeStoreOperationalData(fromBackend, memoryCache));
   backend = next;
-  memoryCache = next.getStore();
+  memoryCache = merged;
+  const operationalChanged =
+    JSON.stringify(merged.checkInLog) !== JSON.stringify(fromBackend.checkInLog) ||
+    JSON.stringify(merged.pendingCheckIns) !== JSON.stringify(fromBackend.pendingCheckIns);
+  if (operationalChanged) {
+    next.setStore(merged);
+  }
   if (storeReadyResolve) {
     storeReadyResolve();
     storeReadyResolve = null;

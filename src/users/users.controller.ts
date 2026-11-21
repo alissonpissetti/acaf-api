@@ -93,6 +93,7 @@ export class UsersController {
       password?: string;
       userGroupId?: string | null;
       jobPositionId?: string | null;
+      associationId?: string | null;
     },
   ) {
     return this.users.update(id, body);

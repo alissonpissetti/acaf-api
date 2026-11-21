@@ -2,10 +2,16 @@ import {
   DAYS_TO_IMPROVE_REPASSE,
   DAYS_TO_REDUCE_REPASSE,
   MAX_NET_CHURN_PERCENT_MONTHLY,
+  ASSOCIATE_REPASSE_TIMEZONE,
   buildDailySnapshot,
+  formatDateYyyyMmDdInTimeZone,
   netChurnPercentForMonthBeforeTransitionDate,
   recomputeAssociateRepasseEffective,
+  syncAssociateRepasseState,
 } from './associateRepasseHysteresis';
+import { brDateKeyToday, brLocalToUtcIso } from './gymLocalTime';
+import { createEmptyStore } from './store-normalize';
+import type { ApiStore } from './types';
 
 describe('associateRepasseHysteresis', () => {
   /** YYYY-MM-DD para um offset de dias a partir de 2026-01-01 */
@@ -85,5 +91,41 @@ describe('associateRepasseHysteresis', () => {
 
     const eff = recomputeAssociateRepasseEffective(rows, '2026-05-30T12:00:00.000Z');
     expect(eff?.repassePercent).toBe(21.05);
+  });
+
+  it('atualiza o snapshot do dia quando vidas pagantes mudam no mesmo dia', () => {
+    const now = new Date(brLocalToUtcIso(brDateKeyToday(), 16, 0));
+    const dateStr = formatDateYyyyMmDdInTimeZone(now, ASSOCIATE_REPASSE_TIMEZONE);
+    const store = {
+      ...createEmptyStore(),
+      associateRepasseSnapshots: [buildDailySnapshot(0, dateStr)],
+      checkInLog: [],
+      connectMembers: [],
+    } as ApiStore;
+    const today = brDateKeyToday();
+    store.checkInLog.push({
+      id: 'ci-sync',
+      unitId: 'u1',
+      code: 'CHK-SYNC',
+      type: 'connect_member',
+      holderName: 'Titular Sync',
+      validatedAt: brLocalToUtcIso(today, 10, 0),
+    });
+    store.units = [
+      {
+        id: 'u1',
+        unitName: 'Centro',
+        modalities: [],
+        dailyPassPrice: 0,
+        dailyPassActive: false,
+        dailyPassNotes: '',
+        dailyPassModalities: [],
+        planSpecs: [],
+      } as ApiStore['units'][number],
+    ];
+
+    const changed = syncAssociateRepasseState(store, now);
+    expect(changed).toBe(true);
+    expect(store.associateRepasseSnapshots?.find((s) => s.date === dateStr)?.payingLivesCount).toBe(1);
   });
 });

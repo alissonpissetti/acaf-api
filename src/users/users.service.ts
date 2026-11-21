@@ -17,6 +17,7 @@ import { UserGroup } from '../access-control/user-group.entity';
 import { UnitPartnerAccess } from '../platform-users/unit-partner-access.entity';
 import { connectFallbackMemberEmail } from '../asaas/connect-checkout-identity';
 import { purgeHolderFromPartnerStore } from '../partner/purgeHolderFromStore';
+import { Association } from '../associations/association.entity';
 import { User, UserRole, userHasRole } from './user.entity';
 import {
   formatCpf,
@@ -39,6 +40,9 @@ export type SafeUser = {
   userGroupName: string | null;
   jobPositionId: string | null;
   jobPositionName: string | null;
+  associationId: string | null;
+  associationSlug: string | null;
+  associationName: string | null;
   avatarUrl: string | null;
   avatarColor: string;
   active: boolean;
@@ -84,6 +88,8 @@ export class UsersService implements OnModuleInit {
     private readonly jobPositions: Repository<JobPosition>,
     @InjectRepository(UnitPartnerAccess)
     private readonly partnerAccess: Repository<UnitPartnerAccess>,
+    @InjectRepository(Association)
+    private readonly associations: Repository<Association>,
     private readonly config: ConfigService,
     private readonly storage: NextcloudService,
   ) {}
@@ -121,6 +127,9 @@ export class UsersService implements OnModuleInit {
       userGroupName: null,
       jobPositionId: user.jobPositionId ?? null,
       jobPositionName: null,
+      associationId: user.associationId ?? null,
+      associationSlug: null,
+      associationName: null,
       avatarUrl: user.avatarUrl ?? null,
       avatarColor: user.avatarColor ?? pickAvatarColor(user.id),
       active: user.active,
@@ -139,11 +148,26 @@ export class UsersService implements OnModuleInit {
       const position = await this.jobPositions.findOne({ where: { id: user.jobPositionId } });
       base.jobPositionName = position?.name ?? null;
     }
+    if (user.associationId) {
+      const association = await this.associations.findOne({ where: { id: user.associationId } });
+      if (association) {
+        base.associationSlug = association.slug;
+        base.associationName = association.name;
+      }
+    }
     return base;
   }
 
   async findAll(): Promise<SafeUser[]> {
     const rows = await this.users.find({ order: { name: 'ASC' } });
+    return Promise.all(rows.map((user) => this.toSafeUserDetailed(user)));
+  }
+
+  async listByAssociationId(associationId: string): Promise<SafeUser[]> {
+    const rows = await this.users.find({
+      where: { associationId },
+      order: { name: 'ASC' },
+    });
     return Promise.all(rows.map((user) => this.toSafeUserDetailed(user)));
   }
 
@@ -193,6 +217,7 @@ export class UsersService implements OnModuleInit {
       'roles',
       'userGroupId',
       'jobPositionId',
+      'associationId',
       'avatarUrl',
       'avatarColor',
       'active',
@@ -672,6 +697,7 @@ export class UsersService implements OnModuleInit {
       roles?: UserRole[];
       userGroupId?: string | null;
       jobPositionId?: string | null;
+      associationId?: string | null;
     },
   ): Promise<SafeUser> {
     const user = await this.users.findOne({ where: { id } });
@@ -686,6 +712,22 @@ export class UsersService implements OnModuleInit {
     if (patch.jobPositionId !== undefined) user.jobPositionId = patch.jobPositionId;
     if (patch.password) {
       user.passwordHash = await bcrypt.hash(patch.password, 10);
+    }
+
+    if (patch.associationId !== undefined) {
+      const raw = patch.associationId;
+      if (raw === null || raw === '') {
+        user.associationId = null;
+      } else {
+        const association = await this.associations.findOne({ where: { id: raw } });
+        if (!association) {
+          throw new BadRequestException('Associação não encontrada.');
+        }
+        if (!association.active) {
+          throw new BadRequestException('Associação inativa.');
+        }
+        user.associationId = association.id;
+      }
     }
 
     if (patch.cpf !== undefined) {

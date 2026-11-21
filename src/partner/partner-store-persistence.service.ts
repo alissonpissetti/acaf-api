@@ -5,6 +5,7 @@ import { PartnerStore } from './partner-store.entity';
 import { registerStoreBackend, type StoreBackend } from './store';
 import type { ApiStore } from './types';
 import { createEmptyStore, normalizeStoreSnapshot } from './store-normalize';
+import { mergeStoreOperationalData } from './store-merge';
 
 const STORE_ID = 'main';
 
@@ -72,7 +73,13 @@ export class PartnerStorePersistenceService implements OnModuleInit, StoreBacken
       while (this.pendingSave) {
         const snapshot = this.pendingSave;
         this.pendingSave = null;
-        await this.repo.save(this.repo.create({ id: STORE_ID, data: snapshot }));
+        const row = await this.repo.findOne({ where: { id: STORE_ID } });
+        const dbStore = row?.data
+          ? normalizeStoreSnapshot(row.data)
+          : createEmptyStore();
+        const merged = normalizeStoreSnapshot(mergeStoreOperationalData(dbStore, snapshot));
+        this.store = merged;
+        await this.repo.save(this.repo.create({ id: STORE_ID, data: merged }));
       }
     } catch (err) {
       this.logger.error('Falha ao persistir store no MariaDB', err);

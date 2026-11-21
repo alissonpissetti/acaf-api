@@ -14,15 +14,22 @@ const ACAF_SLUG = 'acaf';
 export class AcafAssociationService {
   constructor(private readonly portal: AssociationPortalService) {}
 
-  listAssociatePartnerUnits() {
+  async listAssociatePartnerUnits(userId: string) {
+    await this.portal.assertPortalAccess(userId, ACAF_SLUG);
     return this.portal.listAssociatePartnerUnits(ACAF_SLUG);
   }
 
-  getAssociatePartnerUnit(unitId: string) {
+  async getAssociatePartnerUnit(userId: string, unitId: string) {
+    await this.portal.assertPortalAccess(userId, ACAF_SLUG);
     return this.portal.getAssociatePartnerUnit(ACAF_SLUG, unitId);
   }
 
-  async patchAssociatePartnerUnit(unitId: string, body: AcafAssociateUnitPatch): Promise<GymUnit> {
+  async patchAssociatePartnerUnit(
+    userId: string,
+    unitId: string,
+    body: AcafAssociateUnitPatch,
+  ): Promise<GymUnit> {
+    await this.portal.assertPortalAccess(userId, ACAF_SLUG);
     return this.portal.patchAssociatePartnerUnit(ACAF_SLUG, unitId, body);
   }
 }
