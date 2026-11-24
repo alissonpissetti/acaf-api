@@ -125,7 +125,7 @@ export class NextcloudService {
     let lastStatus = 0;
     let lastBody = '';
 
-    for (let attempt = 0; attempt < 6; attempt += 1) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       const response = await fetch(
         `${this.baseUrl}/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json`,
         {
@@ -714,6 +714,68 @@ export class NextcloudService {
     file: Express.Multer.File,
   ): Promise<{ path: string; publicUrl: string }> {
     return this.uploadFinanceAttachment('payables', payableId, file);
+  }
+
+  private socialPostMimeAllowed(mime: string): boolean {
+    const base = mime.split(';')[0]?.trim().toLowerCase() ?? '';
+    if (base.startsWith('image/')) return true;
+    return base === 'video/mp4' || base === 'video/quicktime';
+  }
+
+  private socialPostFolder(postId: string): string {
+    return `${this.rootFolder}/marketing/social-posts/${postId}`;
+  }
+
+  async uploadSocialPostArte(
+    postId: string,
+    arteId: string,
+    file: Express.Multer.File,
+  ): Promise<{ path: string; publicUrl: string }> {
+    if (!this.socialPostMimeAllowed(file.mimetype)) {
+      throw new BadRequestException('Envie imagem (PNG, JPG, WEBP) ou vídeo (MP4, MOV).');
+    }
+
+    const folder = this.socialPostFolder(postId);
+    const relativePath = `${folder}/${arteId}-${this.safeFileName(file.originalname)}`;
+    await this.ensureFolder(folder);
+
+    const contentType = file.mimetype?.split(';')[0]?.trim() || 'application/octet-stream';
+    await this.putDavFileWithRetry(
+      relativePath,
+      file.buffer,
+      contentType,
+      'Falha ao enviar arte do calendário ao storage',
+    );
+
+    const shareUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl: this.directPublicFileUrl(shareUrl) };
+  }
+
+  async uploadSocialPostArteBuffer(
+    postId: string,
+    arteId: string,
+    buffer: Buffer,
+    mimeType: string,
+    originalName: string,
+  ): Promise<{ path: string; publicUrl: string }> {
+    if (!this.socialPostMimeAllowed(mimeType)) {
+      throw new BadRequestException('Formato de mídia não suportado para o calendário social.');
+    }
+
+    const folder = this.socialPostFolder(postId);
+    const relativePath = `${folder}/${arteId}-${this.safeFileName(originalName)}`;
+    await this.ensureFolder(folder);
+
+    const contentType = mimeType.split(';')[0]?.trim() || 'application/octet-stream';
+    await this.putDavFileWithRetry(
+      relativePath,
+      buffer,
+      contentType,
+      'Falha ao enviar arte do calendário ao storage',
+    );
+
+    const shareUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl: this.directPublicFileUrl(shareUrl) };
   }
 
   async uploadProjectTaskAttachment(

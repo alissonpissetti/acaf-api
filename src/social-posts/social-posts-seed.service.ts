@@ -9,6 +9,7 @@ import { SocialPost } from './social-post.entity';
 import { SocialPostArte } from './social-post-arte.entity';
 import { SocialPostBuffer } from './social-post-buffer.entity';
 import { defaultRedesForEnvio } from './social-post.rules';
+import { SocialPostArteStorageService } from '../storage/social-post-arte-storage.service';
 import { SocialPostLocalStorageService } from '../storage/social-post-local-storage.service';
 
 type SeedArte = {
@@ -63,7 +64,8 @@ export class SocialPostsSeedService {
     private readonly artes: Repository<SocialPostArte>,
     @InjectRepository(SocialPostBuffer)
     private readonly buffer: Repository<SocialPostBuffer>,
-    private readonly arteStorage: SocialPostLocalStorageService,
+    private readonly arteFiles: SocialPostArteStorageService,
+    private readonly arteLocal: SocialPostLocalStorageService,
   ) {}
 
   resolveSeedPath(): string | null {
@@ -144,9 +146,9 @@ export class SocialPostsSeedService {
       if (arteRows.length) {
         const savedArtes = await this.artes.save(arteRows);
         for (const arte of savedArtes) {
-          const source = this.arteStorage.findSeedAssetPath(saved.codigo, arte.nome, arte.driveId);
+          const source = this.arteLocal.findSeedAssetPath(saved.codigo, arte.nome, arte.driveId);
           if (!source) continue;
-          const { path, publicUrl } = await this.arteStorage.importFromSeedSource(arte.id, source);
+          const { path, publicUrl } = await this.arteFiles.uploadFromLocalFile(saved.id, arte, source);
           arte.arquivo = path;
           arte.urlPublica = publicUrl;
           await this.artes.save(arte);

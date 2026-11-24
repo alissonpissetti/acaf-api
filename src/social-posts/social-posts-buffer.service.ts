@@ -25,7 +25,7 @@ import {
   toBufferDueAtIso,
 } from './social-post.rules';
 import { SocialPostsService } from './social-posts.service';
-import { SocialPostLocalStorageService } from '../storage/social-post-local-storage.service';
+import { SocialPostArteStorageService } from '../storage/social-post-arte-storage.service';
 
 type BufferActionResult = {
   post: Awaited<ReturnType<SocialPostsService['getPost']>>;
@@ -39,7 +39,7 @@ export class SocialPostsBufferService {
   constructor(
     private readonly postsService: SocialPostsService,
     private readonly bufferClient: BufferClient,
-    private readonly arteStorage: SocialPostLocalStorageService,
+    private readonly arteFiles: SocialPostArteStorageService,
     @InjectRepository(SocialPostBuffer)
     private readonly bufferLinks: Repository<SocialPostBuffer>,
   ) {}
@@ -278,7 +278,9 @@ export class SocialPostsBufferService {
     const artes = (post.artes ?? []).map((a) => ({
       id: a.id,
       ordem: a.ordem,
-      urlPublica: this.arteStorage.resolvePublicUrl(a, post.codigo),
+      urlPublica:
+        (this.arteFiles.isRemoteArte(a) ? a.urlPublica : null) ??
+        this.arteFiles.resolvePublicUrl(a, post.codigo),
       interacao: a.interacao,
     }));
     let units = planBufferUnits({

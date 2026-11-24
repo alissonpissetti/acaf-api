@@ -1,7 +1,14 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Express } from 'express';
 import { In, Repository } from 'typeorm';
+import { SocialPostArteStorageService } from '../storage/social-post-arte-storage.service';
 import { SocialPostLocalStorageService } from '../storage/social-post-local-storage.service';
 import { User } from '../users/user.entity';
 import type {
@@ -34,8 +41,14 @@ import { SocialPostsSeedService } from './social-posts-seed.service';
 const MAX_ARTE_BYTES = 20 * 1024 * 1024;
 const MAX_REEL_VIDEO_BYTES = 100 * 1024 * 1024;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 @Injectable()
 export class SocialPostsService implements OnModuleInit {
+  private readonly logger = new Logger(SocialPostsService.name);
+
   constructor(
     @InjectRepository(SocialPost)
     private readonly posts: Repository<SocialPost>,
@@ -49,13 +62,21 @@ export class SocialPostsService implements OnModuleInit {
     private readonly users: Repository<User>,
     private readonly seed: SocialPostsSeedService,
     private readonly postNotifications: SocialPostsNotificationsService,
-    private readonly arteStorage: SocialPostLocalStorageService,
+    private readonly arteFiles: SocialPostArteStorageService,
+    private readonly arteLocal: SocialPostLocalStorageService,
   ) {}
 
   async onModuleInit() {
     await this.seed.seedIfEmpty();
     await this.seed.backfillCaptionsFromSeed();
-    await this.relinkAllArtesFromAssets();
+    if (process.env.SOCIAL_ARTES_SKIP_STARTUP_SYNC === '1') return;
+    try {
+      await this.relinkAllArtesFromAssets();
+    } catch (error) {
+      this.logger.warn(
+        `Sync de artes na subida falhou: ${error instanceof Error ? error.message : error}`,
+      );
+    }
   }
 
   async runSeed(force = false) {
@@ -64,20 +85,35 @@ export class SocialPostsService implements OnModuleInit {
     return { ...seedResult, assets };
   }
 
-  /** Copia de `storage/social-posts/assets/` → `files/` e atualiza URLs servidas pela API. */
-  async relinkAllArtesFromAssets(): Promise<{ linked: number; alreadyOk: number; missing: number }> {
+  /** Publica artes (seed local ou upload legado) no storage remoto com URL pública. */
+  async relinkAllArtesFromAssets(options?: {
+    force?: boolean;
+  }): Promise<{ linked: number; alreadyOk: number; missing: number; failed: number; total: number }> {
+    const force = Boolean(options?.force);
     const rows = await this.artes.find({ relations: ['post'] });
     let linked = 0;
     let alreadyOk = 0;
     let missing = 0;
+    let failed = 0;
+    const gapMs = Math.max(0, Number(process.env.SOCIAL_ARTES_SYNC_GAP_MS ?? 600));
 
     for (const arte of rows) {
       const postCodigo = arte.post?.codigo ?? '';
       const hadGoogle =
         arte.urlPublica?.includes('googleusercontent') || arte.urlPublica?.includes('drive.google');
+      const hadApiProxy = arte.urlPublica?.includes('/api/social-posts/media/');
 
-      if (!this.arteStorage.canServeArte(arte, postCodigo)) {
-        if (hadGoogle) {
+      if (this.arteFiles.isRemoteArte(arte) && !force) {
+        alreadyOk++;
+        continue;
+      }
+
+      if (!this.arteLocal.canServeArte(arte, postCodigo)) {
+        if (this.arteFiles.isRemoteArte(arte) && !hadApiProxy) {
+          alreadyOk++;
+          continue;
+        }
+        if (hadGoogle || hadApiProxy) {
           arte.urlPublica = null;
           await this.artes.save(arte);
         }
@@ -85,28 +121,36 @@ export class SocialPostsService implements OnModuleInit {
         continue;
       }
 
-      const materialized = await this.arteStorage.ensureArteFile(arte);
-      if (!materialized) {
-        missing++;
-        continue;
+      try {
+        const uploaded = await this.arteFiles.ensureRemoteArte(arte, { force });
+        if (!uploaded) {
+          missing++;
+        } else {
+          const needsSave =
+            arte.arquivo !== uploaded.path ||
+            arte.urlPublica !== uploaded.publicUrl ||
+            hadGoogle ||
+            hadApiProxy ||
+            force;
+
+          if (needsSave) {
+            arte.arquivo = uploaded.path;
+            arte.urlPublica = uploaded.publicUrl;
+            await this.artes.save(arte);
+            linked++;
+          } else {
+            alreadyOk++;
+          }
+        }
+      } catch (error) {
+        failed++;
+        this.logger.warn(`Arte ${arte.id}: ${error instanceof Error ? error.message : error}`);
       }
 
-      const needsSave =
-        arte.arquivo !== materialized.path ||
-        arte.urlPublica !== materialized.publicUrl ||
-        hadGoogle;
-
-      if (needsSave) {
-        arte.arquivo = materialized.path;
-        arte.urlPublica = materialized.publicUrl;
-        await this.artes.save(arte);
-        linked++;
-      } else {
-        alreadyOk++;
-      }
+      if (gapMs > 0) await sleep(gapMs);
     }
 
-    return { linked, alreadyOk, missing };
+    return { linked, alreadyOk, missing, failed, total: rows.length };
   }
 
   async listPosts(query?: {
@@ -263,7 +307,7 @@ export class SocialPostsService implements OnModuleInit {
         interacao: null,
       }),
     );
-    const { path, publicUrl } = await this.arteStorage.saveUpload(arte.id, file);
+    const { path, publicUrl } = await this.arteFiles.saveUpload(postId, arte.id, file);
     arte.arquivo = path;
     arte.urlPublica = publicUrl;
     await this.artes.save(arte);
@@ -274,6 +318,7 @@ export class SocialPostsService implements OnModuleInit {
     await this.loadPost(postId);
     const arte = await this.artes.findOne({ where: { id: arteId, postId } });
     if (!arte) throw new NotFoundException('Arte não encontrada.');
+    await this.arteFiles.deleteStoredArte(arte);
     await this.artes.remove(arte);
     return this.getPost(postId);
   }
@@ -394,7 +439,9 @@ export class SocialPostsService implements OnModuleInit {
         ordem: a.ordem,
         nome: a.nome,
         arquivo: a.arquivo,
-        urlPublica: this.arteStorage.resolvePublicUrl(a, post.codigo),
+        urlPublica: this.arteFiles.isRemoteArte(a)
+          ? a.urlPublica
+          : this.arteFiles.resolvePublicUrl(a, post.codigo),
         driveId: a.driveId,
         largura: a.largura,
         altura: a.altura,

@@ -119,8 +119,9 @@ export class SocialPostsAdminController {
 
   @Post('artes/sync-local')
   @RequirePermissions('marketing.redes-sociais.manage')
-  syncLocalArtes() {
-    return this.posts.relinkAllArtesFromAssets();
+  syncLocalArtes(@Query('force') force?: string) {
+    const reprocess = force === '1' || force === 'true';
+    return this.posts.relinkAllArtesFromAssets({ force: reprocess });
   }
 
   @Post('buffer/sync-all')

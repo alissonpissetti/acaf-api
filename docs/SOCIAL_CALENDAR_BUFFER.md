@@ -6,8 +6,9 @@
 |---|---|---|
 | `BUFFER_API_KEY` | sim, para enviar | Token em [Buffer → Settings → API](https://publish.buffer.com/settings/api). **Nunca** exponha no front. |
 | `BUFFER_SYNC_ENABLED` | não | `1` (padrão) agenda sync a cada ~12 min; `0` desliga o job. |
-| `API_PUBLIC_URL` | sim (prod + Buffer) | Base pública da API — usada nas URLs das artes (`/api/social-posts/media/:id`). Em dev: `http://127.0.0.1:8787`. |
-| `SOCIAL_POST_STORAGE_DIR` | não | Pasta raiz (padrão: `storage/social-posts` dentro de `acaf-api`). Ver `storage/social-posts/assets/README.md`. |
+| `NEXTCLOUD_*` | sim (prod) | Artes e uploads vão para `{NEXTCLOUD_ROOT_FOLDER}/marketing/social-posts/{postId}/` com link público (mesmo padrão dos anexos financeiros/cronograma). |
+| `API_PUBLIC_URL` | não* | *Opcional. Só necessário se ainda houver artes legadas sem URL remota (`GET /api/social-posts/media/:id` redireciona após sync). |
+| `SOCIAL_POST_STORAGE_DIR` | não | Pasta local apenas para **seed** (`assets/{codigo}/`). Em produção o conteúdo é enviado ao Nextcloud na subida ou via `POST .../artes/sync-local`. |
 | `SOCIAL_MANUAL_REMINDER_ENABLED` | não | `1` (padrão): job a cada 1 min envia SMS/e-mail **15 min antes** do horário agendado para posts com figurinha de link ou interação manual, quando há responsável admin. `0` desliga. |
 | `ADMIN_PUBLIC_URL` | não | URL base do acaf-adm (link no lembrete). Se vazio, usa `APP_PUBLIC_URL` ou `http://localhost:5173`. |
 
@@ -24,13 +25,13 @@ POST /api/admin/social-posts/seed/import?force=1
 
 Na primeira subida da API, se não houver posts, o seed roda automaticamente (`seedIfEmpty`).
 
-## Artes (storage local)
+## Artes (storage remoto)
 
-1. Coloque os arquivos em `storage/social-posts/assets/{codigo}/{nome}.png` (ex.: `g01/G1.png`).
-2. Ao subir a API, ou `POST /api/admin/social-posts/artes/sync-local`, ou seed com `force=1`.
-3. Upload pelo admin grava em `storage/social-posts/files/` e serve em `GET /api/social-posts/media/:arteId` (sem auth).
+1. Coloque os arquivos de seed em `storage/social-posts/assets/{codigo}/{nome}.png` (ex.: `g01/G1.png`).
+2. Ao subir a API, ou `POST /api/admin/social-posts/artes/sync-local`, ou seed com `force=1` — as artes são **enviadas ao Nextcloud** e `url_publica` no banco aponta para o link público.
+3. Novos uploads pelo admin vão direto ao Nextcloud (acessíveis pelo Buffer e de qualquer lugar).
 
-O preview do admin **não** usa mais links do Google Drive do seed.
+O preview do admin usa `urlPublica` do storage; `GET /api/social-posts/media/:arteId` só redireciona (compatibilidade).
 
 ## Permissões (acaf-adm)
 
