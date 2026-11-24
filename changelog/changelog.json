@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "f4f7a52c-8131-4d51-8421-d1490adb4259",
+      "commitSha": "fa858a0014f55f4d2aa82278df3bf9caa6c0f30a",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-24T17:03:08-03:00",
+      "title": "Publica artes do calendário social no storage remoto",
+      "summary": "Upload e reprocessamento das artes no Nextcloud, sync com force e script npm; redirecionamento de mídia e resiliência a rate limit na sincronização.",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "3bf41c95-702f-44d8-8e61-a86466b165c8",
       "commitSha": "9ee3c5b2cfa3425a73612444eb6882536a5259e4",
       "repository": "api",
