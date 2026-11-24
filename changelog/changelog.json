@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "189370f0-287f-4f0f-a130-13df33a59f7a",
+      "commitSha": "ad54a53f9e5ec1e875dea2a548821f8f7cf05496",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-24T12:46:42-03:00",
+      "title": "Cronograma rico, calendário social e notificações in-app",
+      "summary": "Comentários com menções, anexos e observadores nas tarefas; notificações ao mencionar, interagir ou atribuir responsável. Módulo de posts sociais com Buffer, lembretes e alerta de responsável no calendário.",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "5abe3c8e-d926-45d2-8f5a-b750116ff07e",
       "commitSha": "224e3d82f3e1d5a51ff8b2c75f05fc9b39eaaf98",
       "repository": "api",
