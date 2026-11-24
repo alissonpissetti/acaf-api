@@ -85,7 +85,14 @@ import { PartnerLegalDocument } from './partner-legal/partner-legal-document.ent
 import { PartnerTermsAcceptance } from './partner-legal/partner-terms-acceptance.entity';
 import { ProjectTasksModule } from './project-tasks/project-tasks.module';
 import { ProjectTask } from './project-tasks/project-task.entity';
+import { ProjectTaskAttachment } from './project-tasks/project-task-attachment.entity';
+import { ProjectTaskComment } from './project-tasks/project-task-comment.entity';
 import { ProjectTaskEvent } from './project-tasks/project-task-event.entity';
+import { SocialPostsModule } from './social-posts/social-posts.module';
+import { SocialPost } from './social-posts/social-post.entity';
+import { SocialPostArte } from './social-posts/social-post-arte.entity';
+import { SocialPostBuffer } from './social-posts/social-post-buffer.entity';
+import { SocialChannel } from './social-posts/social-channel.entity';
 
 @Module({
   imports: [
@@ -169,7 +176,13 @@ import { ProjectTaskEvent } from './project-tasks/project-task-event.entity';
             PartnerLegalDocument,
             PartnerTermsAcceptance,
             ProjectTask,
+            ProjectTaskAttachment,
+            ProjectTaskComment,
             ProjectTaskEvent,
+            SocialPost,
+            SocialPostArte,
+            SocialPostBuffer,
+            SocialChannel,
           ],
           synchronize: config.get('DB_SYNC', 'true') === 'true',
           retryAttempts: 5,
@@ -213,6 +226,7 @@ import { ProjectTaskEvent } from './project-tasks/project-task-event.entity';
     PartnerLegalModule,
     MemberAuthModule,
     ProjectTasksModule,
+    SocialPostsModule,
   ],
 })
 export class AppModule {}

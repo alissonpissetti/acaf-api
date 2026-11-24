@@ -6,7 +6,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import type { ProjectTaskPhase, ProjectTaskStatus } from './project-task.constants';
+import type { ProjectTaskPhase, ProjectTaskPriority, ProjectTaskStatus } from './project-task.constants';
 
 @Entity('acaf_project_tasks')
 @Index('idx_project_tasks_phase_start', ['phase', 'startDate', 'sortOrder'])
@@ -34,6 +34,28 @@ export class ProjectTask {
     enum: ['todo', 'in_progress', 'blocked', 'postponed', 'cancelled', 'done'],
   })
   status: ProjectTaskStatus;
+
+  @Column({
+    type: 'enum',
+    enum: ['low', 'medium', 'high', 'urgent'],
+    default: 'medium',
+  })
+  priority: ProjectTaskPriority;
+
+  @Column({ type: 'json', nullable: true })
+  tags: string[] | null;
+
+  @Column({ name: 'estimated_hours', type: 'decimal', precision: 8, scale: 2, default: 0 })
+  estimatedHours: string;
+
+  @Column({ name: 'time_tracked_seconds', type: 'int', unsigned: true, default: 0 })
+  timeTrackedSeconds: number;
+
+  @Column({ name: 'requester_user_id', type: 'char', length: 36, nullable: true })
+  requesterUserId: string | null;
+
+  @Column({ name: 'created_by', type: 'char', length: 36, nullable: true })
+  createdBy: string | null;
 
   @Column({ type: 'tinyint', unsigned: true, default: 0 })
   progress: number;

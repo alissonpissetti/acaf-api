@@ -21,6 +21,10 @@ export const PROJECT_TASK_STATUSES = [
 
 export type ProjectTaskStatus = (typeof PROJECT_TASK_STATUSES)[number];
 
+export const PROJECT_TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
+
+export type ProjectTaskPriority = (typeof PROJECT_TASK_PRIORITIES)[number];
+
 export const LEGACY_STATUS_TO_API: Record<string, ProjectTaskStatus> = {
   afazer: 'todo',
   andamento: 'in_progress',

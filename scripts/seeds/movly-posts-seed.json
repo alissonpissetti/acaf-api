@@ -1,0 +1,1061 @@
+{
+ "canais_buffer": {
+  "instagram": "6b04f9328541f09ecb8212f5",
+  "facebook": "6b04fc0d8541f09ecb822699",
+  "linkedin": "6b04fe0f8541f09ecb8245c8"
+ },
+ "pasta_drive": "163U8d6VmyJmyAUpCAMYaH3pwHXjlcxi6",
+ "posts": [
+  {
+   "id": "g01",
+   "n": "Chegamos",
+   "tipo": "Feed",
+   "formato": "Estático",
+   "pilar": "Lançamento",
+   "titulo": "A movly chegou.",
+   "visual": "KV 1 · corrida na cápsula, chips empresas · academias · colaboradores.",
+   "legenda": "A Movly chegou.\n\nAcademias, estúdios e aulas reunidos num app só, oferecidos pela empresa para quem trabalha nela.\n\nÉ RH ou gestor e quer oferecer para o seu time? Tem academia ou estúdio e quer entrar na rede? Trabalha numa empresa e quer a Movly lá?\n\nComente MOVLY ou toque no link da bio e conta pra gente quem você é.",
+   "hashtags": "#Movly #BemEstar #BemEstarCorporativo #BenefíciosCorporativos #AcademiaParceira",
+   "data": "2026-11-24",
+   "hora": "12:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "G1",
+     "drive_id": "18t6Sm0tlgLQkQRdcTBePhGDqSiHdxk0X",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p01",
+   "n": "1",
+   "tipo": "Feed",
+   "formato": "Estático",
+   "pilar": "Marca",
+   "titulo": "A vida acontece quando você se move.",
+   "visual": "Fundo gradiente céu, logo limão grande, arco de círculo roxo.",
+   "legenda": "Oi, a gente é a Movly. 💜\n\nChegamos pra fazer o benefício de bem-estar sair do papel e entrar na sua rotina. Academias, estúdios e aulas reunidos num app só, oferecidos pela sua empresa.\n\nSem burocracia. Sem culpa. No seu ritmo.\n\nSegue a gente, que a partir de hoje é movimento por aqui.",
+   "hashtags": "#Movly #MovlyEmMovimento #BemEstar #BemEstarCorporativo",
+   "data": "2026-11-24",
+   "hora": "00:12",
+   "aprovacao": "aprovado",
+   "etapa": "publicado",
+   "nota": "Publicado via Buffer em 24/11 às 00:12, como teste de publicação automática (antecipado de 01/12). Link: instagram.com/p/DgG9j3xjUKp · Arte no Drive: pasta Movly · Instagram · Artes.",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "P01",
+     "drive_id": "1e4sP8E980Pflg8KCRldCcAn-9304LmVu",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ],
+   "buffer": {
+    "at": 1795489966000,
+    "due": null,
+    "error": null,
+    "ids": [
+     "6b04fa10c43c1f2f5c8090f5"
+    ],
+    "link": "https://www.instagram.com/p/DgG9j3xjUKp/",
+    "status": "sent"
+   }
+  },
+  {
+   "id": "s01",
+   "n": "Stories",
+   "tipo": "Stories",
+   "formato": "3 stories",
+   "pilar": "Lançamento",
+   "titulo": "A movly chegou · quem é você?",
+   "visual": "Chegamos · Story 1 e 2 + story do KV 1.",
+   "legenda": "Stories de lançamento:\n\n1) A Movly chegou — toque em “quero saber mais”.\n2) Você é empresa, academia ou colaborador? Escolha e siga o link.\n3) Nosso movimento de bem-estar começou — siga @sejamovly.",
+   "hashtags": "#Movly #Lançamento #BemEstar #BemEstarCorporativo #BenefíciosCorporativos",
+   "telas": [
+    "A movly chegou + figurinha de link “quero saber mais”",
+    "Você é… empresa · academia · colaborador + figurinha de link",
+    "Nosso movimento de bem-estar começou · siga @sejamovly"
+   ],
+   "link": "https://gestao.sejamovly.com/f/go/movly-quero-saber-mais?utm_source=instagram&utm_medium=social&utm_campaign=lancamento-chegamos&utm_content=stories-chegou&cr=a2acc7c1-2930-47aa-b28d-5966ea7ad679",
+   "data": "2026-11-24",
+   "hora": "18:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "stories",
+   "artes": [
+    {
+     "nome": "GS1",
+     "drive_id": "1Z50YpAo2lJtob7HJGZCGyH6xrTTsBmJA",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "link"
+    },
+    {
+     "nome": "GS2",
+     "drive_id": "1M8wT6rokbTrAPSsxyzlk3r5Y0M6F-jMw",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "link"
+    },
+    {
+     "nome": "KV1-Story",
+     "drive_id": "1phw_rOC3tF8LzyngfL6aJmI69noGk329",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "e01",
+   "n": "Empresas 1",
+   "tipo": "Stories",
+   "formato": "1 story · link",
+   "pilar": "Para o RH",
+   "titulo": "Bem-estar que o seu time usa de verdade.",
+   "visual": "Empresas 1 em formato story, com figurinha de link para o formulário de empresas.",
+   "legenda": "Bem-estar que o seu time usa de verdade.\n\nQuer a Movly na sua empresa? Toque na figurinha de link e fale com a gente.",
+   "hashtags": "#Movly #RH #BenefíciosCorporativos #BemEstarCorporativo",
+   "telas": [
+    "Bem-estar que o seu time usa de verdade · quer a movly na sua empresa? + figurinha de link"
+   ],
+   "link": "https://gestao.sejamovly.com/f/movly-empresas",
+   "data": "2026-11-25",
+   "hora": "00:32",
+   "aprovacao": "aprovado",
+   "etapa": "programado",
+   "nota": "Transformado em story com figurinha de link para gestao.sejamovly.com/f/movly-empresas (antecipado de 02/12 08:30). Rascunho no Buffer. · Publicado: https://www.instagram.com/stories/sejamovly/4037192166681628183",
+   "tipo_envio": "stories",
+   "artes": [
+    {
+     "nome": "E1-Story",
+     "drive_id": "1DhXkpemypafN8scZNhBFESKBcgKl8y-8",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "link"
+    }
+   ],
+   "buffer": {
+    "at": 1795518264552,
+    "due": "2026-11-25T00:32:00-03:00",
+    "error": "Whoops! We are having trouble sending notifications to your mobile device. Please try linking a mobile device to your account!",
+    "ids": [
+     "6b050536db52b449cf20a5b3"
+    ],
+    "link": null,
+    "status": "error"
+   }
+  },
+  {
+   "id": "es01",
+   "n": "Stories",
+   "tipo": "Stories",
+   "formato": "3 stories",
+   "pilar": "Para o RH",
+   "titulo": "Enquete → como funciona → link",
+   "visual": "Empresas · Stories 1 a 3.",
+   "legenda": "Sequência para RH:\n\n1) Enquete: o time usa o benefício de academia?\n2) Na Movly, a empresa paga por quem treinou no mês.\n3) Quer conhecer? Toque na figurinha de link.",
+   "hashtags": "#Movly #RH #BenefíciosCorporativos #BemEstarCorporativo",
+   "telas": [
+    "O seu time usa o benefício de academia? + enquete “usa sim” / “nem sei”",
+    "A empresa paga por quem treinou",
+    "Quer a movly na sua empresa? + figurinha de link"
+   ],
+   "link": "https://gestao.sejamovly.com/f/go/movly-empresas?utm_source=instagram&utm_medium=social&utm_campaign=lancamento-empresas&utm_content=stories-dia1&cr=8c5ceed2-3b73-4373-9d5e-b8258051ab15",
+   "aviso": "Postar pelo app do Instagram: o Buffer não coloca enquete, quiz nem caixa de perguntas. (story 1, enquete). Confirmar se o modelo “a empresa paga por quem usou” pode ser divulgado.",
+   "data": "2026-11-26",
+   "hora": "09:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "stories",
+   "artes": [
+    {
+     "nome": "ES1",
+     "drive_id": "1utYw1NqQWUXsr4DM14tj9H0z3cu39Z99",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "manual"
+    },
+    {
+     "nome": "ES2",
+     "drive_id": "1QD3deUNYPYfbBSAgzeWDjtO_6z6IFpSB",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": null
+    },
+    {
+     "nome": "ES3",
+     "drive_id": "1hbrmUn31Sk8xLojizz1jsgeUdzJV3lSB",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "link"
+    }
+   ]
+  },
+  {
+   "id": "a01",
+   "n": "Academias 1",
+   "tipo": "Feed",
+   "formato": "Estático",
+   "pilar": "Academias",
+   "titulo": "Sem academia, não existe movly.",
+   "visual": "KV 1 · chip “para academias e estúdios”. Fixar no perfil.",
+   "legenda": "Sem academia, não existe Movly. É na sua unidade que o movimento acontece, e por isso a rede foi desenhada a partir de você.\n\nColaboradores das empresas parceiras escolhem onde treinar pelo app, e em média ~80% do valor pago fica com a academia.\n\nQuer sua academia na rede? Comente ACADEMIA ou toque no link da bio.",
+   "hashtags": "#Movly #AcademiaParceira #Estúdio #GestãoDeAcademia",
+   "aviso": "Confirmar se o repasse médio de ~80% para a academia pode ser divulgado.",
+   "data": "2026-11-25",
+   "hora": "12:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "A1",
+     "drive_id": "1Lc6EOBuiYnCIlCsrdSirRd1Iw-cxc7Es",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "as01",
+   "n": "Stories",
+   "tipo": "Stories",
+   "formato": "3 stories",
+   "pilar": "Academias",
+   "titulo": "Enquete → repasse → link",
+   "visual": "Academias · Stories 1 a 3.",
+   "legenda": "Sequência para academias:\n\n1) Enquete: sua academia já recebe alunos de empresas?\n2) Em média, ~80% do valor fica com a academia.\n3) Quer entrar na rede? Link na figurinha.",
+   "hashtags": "#Movly #AcademiaParceira #Estúdio #GestãoDeAcademia",
+   "telas": [
+    "Sua academia já recebe alunos de empresas? + enquete",
+    "~80% do valor fica com a academia",
+    "Quer sua academia na rede movly? + figurinha de link"
+   ],
+   "link": "https://gestao.sejamovly.com/f/go/movly-academias?utm_source=instagram&utm_medium=social&utm_campaign=lancamento-academias&utm_content=stories-dia1&cr=f91a0c55-dfed-4aa9-9648-251c27013c1f",
+   "aviso": "Postar pelo app do Instagram: o Buffer não coloca enquete, quiz nem caixa de perguntas. (story 1, enquete). Confirmar se o repasse médio de ~80% para a academia pode ser divulgado.",
+   "data": "2026-11-25",
+   "hora": "12:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "stories",
+   "artes": [
+    {
+     "nome": "AS1",
+     "drive_id": "1GLRE1obDG5Rt7G4Gv7oOda_9GJU-1EgD",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "manual"
+    },
+    {
+     "nome": "AS2",
+     "drive_id": "1_K9pruBfsUVzo2cyBQ93OosU9X9r0NJC",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": null
+    },
+    {
+     "nome": "AS3",
+     "drive_id": "1P7FjI800K0uZWwFTSgM9Bs8j0Ebhb6Qf",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "link"
+    }
+   ]
+  },
+  {
+   "id": "p03",
+   "n": "3",
+   "tipo": "Feed",
+   "formato": "Reels · 15 s",
+   "pilar": "Vida leve",
+   "titulo": "POV: seu benefício finalmente é algo que você usa",
+   "visual": "Pessoa saindo do escritório direto para a aula.",
+   "legenda": "Benefício bom é benefício usado. 😮‍💨\n\nManda pro colega que vive dizendo “segunda eu começo”.",
+   "hashtags": "#Movly #VidaLeve #SeMexer #BemEstar",
+   "telas": [
+    "0–2 s: mesa de escritório, pessoa olha o relógio. Texto: “POV: seu benefício finalmente é algo que você usa”",
+    "2–6 s: fecha o notebook, pega a mochila, sorriso",
+    "6–11 s: cortes rápidos chegando na academia, check-in no celular, começando a aula",
+    "11–15 s: tela final roxa com logo limão. “Movly. Bem-estar para empresas e colaboradores.”"
+   ],
+   "aviso": "O vídeo em motion já está pronto; se gravarem os takes reais, troco antes de publicar.",
+   "data": "2026-11-27",
+   "hora": "18:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "reels",
+   "artes": []
+  },
+  {
+   "id": "s05",
+   "n": "Story",
+   "tipo": "Stories",
+   "formato": "1 story",
+   "pilar": "Vida leve",
+   "titulo": "Sextou, vai se mexer onde?",
+   "visual": "Story novo · KV 2 com foto de yoga.",
+   "legenda": "Sextou. Vai se mexer onde?\n\nUse a figurinha de localização e marca quem vai junto — repost quem marcar @sejamovly.",
+   "hashtags": "#Movly #VidaLeve #SeMexer #BemEstar #Sextou",
+   "telas": [
+    "Sextou. vai se mexer onde? + figurinha de localização",
+    "Repostar quem marcar @sejamovly"
+   ],
+   "data": "2026-11-27",
+   "hora": "09:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "stories",
+   "artes": [
+    {
+     "nome": "SX-Sextou",
+     "drive_id": "1A88prXfDsn-siqxwkMvwQeUMWljsnyTO",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "manual"
+    }
+   ]
+  },
+  {
+   "id": "s02",
+   "n": "Story",
+   "tipo": "Stories",
+   "formato": "1 story",
+   "pilar": "Lançamento",
+   "titulo": "Caixa de perguntas",
+   "visual": "Story novo · KV 3 roxo.",
+   "legenda": "Pergunte o que quiser sobre a Movly — abrimos a caixa de perguntas no story.\n\nDúvidas sobre benefício, empresas, academias ou o app? Manda aí.",
+   "hashtags": "#Movly #Lançamento #BemEstar #BemEstarCorporativo",
+   "telas": [
+    "Pergunta o que quiser sobre a movly + caixa de perguntas"
+   ],
+   "aviso": "Postar pelo app do Instagram: o Buffer não coloca enquete, quiz nem caixa de perguntas.",
+   "data": "2026-11-28",
+   "hora": "10:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "stories",
+   "artes": [
+    {
+     "nome": "SX-Caixa",
+     "drive_id": "12j9NpaCkVFBP93o48CeyCzweIBuZ-y1t",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "manual"
+    }
+   ]
+  },
+  {
+   "id": "e02",
+   "n": "Empresas 2",
+   "tipo": "Feed",
+   "formato": "Carrossel · 5 telas",
+   "pilar": "Para o RH",
+   "titulo": "Como a movly funciona na sua empresa",
+   "visual": "KV 3 · passos numerados em limão.",
+   "legenda": "Benefício de academia que ninguém usa é custo parado. Na Movly funciona assim:\n\n1. A empresa ativa e o RH convida o time.\n2. O colaborador escolhe onde treinar e faz check-in pelo app.\n3. A empresa paga por quem usou no mês.\n\nQuer ver isso na sua empresa? Comente EMPRESA que a gente te chama.",
+   "hashtags": "#Movly #RH #BenefíciosCorporativos #BemEstarCorporativo",
+   "telas": [
+    "Como a movly funciona na sua empresa",
+    "1. A empresa ativa a movly",
+    "2. O colaborador escolhe onde treinar",
+    "3. A empresa paga por quem usou",
+    "Quer a movly na sua empresa? Comente EMPRESA"
+   ],
+   "aviso": "Confirmar se o modelo “a empresa paga por quem usou” pode ser divulgado.",
+   "data": "2026-11-26",
+   "hora": "08:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "E2-1",
+     "drive_id": "1jlhMxtN0L-zoh5FauIQSkHidA_5eujeF",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "E2-2",
+     "drive_id": "1R6F1TnYwnGJyuZ2ceHKv6cz4iuTKyaxR",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "E2-3",
+     "drive_id": "1Lkb3p6aMUqnDz3sKocaVysO0GSF5rceY",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "E2-4",
+     "drive_id": "18naKA468j8PpckvQ9nXze84mTrMgJquX",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "E2-5",
+     "drive_id": "1VqrOs0NLDLs6bGs01fVPI4Er2k1nCt6g",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "s03",
+   "n": "Story",
+   "tipo": "Stories",
+   "formato": "2 stories",
+   "pilar": "Como funciona",
+   "titulo": "Respostas da caixa de perguntas",
+   "visual": "Story novo de resposta + story do KV 3.",
+   "legenda": "Vocês perguntaram — respondemos no story:\n\n1) Template “você perguntou” + resposta (editar no painel de ajustes).\n2) Seu benefício, seu ritmo. Movly no seu tempo.",
+   "hashtags": "#Movly #MovlyEmMovimento #BemEstar #ComoFunciona",
+   "telas": [
+    "Você perguntou · compartilhar a pergunta + resposta (troque no painel de ajustes)",
+    "Seu benefício, seu ritmo"
+   ],
+   "data": "2026-11-30",
+   "hora": "09:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "stories",
+   "artes": [
+    {
+     "nome": "SX-Resposta",
+     "drive_id": "1gUmJb3gzu97hbLfGtZn54B8Xx-yw9w4d",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "manual"
+    },
+    {
+     "nome": "KV3-Story",
+     "drive_id": "1ur6zOQQw41Yk3vaQbhk38o84zy6ZXYFn",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "a02",
+   "n": "Academias 2",
+   "tipo": "Feed",
+   "formato": "Carrossel · 5 telas",
+   "pilar": "Academias",
+   "titulo": "Como a sua academia entra na rede",
+   "visual": "KV 3 · passos numerados.",
+   "legenda": "Como a sua academia entra na rede Movly:\n\n1. Você credencia a unidade com o nosso time.\n2. Colaboradores das empresas parceiras chegam pelo app e fazem check-in.\n3. Em média ~80% do valor pago (parte da empresa + plano do aluno) vai para a academia.\n\nQuer saber mais? Comente ACADEMIA.",
+   "hashtags": "#Movly #AcademiaParceira #GestãoDeAcademia",
+   "telas": [
+    "Como a sua academia entra na rede",
+    "1. Você credencia sua unidade",
+    "2. Colaboradores chegam pelo app",
+    "3. O dinheiro fica onde o treino acontece (~80%)",
+    "Quer sua academia na rede movly? Comente ACADEMIA"
+   ],
+   "aviso": "Confirmar se o repasse médio de ~80% para a academia pode ser divulgado.",
+   "data": "2026-11-30",
+   "hora": "12:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "A2-1",
+     "drive_id": "1370uNHBV_St95gKJjo4NAo2NuU9HoHQ_",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "A2-2",
+     "drive_id": "1NqNFy0Bb7qy62BtEgN7Tanpi7Fi9qbOt",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "A2-3",
+     "drive_id": "1eRzQuqWFWmD_gtYzR0SaZdfZUbSi999q",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "A2-4",
+     "drive_id": "1dCWOxRtbns-oNMvQvYSEO1bea6K7umu6",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "A2-5",
+     "drive_id": "1tVFgwmIqrxgAT1pKNdwQgGr1tRSNdPxI",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p05",
+   "n": "5",
+   "tipo": "Feed",
+   "formato": "Reels · 20 s",
+   "pilar": "Rede Movly",
+   "titulo": "Uma rede. Vários jeitos de se mexer.",
+   "visual": "Cortes rápidos: musculação, yoga, dança, luta, pilates.",
+   "legenda": "Musculação de manhã, yoga na quarta, dança na sexta? Pode.\n\nNa Movly, o seu jeito de se mexer muda quando você quiser. Qual é o seu? Comenta aqui. 👇",
+   "hashtags": "#Movly #MovlyEmMovimento #BemEstar #SeMexer",
+   "telas": [
+    "0–2 s: close no tênis amarrando. Texto: “Qual é o seu jeito de se mexer?”",
+    "2–16 s: 7 cortes de 2 s com o nome da modalidade em limão, no ritmo da música",
+    "16–20 s: tela final. “Uma rede. Todos esses jeitos. Num app só.”"
+   ],
+   "data": "2026-12-01",
+   "hora": "18:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "reels",
+   "artes": []
+  },
+  {
+   "id": "s04",
+   "n": "Story",
+   "tipo": "Stories",
+   "formato": "2 stories",
+   "pilar": "Rede Movly",
+   "titulo": "Quiz: qual modalidade combina com você?",
+   "visual": "Story novo de quiz + story do KV 2.",
+   "legenda": "Qual modalidade combina com você? Responde no quiz do story.\n\nStory 2: repost do Reels — qual é o seu jeito de se mexer?",
+   "hashtags": "#Movly #MovlyEmMovimento #BemEstar #SeMexer",
+   "telas": [
+    "Qual modalidade combina com você? + figurinha de quiz",
+    "Qual é o seu jeito de se mexer? + repost do Reels"
+   ],
+   "aviso": "Postar pelo app do Instagram: o Buffer não coloca enquete, quiz nem caixa de perguntas.",
+   "data": "2026-12-01",
+   "hora": "19:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "stories",
+   "artes": [
+    {
+     "nome": "SX-Quiz",
+     "drive_id": "1B7nXD_hVwt5H4zq_j7qLirOOzuqKPOb-",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": "manual"
+    },
+    {
+     "nome": "KV2-Story",
+     "drive_id": "1ItY4mYGedXJCce6wKxDRUAM0SkB94D5F",
+     "largura": 1080,
+     "altura": 1920,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "e03",
+   "n": "Empresas 3",
+   "tipo": "Feed",
+   "formato": "Estático",
+   "pilar": "Para o RH",
+   "titulo": "Estamos escolhendo as primeiras empresas.",
+   "visual": "KV 2 · chip “lista de espera aberta”. Fixar no perfil.",
+   "legenda": "Estamos abrindo a Movly para as primeiras empresas parceiras.\n\nQuem entra agora começa junto com a gente, com o nosso time acompanhando a implantação de perto.\n\nQuer colocar sua empresa na lista? Comente QUERO ou toque no link da bio.",
+   "hashtags": "#Movly #BemEstarCorporativo #RH #BenefíciosCorporativos",
+   "data": "2026-12-02",
+   "hora": "08:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "E3",
+     "drive_id": "15La8etp957ubrOJj0_bpd0b0KOos0voK",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "a03",
+   "n": "Academias 3",
+   "tipo": "Feed",
+   "formato": "Estático",
+   "pilar": "Academias",
+   "titulo": "+ alunos entrando pela sua porta.",
+   "visual": "KV 2 · chip “credenciamento aberto”.",
+   "legenda": "Mais alunos entrando pela sua porta, sem custo de captação.\n\nO credenciamento da rede Movly está aberto. Comente ACADEMIA ou toque no link da bio que o nosso time fala com você.",
+   "hashtags": "#Movly #AcademiaParceira #Estúdio #Fitness",
+   "data": "2026-12-03",
+   "hora": "12:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "A3",
+     "drive_id": "1bXomktlcdWrkQvN78nXFUTQo5DF8Z98i",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p06",
+   "n": "6",
+   "tipo": "Feed",
+   "formato": "Estático",
+   "pilar": "Vida leve",
+   "titulo": "Não precisa amar academia. Só precisa achar o seu jeito.",
+   "visual": "Fundo limão, texto roxo.",
+   "legenda": "Tem gente que ama puxar ferro. Tem gente que prefere dançar, lutar ou alongar. E tem gente que ainda não descobriu.\n\nTá tudo bem. O bem-estar começa no movimento, qualquer movimento.",
+   "hashtags": "#Movly #VidaLeve #BemEstar #SeMexer",
+   "data": "2026-12-04",
+   "hora": "07:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "P06",
+     "drive_id": "15FmgRt4_GCf73mwpnv6Rt3zMU5MPySws",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p02",
+   "n": "2",
+   "tipo": "Feed",
+   "formato": "Carrossel · 5 telas",
+   "pilar": "Como funciona",
+   "titulo": "Movly em 3 passos",
+   "visual": "Fundo roxo, números gigantes em limão.",
+   "legenda": "É simples assim. Sua empresa oferece, você escolhe onde e quando treinar.\n\nSua empresa ainda não tem Movly? Marca aqui alguém do RH. 👀",
+   "hashtags": "#Movly #BenefíciosCorporativos #BemEstar #RH",
+   "telas": [
+    "Movly em 3 passos",
+    "Sua empresa entra na Movly",
+    "Você recebe o convite e ativa no app",
+    "Escolhe onde treinar e faz check-in",
+    "Pronto. Agora é só se mexer."
+   ],
+   "data": "2026-12-07",
+   "hora": "12:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "P02-1",
+     "drive_id": "1i-xon8_gwK9nuoVhaSmhEWftBNJeUqjF",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P02-2",
+     "drive_id": "1Hb1v_MTB_MjMMpH9KXA2FgqgARESumqp",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P02-3",
+     "drive_id": "1fOC-_TH5sHKEh4TAxlbPsCGtj5kLPJQO",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P02-4",
+     "drive_id": "1WAVMOSPas3qRwwu6rIhhn19qib_5C3jn",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P02-5",
+     "drive_id": "1ZRtp1RWzHmNzAQfTUKxHLlfSUy6O_cx2",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p08",
+   "n": "8",
+   "tipo": "Feed",
+   "formato": "Reels · 15 s",
+   "pilar": "Vida leve",
+   "titulo": "Treino que cabe no horário de almoço",
+   "visual": "Relógio na tela, 45 min de aula, volta ao trabalho.",
+   "legenda": "12h saiu. 12h05 aula. 13h volta mais leve.\n\nQuem aí já fez isso? Salva pra lembrar amanhã.",
+   "hashtags": "#Movly #TreinoNoAlmoço #VidaLeve #BemEstar",
+   "telas": [
+    "0–2 s: relógio digital em 12:00. Texto: “Treino que cabe no horário de almoço”",
+    "2–10 s: timelapse 12:05 → 12:50 na aula",
+    "10–15 s: 13:00 de volta à mesa, cara leve. “Salva pra lembrar amanhã.”"
+   ],
+   "data": "2026-12-08",
+   "hora": "11:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "reels",
+   "artes": []
+  },
+  {
+   "id": "p09",
+   "n": "9",
+   "tipo": "Feed",
+   "formato": "Carrossel · 7 telas",
+   "pilar": "Como funciona",
+   "titulo": "Perguntas que todo mundo faz sobre a Movly",
+   "visual": "Balões de pergunta em limão sobre roxo.",
+   "legenda": "Juntamos as dúvidas que mais aparecem.\n\nFaltou alguma? Pergunta aqui nos comentários que a gente responde.",
+   "hashtags": "#Movly #BemEstar #BenefíciosCorporativos #RH",
+   "telas": [
+    "Perguntas que todo mundo faz",
+    "Quem pode usar? Colaboradores das empresas parceiras",
+    "Como ativo? Pelo convite que chega da sua empresa",
+    "Posso trocar de academia? Pode, é uma rede",
+    "Tem aula além de musculação? Tem: [listar modalidades reais]",
+    "Minha empresa não tem. E agora? Mostra este post pro RH",
+    "Ficou dúvida? Manda no direct."
+   ],
+   "aviso": "Preencher a tela 5 com as modalidades que a rede já tem.",
+   "data": "2026-12-09",
+   "hora": "12:00",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "P09-1",
+     "drive_id": "111NIiJDl2MbQbRQbzMIQ81jgxlvdggJV",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P09-2",
+     "drive_id": "1syQsrbZQi40N0tMCoDiqcuthhGcryb20",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P09-3",
+     "drive_id": "1lpcVRbsjrdnVVwstmYTy_ofbDexOsJvH",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P09-4",
+     "drive_id": "1CoMJisIFmOOOUlV3I8F8DrSbnGW2yVtt",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P09-5",
+     "drive_id": "1f2MvKcPvSZrVw-lhJOi3scGcS9fh6-fq",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P09-6",
+     "drive_id": "13g2od2dBFM72bczKe19SAx2UhQrUPe2o",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P09-7",
+     "drive_id": "1acY_lH09ff9cbCoM2mDU1172Q0IcIt9b",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p04",
+   "n": "4",
+   "tipo": "Feed",
+   "formato": "Carrossel · 6 telas",
+   "pilar": "Para o RH",
+   "titulo": "Benefício parado é dinheiro parado",
+   "visual": "Fundo branco, gráfico simples em roxo.",
+   "legenda": "RH, essa é pra você.\n\nBem-estar que funciona é o que a pessoa usa de verdade, e você acompanha tudo pelo portal.\n\nLink na bio para levar a Movly para a sua empresa.",
+   "hashtags": "#Movly #RH #BenefíciosCorporativos #GestãoDePessoas",
+   "telas": [
+    "Benefício parado é dinheiro parado",
+    "Muita empresa paga por benefício que ninguém usa",
+    "Na Movly, a cobrança é só de quem fez check-in no mês",
+    "Colaborador escolhe entre academias, estúdios e aulas",
+    "Cadastro da empresa em minutos, gestão num portal só",
+    "Bora conversar? Link na bio."
+   ],
+   "aviso": "Confirmar se “cobrança só de quem fez check-in” pode ser dito publicamente.",
+   "data": "2026-12-10",
+   "hora": "07:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "P04-1",
+     "drive_id": "1rGfm7c5p-F5guxON1ZVP3koA5W9epTkm",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P04-2",
+     "drive_id": "19nZZfy6VBAUaNNukYudFMlkgbBhuMY41",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P04-3",
+     "drive_id": "1X2HKvNcFxtnsbNUYV73_vd23U1BSjri-",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P04-4",
+     "drive_id": "1izBsiHb3kqm9m7Wi-Gm-g-4ZCPiHqX4X",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P04-5",
+     "drive_id": "1zxHoziHy2aKzzDTU_YC-IBIuELCUsfZP",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P04-6",
+     "drive_id": "1TJ_rYZjrm-LnlZg_Djhw_SJA2-W9KFC8",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p12",
+   "n": "12",
+   "tipo": "Feed",
+   "formato": "Carrossel · 4 telas",
+   "pilar": "Vida leve",
+   "titulo": "Desafio 7 dias se mexendo",
+   "visual": "Checklist com 7 bolinhas para marcar, convite para salvar.",
+   "legenda": "Sete dias para fechar o ano se mexendo. Sem meta de corpo, só de rotina.\n\nSalva, chama alguém e posta seu dia marcando @sejamovly. A gente reposta.",
+   "hashtags": "#Movly #MovlyEmMovimento #VidaLeve #SeMexer",
+   "telas": [
+    "Desafio 7 dias se mexendo",
+    "Dias 1 a 7: caminhar 20 min, aula experimental, subir de escada, alongar no intervalo, treinar com um colega, testar modalidade nova, descansar de verdade",
+    "Marque cada dia nos stories com #MovlyEmMovimento",
+    "Salva e começa hoje."
+   ],
+   "data": "2026-12-14",
+   "hora": "07:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "P12-1",
+     "drive_id": "1P-1WAE-94C8JiQPTrSe8KBottqQYvzm0",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P12-2",
+     "drive_id": "1YRo3MPacr3MexSgpHFzJhP10F80W42v6",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P12-3",
+     "drive_id": "1SB_kyCZL8dlZJWi6kyZbq9dKlwt-TPR7",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P12-4",
+     "drive_id": "1stJeQOCXj1-g7rIWbIV37BFZiN3FUejq",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p10",
+   "n": "10",
+   "tipo": "Feed",
+   "formato": "Estático",
+   "pilar": "Para o RH",
+   "titulo": "RH, você só paga por quem usa.",
+   "visual": "Fundo roxo, frase em limão, selo “check-in”.",
+   "legenda": "Colaborador fez check-in no mês? Entra na fatura. Não fez? Não paga.\n\nSimples, transparente e sem custo parado. Link na bio.",
+   "hashtags": "#Movly #RH #BenefíciosCorporativos #BemEstarCorporativo",
+   "aviso": "Mesma confirmação do post 4 sobre a cobrança por uso.",
+   "data": "2026-12-11",
+   "hora": "08:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "P10",
+     "drive_id": "13b0bZ2R50cIJmYsY-9XEAKdv-ZeUWege",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p07",
+   "n": "7",
+   "tipo": "Feed",
+   "formato": "Carrossel · 5 telas",
+   "pilar": "Academias",
+   "titulo": "Sua academia na rede Movly",
+   "visual": "Fotos da academia com moldura arredondada.",
+   "legenda": "Academia, estúdio, box, escola de dança: a rede Movly está crescendo e tem lugar pra você.\n\nCredenciamento pelo link na bio.",
+   "hashtags": "#Movly #AcademiaParceira #Estúdio #BemEstar",
+   "telas": [
+    "Sua academia na rede Movly",
+    "Alunos de empresas chegando pela sua porta",
+    "Check-in pelo app, sem papelada",
+    "Sua academia em destaque para quem procura perto",
+    "Quer entrar na rede? Link na bio."
+   ],
+   "data": "2026-12-16",
+   "hora": "18:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "feed",
+   "artes": [
+    {
+     "nome": "P07-1",
+     "drive_id": "1TaMSlAsCWTVyvSSxBfbU5Dg5URpz_8X_",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P07-2",
+     "drive_id": "1EwFU6TWso5e06xsKyGvwChgx_-vk16DG",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P07-3",
+     "drive_id": "1Lp2ziwI9Z9dRx352Az56nH98NCrAKcsk",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P07-4",
+     "drive_id": "1U1lHo-aJdqL1OyuosiO_P3jiDAWbPtS2",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    },
+    {
+     "nome": "P07-5",
+     "drive_id": "1kPiBY9GD6-B1aGia3pyu6CTt0aSyszfM",
+     "largura": 1080,
+     "altura": 1350,
+     "interacao": null
+    }
+   ]
+  },
+  {
+   "id": "p11",
+   "n": "11",
+   "tipo": "Feed",
+   "formato": "Reels · 20 s",
+   "pilar": "Rede Movly",
+   "titulo": "Conheça: [nome da 1ª academia parceira]",
+   "visual": "Tour pela academia com o dono falando.",
+   "legenda": "Primeira parada do nosso tour pela rede: [nome], em [bairro].\n\nBora conhecer? Marca quem treinaria com você aqui.",
+   "hashtags": "#Movly #AcademiaParceira #MovlyEmMovimento",
+   "telas": [
+    "0–3 s: dono/professor na porta. “Essa é a [nome], e agora a gente faz parte da Movly.”",
+    "3–15 s: 3 ambientes da academia com o nome de cada espaço na tela",
+    "15–20 s: “Colaborador Movly, te espero aqui.” + endereço na tela"
+   ],
+   "aviso": "Definir a academia e marcar o @ dela.",
+   "data": "2026-12-18",
+   "hora": "18:30",
+   "aprovacao": "pendente",
+   "etapa": "rascunho",
+   "nota": "",
+   "tipo_envio": "reels",
+   "artes": []
+  }
+ ]
+}

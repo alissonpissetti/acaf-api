@@ -252,6 +252,36 @@ export class NextcloudService {
     return { path: relativePath, publicUrl };
   }
 
+  async uploadSocialPostArt(
+    postId: string,
+    file: Express.Multer.File,
+  ): Promise<{ path: string; publicUrl: string }> {
+    const ext = IMAGE_EXT[file.mimetype];
+    if (!ext) {
+      throw new BadRequestException('Envie uma imagem PNG, JPG ou WEBP.');
+    }
+    const safeName = file.originalname.replace(/[^\w.\-]+/g, '_').slice(0, 80) || 'arte';
+    const folder = `${this.rootFolder}/social-posts/${postId}`;
+    const relativePath = `${folder}/${Date.now()}-${safeName}${ext}`;
+    await this.ensureFolder(folder);
+    const response = await fetch(this.davUrl(relativePath), {
+      method: 'PUT',
+      headers: {
+        Authorization: this.authHeader(),
+        'Content-Type': file.mimetype,
+      },
+      body: new Uint8Array(file.buffer),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new InternalServerErrorException(
+        `Falha ao enviar arte (${response.status}): ${body.slice(0, 120)}`,
+      );
+    }
+    const shared = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl: this.directPublicFileUrl(shared) };
+  }
+
   async uploadUnitPhoto(
     unitId: string,
     file: Express.Multer.File,
@@ -684,6 +714,32 @@ export class NextcloudService {
     file: Express.Multer.File,
   ): Promise<{ path: string; publicUrl: string }> {
     return this.uploadFinanceAttachment('payables', payableId, file);
+  }
+
+  async uploadProjectTaskAttachment(
+    taskId: string,
+    file: Express.Multer.File,
+  ): Promise<{ path: string; publicUrl: string }> {
+    if (!this.payableMimeAllowed(file.mimetype)) {
+      throw new BadRequestException(
+        'Formato não suportado. Envie PDF, imagem, Word, Excel, CSV, TXT ou ZIP.',
+      );
+    }
+
+    const folder = `${this.rootFolder}/cronograma/tasks/${taskId}`;
+    const relativePath = `${folder}/${Date.now()}-${this.safeFileName(file.originalname)}`;
+    await this.ensureFolder(folder);
+
+    const contentType = file.mimetype?.split(';')[0]?.trim() || 'application/octet-stream';
+    await this.putDavFileWithRetry(
+      relativePath,
+      file.buffer,
+      contentType,
+      'Falha ao enviar anexo da tarefa ao storage',
+    );
+
+    const shareUrl = await this.createPublicShareUrl(relativePath);
+    return { path: relativePath, publicUrl: this.directPublicFileUrl(shareUrl) };
   }
 
   async uploadReceivableAttachment(

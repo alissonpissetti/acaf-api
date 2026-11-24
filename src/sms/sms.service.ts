@@ -61,6 +61,10 @@ export class SmsService {
     return this.dispatch(input.to, message, 'MOVLYCORP');
   }
 
+  async sendSocialManualPostReminder(input: { to: string; message: string }): Promise<SendSmsResult> {
+    return this.dispatch(input.to, input.message, 'MOVLYMKT');
+  }
+
   async sendEmployeeEnrollmentCode(input: {
     to: string;
     employeeName: string;

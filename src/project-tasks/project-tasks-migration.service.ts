@@ -49,8 +49,92 @@ export class ProjectTasksMigrationService implements OnModuleInit {
 
     await this.ensureOwnerUserIdsColumn();
     await this.ensureStatusEnumExtended();
+    await this.ensureExtendedTaskColumns();
+    await this.ensureCommentsTable();
+    await this.ensureCommentMentionsColumn();
+    await this.ensureAttachmentsTable();
+    await this.ensureWatchersTable();
 
     this.logger.log('Tabelas de cronograma (project tasks) verificadas.');
+  }
+
+  private async ensureCommentMentionsColumn() {
+    const rows = await this.dataSource.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'acaf_project_task_comments' AND column_name = 'mentioned_user_ids' LIMIT 1`,
+    );
+    if (rows.length) return;
+    await this.dataSource.query(
+      `ALTER TABLE acaf_project_task_comments ADD COLUMN mentioned_user_ids JSON NULL`,
+    );
+    this.logger.log('Coluna acaf_project_task_comments.mentioned_user_ids criada.');
+  }
+
+  private async ensureAttachmentsTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS acaf_project_task_attachments (
+        id CHAR(36) NOT NULL PRIMARY KEY,
+        task_id CHAR(36) NOT NULL,
+        user_id CHAR(36) NULL,
+        original_name VARCHAR(255) NOT NULL,
+        mime_type VARCHAR(128) NOT NULL,
+        size INT UNSIGNED NOT NULL,
+        storage_path VARCHAR(500) NOT NULL,
+        public_url VARCHAR(1000) NOT NULL,
+        created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+        KEY idx_project_task_attachments_task (task_id, created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  }
+
+  private async ensureCommentsTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS acaf_project_task_comments (
+        id CHAR(36) NOT NULL PRIMARY KEY,
+        task_id CHAR(36) NOT NULL,
+        user_id CHAR(36) NULL,
+        body TEXT NOT NULL,
+        created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+        KEY idx_project_task_comments_task (task_id, created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  }
+
+  private async ensureExtendedTaskColumns() {
+    const checks: Array<{ column: string; ddl: string }> = [
+      {
+        column: 'priority',
+        ddl: `ALTER TABLE acaf_project_tasks ADD COLUMN priority ENUM('low','medium','high','urgent') NOT NULL DEFAULT 'medium'`,
+      },
+      {
+        column: 'tags',
+        ddl: `ALTER TABLE acaf_project_tasks ADD COLUMN tags JSON NULL`,
+      },
+      {
+        column: 'estimated_hours',
+        ddl: `ALTER TABLE acaf_project_tasks ADD COLUMN estimated_hours DECIMAL(8,2) NOT NULL DEFAULT 0`,
+      },
+      {
+        column: 'time_tracked_seconds',
+        ddl: `ALTER TABLE acaf_project_tasks ADD COLUMN time_tracked_seconds INT UNSIGNED NOT NULL DEFAULT 0`,
+      },
+      {
+        column: 'requester_user_id',
+        ddl: `ALTER TABLE acaf_project_tasks ADD COLUMN requester_user_id CHAR(36) NULL`,
+      },
+      {
+        column: 'created_by',
+        ddl: `ALTER TABLE acaf_project_tasks ADD COLUMN created_by CHAR(36) NULL`,
+      },
+    ];
+    for (const item of checks) {
+      const rows = await this.dataSource.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'acaf_project_tasks' AND column_name = ? LIMIT 1`,
+        [item.column],
+      );
+      if (rows.length) continue;
+      await this.dataSource.query(item.ddl);
+      this.logger.log(`Coluna acaf_project_tasks.${item.column} criada.`);
+    }
   }
 
   private async ensureStatusEnumExtended() {
@@ -73,5 +157,19 @@ export class ProjectTasksMigrationService implements OnModuleInit {
     if (rows.length) return;
     await this.dataSource.query(`ALTER TABLE acaf_project_tasks ADD COLUMN owner_user_ids JSON NULL`);
     this.logger.log('Coluna acaf_project_tasks.owner_user_ids criada.');
+  }
+
+  private async ensureWatchersTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS acaf_project_task_watchers (
+        id CHAR(36) NOT NULL PRIMARY KEY,
+        task_id CHAR(36) NOT NULL,
+        user_id CHAR(36) NOT NULL,
+        source VARCHAR(32) NOT NULL DEFAULT 'manual',
+        created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+        UNIQUE KEY uq_project_task_watchers (task_id, user_id),
+        KEY idx_project_task_watchers_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
   }
 }

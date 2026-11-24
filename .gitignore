@@ -45,3 +45,6 @@ lerna-debug.log*
 
 # partner legacy file store (deprecated — use MariaDB)
 /data/
+
+# cópias servidas das artes do calendário (fonte: storage/social-posts/assets/)
+/storage/social-posts/files/

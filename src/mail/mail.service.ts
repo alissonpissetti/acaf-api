@@ -568,4 +568,19 @@ export class MailService implements OnModuleInit {
       return { sent: false, reason: this.friendlySendError(message) };
     }
   }
+
+  async sendSocialManualPostReminder(input: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+  }): Promise<SendMailResult> {
+    return this.dispatchPartnerMail({
+      to: input.to,
+      subject: input.subject,
+      text: input.text,
+      html: input.html,
+      logLabel: 'Lembrete publicação manual (redes)',
+    });
+  }
 }

@@ -2,6 +2,41 @@
   "version": 1,
   "entries": [
     {
+      "id": "5abe3c8e-d926-45d2-8f5a-b750116ff07e",
+      "commitSha": "224e3d82f3e1d5a51ff8b2c75f05fc9b39eaaf98",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-22T08:11:20-03:00",
+      "title": "Emit dist/main.js no build de produção",
+      "summary": "Define rootDir em src para o Nest gerar main.js na raiz de dist,",
+      "category": "fix",
+      "areas": [
+        "api"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
+      "id": "1ea33436-bc9c-4dc0-847c-44331aad8980",
+      "commitSha": "1537bc6a672e63154d1347d1162d9a1248ab7820",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-21T18:34:14-03:00",
+      "title": "Sincroniza changelog com commit de manutenção",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "1f8b90b1-b03a-45bc-8527-246d6ad5c9bb",
       "commitSha": "7d890a5f6ef7abb718396e0c03c2c7bfb476a3e0",
       "repository": "api",

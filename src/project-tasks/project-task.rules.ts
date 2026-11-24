@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
-import type { ProjectTaskStatus } from './project-task.constants';
-import { PROJECT_TASK_PHASES, PROJECT_TASK_STATUSES } from './project-task.constants';
+import type { ProjectTaskPriority, ProjectTaskStatus } from './project-task.constants';
+import { PROJECT_TASK_PHASES, PROJECT_TASK_PRIORITIES, PROJECT_TASK_STATUSES } from './project-task.constants';
 
 export function isValidPhase(phase: string): boolean {
   return (PROJECT_TASK_PHASES as readonly string[]).includes(phase);
@@ -8,6 +8,10 @@ export function isValidPhase(phase: string): boolean {
 
 export function isValidStatus(status: string): status is ProjectTaskStatus {
   return (PROJECT_TASK_STATUSES as readonly string[]).includes(status);
+}
+
+export function isValidPriority(priority: string): priority is ProjectTaskPriority {
+  return (PROJECT_TASK_PRIORITIES as readonly string[]).includes(priority);
 }
 
 export function normalizeStatusProgress(

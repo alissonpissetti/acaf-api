@@ -108,6 +108,13 @@ export const ACCESS_CONTROL_SEED: SeedModule[] = [
         sortOrder: 3,
         permissionKey: 'marketing.formularios',
       },
+      {
+        slug: 'redes-sociais',
+        label: 'Calendário Social',
+        route: '/m/marketing/redes-sociais',
+        sortOrder: 4,
+        permissionKey: 'marketing.redes-sociais',
+      },
     ],
   },
   {
