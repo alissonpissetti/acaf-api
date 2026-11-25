@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "e6483e4a-3a77-496d-b250-16170f897e29",
+      "commitSha": "65ec0964bf3af9c31d7e7ed0d779d9ec4f860588",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-25T10:01:26-03:00",
+      "title": "Contato principal, SMS no onboarding e convites fixos por rede",
+      "summary": "Permite cadastrar nome e celular do responsável, recuperação por CNPJ com confirmação de contato e reutilização dos links de onboarding e equipe no admin.",
+      "category": "feature",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "ed66da90-f072-481d-a66d-feada6dfb666",
       "commitSha": "454663eb5c2b56b72660bbeaae54103a8b1dc30e",
       "repository": "api",
