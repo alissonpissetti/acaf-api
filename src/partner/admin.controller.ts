@@ -25,6 +25,10 @@ import type { UnitWeeklySchedule } from './weeklySchedule';
 import { AdminService } from './admin.service';
 import { AcafAssociatesImportService } from './acaf-associates-import.service';
 import { PartnerOnboardingService } from '../partner-auth/partner-onboarding.service';
+import {
+  PARTNER_INVITE_KIND_ONBOARDING,
+  PARTNER_INVITE_KIND_TEAM,
+} from '../partner-auth/partner-invite-kind';
 
 type AuthRequest = Request & { user: { userId: string } };
 
@@ -73,6 +77,8 @@ export class AdminController {
       connectFeePercentOverride?: number | null;
       dailyFeePercentOverride?: number | null;
       partnerContactEmail?: string | null;
+      partnerContactName?: string | null;
+      partnerContactPhone?: string | null;
     },
   ) {
     return this.admin.updateNetwork(id, body);
@@ -111,8 +117,14 @@ export class AdminController {
 
   /** Link aberto (onboarding ou equipe). Sem limite diário — o teto de 1/dia vale só para e-mail. */
   @Post('networks/:id/partner-onboarding-invite')
-  createPartnerOnboardingInvite(@Req() req: AuthRequest, @Param('id') networkId: string) {
-    return this.partnerOnboarding.createInvite(networkId, req.user.userId);
+  createPartnerOnboardingInvite(
+    @Req() req: AuthRequest,
+    @Param('id') networkId: string,
+    @Body() body: { kind?: 'onboarding' | 'team' },
+  ) {
+    const kind =
+      body?.kind === 'team' ? PARTNER_INVITE_KIND_TEAM : PARTNER_INVITE_KIND_ONBOARDING;
+    return this.partnerOnboarding.getOrCreateAdminPersistedInvite(networkId, req.user.userId, kind);
   }
 
   @Post('networks/:id/partner-onboarding-invite-email')

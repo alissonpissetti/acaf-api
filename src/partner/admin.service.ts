@@ -70,7 +70,13 @@ import {
   isAdminManualAssociateMeta,
   isImportedAssociateMeta,
 } from './associate-meta';
-import { isValidCnpj, normalizeCnpj, normalizeCpf } from '../users/person.utils';
+import {
+  isValidCnpj,
+  isValidMobilePhone,
+  normalizeCnpj,
+  normalizeCpf,
+  normalizeMobilePhone,
+} from '../users/person.utils';
 import { cancelCheckInEntry, listCheckInsForUnit, normalizeHolderKey } from './checkIn';
 import { findConnectMemberForPlatformUser } from './connectMember';
 import {
@@ -448,6 +454,7 @@ export class AdminService {
         const hasPartnerUser = partnerUserCount > 0;
         const invitePending = pendingInviteNetworkIds.has(network.id);
         const emailMeta = onboardingEmailMeta.get(network.id);
+        const partnerInviteLinks = await this.partnerOnboarding.listPersistedInviteLinksForNetwork(network);
         return {
           ...withCount,
           primaryMemberCount: this.countPrimaryMembersForUnits(store, unitIds),
@@ -461,6 +468,7 @@ export class AdminService {
           onboardingInviteEmailSource: emailMeta?.onboardingInviteEmailSource ?? null,
           onboardingInviteEmailSentToday: emailMeta?.onboardingInviteEmailSentToday ?? false,
           partnerInviteKind: hasPartnerUser ? 'team' : 'onboarding',
+          partnerInviteLinks,
         };
       }),
     );
@@ -533,6 +541,8 @@ export class AdminService {
       connectFeePercentOverride?: number | null;
       dailyFeePercentOverride?: number | null;
       partnerContactEmail?: string | null;
+      partnerContactName?: string | null;
+      partnerContactPhone?: string | null;
     },
   ) {
     const current = loadStore();
@@ -558,6 +568,36 @@ export class AdminService {
           throw new BadRequestException('E-mail responsável do parceiro inválido.');
         }
         normalizedPartnerContactEmail = normalized;
+      }
+    }
+
+    let normalizedPartnerContactName: string | undefined;
+    if (patch.partnerContactName !== undefined) {
+      const raw = patch.partnerContactName;
+      if (raw === null || String(raw).trim() === '') {
+        normalizedPartnerContactName = undefined;
+      } else {
+        const trimmed = String(raw).trim();
+        if (trimmed.length < 2) {
+          throw new BadRequestException('Informe o nome completo do contato principal (mínimo 2 caracteres).');
+        }
+        normalizedPartnerContactName = trimmed;
+      }
+    }
+
+    let normalizedPartnerContactPhone: string | undefined;
+    if (patch.partnerContactPhone !== undefined) {
+      const raw = patch.partnerContactPhone;
+      if (raw === null || String(raw).trim() === '') {
+        normalizedPartnerContactPhone = undefined;
+      } else {
+        const digits = normalizeMobilePhone(String(raw));
+        if (!isValidMobilePhone(digits)) {
+          throw new BadRequestException(
+            'Celular do contato principal inválido. Informe DDD + número com 9 dígitos (11 números).',
+          );
+        }
+        normalizedPartnerContactPhone = digits;
       }
     }
 
@@ -590,6 +630,12 @@ export class AdminService {
       }
       if (patch.partnerContactEmail !== undefined) {
         network.partnerContactEmail = normalizedPartnerContactEmail;
+      }
+      if (patch.partnerContactName !== undefined) {
+        network.partnerContactName = normalizedPartnerContactName;
+      }
+      if (patch.partnerContactPhone !== undefined) {
+        network.partnerContactPhone = normalizedPartnerContactPhone;
       }
       updated = { ...network };
 

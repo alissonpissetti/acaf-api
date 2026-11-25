@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "ed66da90-f072-481d-a66d-feada6dfb666",
+      "commitSha": "454663eb5c2b56b72660bbeaae54103a8b1dc30e",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-24T17:03:15-03:00",
+      "title": "Sincroniza changelog do deploy de artes no storage",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "f4f7a52c-8131-4d51-8421-d1490adb4259",
       "commitSha": "fa858a0014f55f4d2aa82278df3bf9caa6c0f30a",
       "repository": "api",

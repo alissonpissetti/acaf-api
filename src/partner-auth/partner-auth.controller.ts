@@ -31,8 +31,16 @@ export class PartnerAuthController {
 
   @Post('onboarding/recover/request')
   @HttpCode(200)
-  requestOnboardingCnpjRecovery(@Body() body: { cnpj?: string }) {
-    return this.onboarding.requestCnpjRecovery(body.cnpj ?? '');
+  requestOnboardingCnpjRecovery(
+    @Body()
+    body: {
+      cnpj?: string;
+      channel?: 'email' | 'sms';
+      contactCorrection?: { name?: string; email?: string; mobilePhone?: string };
+    },
+  ) {
+    const channel = body.channel === 'sms' || body.channel === 'email' ? body.channel : undefined;
+    return this.onboarding.requestCnpjRecovery(body.cnpj ?? '', channel, body.contactCorrection);
   }
 
   @Post('onboarding/recover/verify')

@@ -24,6 +24,18 @@ export class PartnerOnboardingCnpjChallenge {
   @Column({ name: 'consumed_at', type: 'datetime', nullable: true })
   consumedAt: Date | null;
 
+  @Column({ name: 'delivery_channel', type: 'varchar', length: 8, nullable: true })
+  deliveryChannel: string | null;
+
+  @Column({ name: 'override_email', type: 'varchar', length: 255, nullable: true })
+  overrideEmail: string | null;
+
+  @Column({ name: 'override_phone', type: 'char', length: 11, nullable: true })
+  overridePhone: string | null;
+
+  @Column({ name: 'override_name', type: 'varchar', length: 255, nullable: true })
+  overrideName: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
   createdAt: Date;
 }

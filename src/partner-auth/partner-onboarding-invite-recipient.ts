@@ -1,4 +1,5 @@
 import type { AdminNetwork, GymUnit } from '../partner/types';
+import { isValidMobilePhone, normalizeMobilePhone } from '../users/person.utils';
 
 export type PartnerOnboardingInviteRecipient = {
   email: string;
@@ -61,4 +62,16 @@ export function resolvePartnerOnboardingInviteRecipient(
 
 export function todayDateBr(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+}
+
+/** Celular do contato principal cadastrado no admin (rede). */
+export function resolvePartnerContactPhone(network: AdminNetwork): string | null {
+  const digits = normalizeMobilePhone(network.partnerContactPhone ?? '');
+  if (!isValidMobilePhone(digits)) return null;
+  return digits;
+}
+
+export function resolvePartnerContactName(network: AdminNetwork): string | null {
+  const name = String(network.partnerContactName ?? '').trim();
+  return name.length >= 2 ? name : null;
 }

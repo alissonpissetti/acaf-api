@@ -12,18 +12,21 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'node:crypto';
 import { In, IsNull, MoreThan, Repository } from 'typeorm';
 import { MailService } from '../mail/mail.service';
+import { SmsService } from '../sms/sms.service';
 import { PartnerAccessService } from '../platform-users/partner-access.service';
-import { loadStore } from '../partner/store';
+import { loadStore, updateStore } from '../partner/store';
 import type { AdminNetwork, ApiStore } from '../partner/types';
 import { UserRole, userHasRole } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
-import { isValidCnpj, normalizeCnpj } from '../users/person.utils';
+import { isValidCnpj, isValidMobilePhone, normalizeCnpj, normalizeMobilePhone } from '../users/person.utils';
 import { PartnerAuthService } from './partner-auth.service';
 import { PartnerOnboardingCnpjChallenge } from './partner-onboarding-cnpj-challenge.entity';
 import { findNetworkIdForCnpj } from './partner-onboarding-cnpj';
 import { PartnerOnboardingEmailSend } from './partner-onboarding-email-send.entity';
 import { PartnerOnboardingInvite } from './partner-onboarding-invite.entity';
 import {
+  resolvePartnerContactName,
+  resolvePartnerContactPhone,
   resolvePartnerOnboardingInviteRecipient,
   todayDateBr,
   type PartnerOnboardingInviteRecipient,
@@ -33,6 +36,11 @@ import {
   PARTNER_INVITE_KIND_TEAM,
   type PartnerInviteKind,
 } from './partner-invite-kind';
+import {
+  maskEmailForDisplay,
+  maskMobilePhoneForDisplay,
+  maskPersonNameForDisplay,
+} from './partner-onboarding-contact-mask';
 
 const TOKEN_BYTES = 24;
 const DEFAULT_TTL_DAYS = 14;
@@ -43,7 +51,11 @@ const CNPJ_CODE_COOLDOWN_MS = 60 * 1000;
 const CNPJ_CODE_MAX_ATTEMPTS = 5;
 const CNPJ_CODE_MIN_RESPONSE_MS = 450;
 const CNPJ_RECOVERY_GENERIC_MESSAGE =
-  'Se o CNPJ estiver cadastrado e o onboarding ainda estiver pendente, enviaremos um código para o e-mail do responsável.';
+  'Se o CNPJ estiver cadastrado e o onboarding ainda estiver pendente, enviaremos um código de verificação.';
+const CNPJ_RECOVERY_CONFIRM_CONTACT_MESSAGE =
+  'Confira o contato cadastrado e escolha como receber o código de verificação.';
+const CNPJ_NOT_FOUND_MESSAGE =
+  'Não encontramos este CNPJ entre os parceiros Movly com onboarding pendente. Confira os 14 dígitos, use o link de convite se você tiver, ou fale com o time Movly.';
 const CNPJ_ALREADY_CONFIGURED_MESSAGE =
   'O acesso desta academia já está configurado. Entre no portal com e-mail e senha ou peça um convite à equipe.';
 const CNPJ_CODE_INVALID_MESSAGE = 'Código inválido ou expirado.';
@@ -73,10 +85,36 @@ export type PartnerOnboardingEmailListMeta = {
   onboardingInviteEmailSentToday: boolean;
 };
 
+export type PartnerOnboardingRecoveryChannel = 'email' | 'sms';
+
+export type PartnerPersistedInviteLinkMeta = {
+  inviteUrl: string;
+  expiresAt: string;
+  inviteKind: PartnerInviteKind;
+  used: boolean;
+  expired: boolean;
+};
+
+export type PartnerOnboardingCnpjContactCorrection = {
+  name: string;
+  email: string;
+  mobilePhone: string;
+};
+
 export type PartnerOnboardingCnpjRequestResult = {
   ok: true;
-  status: 'check_email' | 'already_configured';
+  status:
+    | 'confirm_contact'
+    | 'cnpj_not_found'
+    | 'check_email'
+    | 'check_sms'
+    | 'already_configured';
   message: string;
+  channels?: PartnerOnboardingRecoveryChannel[];
+  networkName?: string | null;
+  maskedEmail?: string | null;
+  maskedPhone?: string | null;
+  contactName?: string | null;
   cooldownSeconds?: number;
   codeTtlSeconds?: number;
 };
@@ -100,6 +138,7 @@ export class PartnerOnboardingService {
     private readonly partnerAccess: PartnerAccessService,
     private readonly partnerAuth: PartnerAuthService,
     private readonly mail: MailService,
+    private readonly sms: SmsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -116,6 +155,140 @@ export class PartnerOnboardingService {
   private buildInviteUrl(token: string, kind: PartnerInviteKind): string {
     const path = this.invitePath(kind);
     return `${this.partnerPortalBaseUrl()}/${path}/${encodeURIComponent(token)}`;
+  }
+
+  private networkInviteStorageKeys(kind: PartnerInviteKind): {
+    tokenKey: 'partnerTeamInviteToken' | 'partnerOnboardingInviteToken';
+    expiresKey: 'partnerTeamInviteExpiresAt' | 'partnerOnboardingInviteExpiresAt';
+  } {
+    return kind === PARTNER_INVITE_KIND_TEAM
+      ? { tokenKey: 'partnerTeamInviteToken', expiresKey: 'partnerTeamInviteExpiresAt' }
+      : { tokenKey: 'partnerOnboardingInviteToken', expiresKey: 'partnerOnboardingInviteExpiresAt' };
+  }
+
+  private persistAdminInviteOnNetwork(
+    networkId: string,
+    kind: PartnerInviteKind,
+    token: string,
+    expiresAt: Date,
+  ): void {
+    const expiresIso = expiresAt.toISOString();
+    updateStore((store) => {
+      const network = store.networks.find((n) => n.id === networkId);
+      if (!network) return;
+      if (kind === PARTNER_INVITE_KIND_TEAM) {
+        network.partnerTeamInviteToken = token;
+        network.partnerTeamInviteExpiresAt = expiresIso;
+      } else {
+        network.partnerOnboardingInviteToken = token;
+        network.partnerOnboardingInviteExpiresAt = expiresIso;
+      }
+    });
+  }
+
+  async describePersistedInviteLink(
+    network: AdminNetwork,
+    kind: PartnerInviteKind,
+  ): Promise<PartnerPersistedInviteLinkMeta | null> {
+    const { tokenKey } = this.networkInviteStorageKeys(kind);
+    const token = network[tokenKey];
+    if (typeof token !== 'string' || !token.trim()) {
+      return null;
+    }
+    const trimmedToken = token.trim();
+    const row = await this.invites.findOne({
+      where: { tokenHash: sha256Hex(trimmedToken), networkId: network.id, kind },
+    });
+    if (!row) {
+      return null;
+    }
+    const expired = new Date() > row.expiresAt;
+    return {
+      inviteUrl: this.buildInviteUrl(trimmedToken, kind),
+      expiresAt: row.expiresAt.toISOString(),
+      inviteKind: kind,
+      used: Boolean(row.usedAt),
+      expired,
+    };
+  }
+
+  async listPersistedInviteLinksForNetwork(network: AdminNetwork): Promise<{
+    onboarding: PartnerPersistedInviteLinkMeta | null;
+    team: PartnerPersistedInviteLinkMeta | null;
+  }> {
+    const [onboarding, team] = await Promise.all([
+      this.describePersistedInviteLink(network, PARTNER_INVITE_KIND_ONBOARDING),
+      this.describePersistedInviteLink(network, PARTNER_INVITE_KIND_TEAM),
+    ]);
+    return { onboarding, team };
+  }
+
+  /**
+   * Convite para admin: reutiliza o link salvo na rede enquanto válido (não usado e não expirado).
+   */
+  async getOrCreateAdminPersistedInvite(
+    networkId: string,
+    createdByUserId: string | null,
+    kind: PartnerInviteKind,
+    ttlDays = DEFAULT_TTL_DAYS,
+  ): Promise<{
+    token: string;
+    expiresAt: string;
+    inviteUrl: string;
+    inviteKind: PartnerInviteKind;
+    reused: boolean;
+  }> {
+    const trimmed = networkId.trim();
+    const store = loadStore();
+    const network = store.networks.find((n) => n.id === trimmed);
+    if (!network) {
+      throw new NotFoundException('Rede não encontrada.');
+    }
+    const unitIds = store.units.filter((u) => u.networkId === trimmed).map((u) => u.id);
+    if (!unitIds.length) {
+      throw new BadRequestException('A rede não possui unidades. Adicione ao menos uma unidade antes de convidar.');
+    }
+
+    const existing = await this.describePersistedInviteLink(network, kind);
+    if (existing && !existing.used && !existing.expired) {
+      const { tokenKey } = this.networkInviteStorageKeys(kind);
+      const token = String(network[tokenKey] ?? '').trim();
+      return {
+        token,
+        expiresAt: existing.expiresAt,
+        inviteUrl: existing.inviteUrl,
+        inviteKind: kind,
+        reused: true,
+      };
+    }
+
+    const token = crypto.randomBytes(TOKEN_BYTES).toString('hex');
+    const tokenHash = sha256Hex(token);
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + ttlDays);
+
+    await this.invites.save(
+      this.invites.create({
+        tokenHash,
+        networkId: trimmed,
+        kind,
+        createdByUserId,
+        expiresAt,
+        usedAt: null,
+        usedByUserId: null,
+      }),
+    );
+
+    this.persistAdminInviteOnNetwork(trimmed, kind, token, expiresAt);
+    const inviteUrl = this.buildInviteUrl(token, kind);
+
+    return {
+      token,
+      expiresAt: expiresAt.toISOString(),
+      inviteUrl,
+      inviteKind: kind,
+      reused: false,
+    };
   }
 
   async resolveInviteKindForNetwork(networkId: string): Promise<PartnerInviteKind> {
@@ -179,7 +352,13 @@ export class PartnerOnboardingService {
 
   async getPreviewByToken(
     token: string,
-  ): Promise<{ networkId: string; networkName: string; expiresAt: string; inviteKind: PartnerInviteKind }> {
+  ): Promise<{
+    networkId: string;
+    networkName: string;
+    expiresAt: string;
+    inviteKind: PartnerInviteKind;
+    suggestedPartnerContactName: string | null;
+  }> {
     const row = await this.findValidInvite(token);
     const store = loadStore();
     const network = store.networks.find((n) => n.id === row.networkId);
@@ -194,6 +373,7 @@ export class PartnerOnboardingService {
       networkName: network.name,
       expiresAt: row.expiresAt.toISOString(),
       inviteKind,
+      suggestedPartnerContactName: resolvePartnerContactName(network),
     };
   }
 
@@ -497,7 +677,12 @@ export class PartnerOnboardingService {
       );
     }
 
-    const { inviteUrl, expiresAt, inviteKind } = await this.createInvite(networkId, createdByUserId);
+    const inviteKind = await this.resolveInviteKindForNetwork(networkId);
+    const { inviteUrl, expiresAt } = await this.getOrCreateAdminPersistedInvite(
+      networkId,
+      createdByUserId,
+      inviteKind,
+    );
     const expiresDate = new Date(expiresAt);
 
     const mailResult =
@@ -556,11 +741,103 @@ export class PartnerOnboardingService {
     return new Set(rows.map((row) => row.networkId).filter(Boolean));
   }
 
-  private genericCnpjCheckEmail(): PartnerOnboardingCnpjRequestResult {
+  private recoveryChannelsForNetwork(
+    network: AdminNetwork,
+    store: ApiStore,
+    correction?: PartnerOnboardingCnpjContactCorrection | null,
+  ): PartnerOnboardingRecoveryChannel[] {
+    const channels: PartnerOnboardingRecoveryChannel[] = [];
+    if (this.resolveInviteRecipientForNetwork(network, store)) {
+      channels.push('email');
+    }
+    if (resolvePartnerContactPhone(network)) {
+      channels.push('sms');
+    }
+    if (correction) {
+      const corrEmail = correction.email.trim().toLowerCase();
+      if (corrEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(corrEmail) && !channels.includes('email')) {
+        channels.push('email');
+      }
+      const phone = normalizeMobilePhone(correction.mobilePhone);
+      if (isValidMobilePhone(phone) && !channels.includes('sms')) {
+        channels.push('sms');
+      }
+    }
+    if (!channels.length) {
+      channels.push('email');
+    }
+    return channels;
+  }
+
+  private cnpjNotFoundResult(): PartnerOnboardingCnpjRequestResult {
     return {
       ok: true,
-      status: 'check_email',
-      message: CNPJ_RECOVERY_GENERIC_MESSAGE,
+      status: 'cnpj_not_found',
+      message: CNPJ_NOT_FOUND_MESSAGE,
+    };
+  }
+
+  private confirmContactPreview(
+    network: AdminNetwork,
+    store: ApiStore,
+  ): PartnerOnboardingCnpjRequestResult {
+    const recipient = this.resolveInviteRecipientForNetwork(network, store);
+    const phone = resolvePartnerContactPhone(network);
+    const name = resolvePartnerContactName(network);
+    return {
+      ok: true,
+      status: 'confirm_contact',
+      message: CNPJ_RECOVERY_CONFIRM_CONTACT_MESSAGE,
+      networkName: network.name,
+      channels: this.recoveryChannelsForNetwork(network, store),
+      maskedEmail: recipient ? maskEmailForDisplay(recipient.email) : null,
+      maskedPhone: phone ? maskMobilePhoneForDisplay(phone) : null,
+      contactName: name ? maskPersonNameForDisplay(name) : null,
+    };
+  }
+
+  private parseContactCorrection(raw: unknown): PartnerOnboardingCnpjContactCorrection | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const body = raw as Record<string, unknown>;
+    const name = String(body.name ?? '').trim();
+    const email = String(body.email ?? '').trim().toLowerCase();
+    const mobilePhone = normalizeMobilePhone(String(body.mobilePhone ?? ''));
+    if (!name && !email && !mobilePhone) return null;
+    if (name.length < 2) {
+      throw new BadRequestException('Informe o nome completo do responsável.');
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException('Informe um e-mail válido para o responsável.');
+    }
+    if (!isValidMobilePhone(mobilePhone)) {
+      throw new BadRequestException('Informe um celular válido com DDD (11 dígitos).');
+    }
+    return { name, email, mobilePhone };
+  }
+
+  private applyPartnerContactCorrection(networkId: string, correction: PartnerOnboardingCnpjContactCorrection) {
+    updateStore((store) => {
+      const network = store.networks.find((n) => n.id === networkId);
+      if (!network) return;
+      network.partnerContactName = correction.name;
+      network.partnerContactEmail = correction.email;
+      network.partnerContactPhone = correction.mobilePhone;
+    });
+  }
+
+  private genericCnpjCheckSent(
+    channel: PartnerOnboardingRecoveryChannel,
+    sent = true,
+  ): PartnerOnboardingCnpjRequestResult {
+    const message = sent
+      ? channel === 'sms'
+        ? 'Enviamos um código por SMS para o celular informado.'
+        : 'Enviamos um código para o e-mail informado.'
+      : CNPJ_RECOVERY_GENERIC_MESSAGE;
+    return {
+      ok: true,
+      status: channel === 'sms' ? 'check_sms' : 'check_email',
+      message,
       cooldownSeconds: Math.round(CNPJ_CODE_COOLDOWN_MS / 1000),
       codeTtlSeconds: Math.round(CNPJ_CODE_TTL_MS / 1000),
     };
@@ -579,29 +856,44 @@ export class PartnerOnboardingService {
   }
 
   /**
-   * Passo prévio quando o link de onboarding foi perdido: identifica pelo CNPJ
-   * e envia um código ao e-mail já cadastrado. Não distingue CNPJ desconhecido
-   * de cadastro pendente (anti-enumeração).
+   * Passo prévio quando o link de onboarding foi perdido: identifica pelo CNPJ.
+   * Sem `channel`, devolve opções de envio; com `channel`, envia o código (e-mail ou SMS
+   * do contato principal no admin). Anti-enumeração: CNPJ desconhecido segue fluxo genérico.
    */
-  async requestCnpjRecovery(rawCnpj: string): Promise<PartnerOnboardingCnpjRequestResult> {
+  async requestCnpjRecovery(
+    rawCnpj: string,
+    channelInput?: PartnerOnboardingRecoveryChannel,
+    rawContactCorrection?: unknown,
+  ): Promise<PartnerOnboardingCnpjRequestResult> {
     const startedAt = Date.now();
     const cnpj = normalizeCnpj(rawCnpj);
     if (!isValidCnpj(cnpj)) {
       throw new BadRequestException('Informe um CNPJ válido.');
     }
+    const deliveryChannel: PartnerOnboardingRecoveryChannel =
+      channelInput === 'sms' ? 'sms' : 'email';
+    const contactCorrection = rawContactCorrection
+      ? this.parseContactCorrection(rawContactCorrection)
+      : null;
 
     try {
       const store = loadStore();
       const networkId = findNetworkIdForCnpj(store, cnpj);
       if (!networkId) {
         await this.dummyCodeHash();
-        return this.genericCnpjCheckEmail();
+        if (!channelInput) {
+          return this.cnpjNotFoundResult();
+        }
+        return this.genericCnpjCheckSent(deliveryChannel, false);
       }
 
       const network = store.networks.find((n) => n.id === networkId);
       if (!network) {
         await this.dummyCodeHash();
-        return this.genericCnpjCheckEmail();
+        if (!channelInput) {
+          return this.cnpjNotFoundResult();
+        }
+        return this.genericCnpjCheckSent(deliveryChannel, false);
       }
 
       const inviteKind = await this.resolveInviteKindForNetwork(networkId);
@@ -617,10 +909,37 @@ export class PartnerOnboardingService {
         return this.alreadyConfiguredResult();
       }
 
-      const recipient = this.resolveInviteRecipientForNetwork(network, store);
-      if (!recipient) {
+      if (!channelInput) {
+        return this.confirmContactPreview(network, store);
+      }
+
+      const channels = this.recoveryChannelsForNetwork(network, store, contactCorrection);
+      if (deliveryChannel === 'sms' && !channels.includes('sms')) {
         await this.dummyCodeHash();
-        return this.genericCnpjCheckEmail();
+        return this.genericCnpjCheckSent('sms', false);
+      }
+      if (deliveryChannel === 'email' && !channels.includes('email')) {
+        await this.dummyCodeHash();
+        return this.genericCnpjCheckSent('email', false);
+      }
+
+      const recipient = this.resolveInviteRecipientForNetwork(network, store);
+      const emailTo =
+        deliveryChannel === 'email'
+          ? (contactCorrection?.email ?? recipient?.email ?? null)
+          : null;
+      const phoneTo =
+        deliveryChannel === 'sms'
+          ? (contactCorrection?.mobilePhone ?? resolvePartnerContactPhone(network))
+          : null;
+
+      if (deliveryChannel === 'email' && !emailTo) {
+        await this.dummyCodeHash();
+        return this.genericCnpjCheckSent('email', false);
+      }
+      if (deliveryChannel === 'sms' && !phoneTo) {
+        await this.dummyCodeHash();
+        return this.genericCnpjCheckSent('sms', false);
       }
 
       const recent = await this.cnpjChallenges.findOne({
@@ -632,7 +951,7 @@ export class PartnerOnboardingService {
         order: { createdAt: 'DESC' },
       });
       if (recent && Date.now() - recent.createdAt.getTime() < CNPJ_CODE_COOLDOWN_MS) {
-        return this.genericCnpjCheckEmail();
+        return this.genericCnpjCheckSent(deliveryChannel, true);
       }
 
       await this.cnpjChallenges.update(
@@ -649,22 +968,44 @@ export class PartnerOnboardingService {
           networkId,
           codeHash,
           expiresAt,
+          deliveryChannel,
+          overrideEmail: contactCorrection?.email ?? null,
+          overridePhone: contactCorrection?.mobilePhone ?? null,
+          overrideName: contactCorrection?.name ?? null,
         }),
       );
 
-      const mailResult = await this.mail.sendPartnerOnboardingRecoveryCode({
-        to: recipient.email,
-        networkName: network.name,
-        code,
-        ttlMinutes: Math.round(CNPJ_CODE_TTL_MS / 60000),
-      });
-      if (!mailResult.sent) {
-        this.logger.warn(
-          `Código de onboarding por CNPJ gerado para a rede ${networkId}, e-mail não enviado: ${mailResult.reason ?? 'falha'}`,
-        );
+      const ttlMinutes = Math.round(CNPJ_CODE_TTL_MS / 60000);
+      let delivered = false;
+      if (deliveryChannel === 'email' && emailTo) {
+        const mailResult = await this.mail.sendPartnerOnboardingRecoveryCode({
+          to: emailTo,
+          networkName: network.name,
+          code,
+          ttlMinutes,
+        });
+        delivered = mailResult.sent;
+        if (!mailResult.sent) {
+          this.logger.warn(
+            `Código de onboarding por CNPJ gerado para a rede ${networkId}, e-mail não enviado: ${mailResult.reason ?? 'falha'}`,
+          );
+        }
+      } else if (deliveryChannel === 'sms' && phoneTo) {
+        const smsResult = await this.sms.sendPartnerOnboardingRecoveryCode({
+          to: phoneTo,
+          code,
+          networkName: network.name,
+          ttlMinutes,
+        });
+        delivered = smsResult.sent;
+        if (!smsResult.sent) {
+          this.logger.warn(
+            `Código de onboarding por CNPJ gerado para a rede ${networkId}, SMS não enviado: ${smsResult.reason ?? 'falha'}`,
+          );
+        }
       }
 
-      return this.genericCnpjCheckEmail();
+      return this.genericCnpjCheckSent(deliveryChannel, delivered);
     } finally {
       await padElapsed(startedAt, CNPJ_CODE_MIN_RESPONSE_MS);
     }
@@ -680,7 +1021,7 @@ export class PartnerOnboardingService {
     }
     const code = String(rawCode ?? '').trim();
     if (!/^\d{6}$/.test(code)) {
-      throw new BadRequestException('Informe o código de 6 dígitos recebido no e-mail.');
+      throw new BadRequestException('Informe o código de 6 dígitos recebido por e-mail ou SMS.');
     }
 
     const row = await this.cnpjChallenges.findOne({
@@ -707,6 +1048,14 @@ export class PartnerOnboardingService {
       row.consumedAt = new Date();
       await this.cnpjChallenges.save(row);
       return { status: 'already_configured', message: CNPJ_ALREADY_CONFIGURED_MESSAGE };
+    }
+
+    if (row.overrideName && row.overrideEmail && row.overridePhone) {
+      this.applyPartnerContactCorrection(row.networkId, {
+        name: row.overrideName,
+        email: row.overrideEmail,
+        mobilePhone: row.overridePhone,
+      });
     }
 
     try {

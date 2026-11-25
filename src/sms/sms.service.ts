@@ -39,6 +39,17 @@ export class SmsService {
     return this.dispatch(input.to, message, 'MOVLYPTR');
   }
 
+  async sendPartnerOnboardingRecoveryCode(input: {
+    to: string;
+    code: string;
+    networkName: string;
+    ttlMinutes: number;
+  }): Promise<SendSmsResult> {
+    const label = input.networkName.trim() || 'sua academia';
+    const message = `Movly Parceiro — código ${input.code} para continuar o cadastro de ${label}. Válido por ${input.ttlMinutes} min.`;
+    return this.dispatch(input.to, message, 'MOVLYPTR');
+  }
+
   async sendMemberAuthCode(input: {
     to: string;
     code: string;

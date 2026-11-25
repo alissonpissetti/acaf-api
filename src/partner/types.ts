@@ -296,10 +296,28 @@ export type AdminNetwork = {
   /** Usuário admin/comercial que cadastrou a rede parceira. */
   commercialOwnerUserId?: string | null;
   /**
+   * Nome do contato principal do parceiro (responsável pelo portal / onboarding).
+   */
+  partnerContactName?: string | null;
+  /**
    * E-mail do responsável pelo parceiro (convite de onboarding).
    * Tem prioridade sobre o e-mail da planilha ACAF por unidade.
    */
   partnerContactEmail?: string | null;
+  /**
+   * Celular do contato principal (11 dígitos BR). Usado no recovery de onboarding por SMS,
+   * somente quando cadastrado no admin — não há fallback para telefone da planilha ACAF.
+   */
+  partnerContactPhone?: string | null;
+  /**
+   * Convite de onboarding (admin): token em claro para remontar o link estável na UI.
+   * Não expor fora da API admin autenticada.
+   */
+  partnerOnboardingInviteToken?: string | null;
+  partnerOnboardingInviteExpiresAt?: string | null;
+  /** Convite de equipe (admin), mesma regra do onboarding. */
+  partnerTeamInviteToken?: string | null;
+  partnerTeamInviteExpiresAt?: string | null;
   /**
    * Campo legado; CNPJ pertence à unidade (`acafAssociate.cnpj`), não à rede.
    * Mantido opcional para dados antigos — novas importações ACAF não preenchem.
