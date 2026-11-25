@@ -951,6 +951,14 @@ export class PartnerOnboardingService {
         order: { createdAt: 'DESC' },
       });
       if (recent && Date.now() - recent.createdAt.getTime() < CNPJ_CODE_COOLDOWN_MS) {
+        if (contactCorrection) {
+          await this.cnpjChallenges.update(recent.id, {
+            overrideEmail: contactCorrection.email,
+            overridePhone: contactCorrection.mobilePhone,
+            overrideName: contactCorrection.name,
+          });
+          this.applyPartnerContactCorrection(networkId, contactCorrection);
+        }
         return this.genericCnpjCheckSent(deliveryChannel, true);
       }
 
@@ -974,6 +982,10 @@ export class PartnerOnboardingService {
           overrideName: contactCorrection?.name ?? null,
         }),
       );
+
+      if (contactCorrection) {
+        this.applyPartnerContactCorrection(networkId, contactCorrection);
+      }
 
       const ttlMinutes = Math.round(CNPJ_CODE_TTL_MS / 60000);
       let delivered = false;

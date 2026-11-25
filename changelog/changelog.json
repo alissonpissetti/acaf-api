@@ -2,6 +2,41 @@
   "version": 1,
   "entries": [
     {
+      "id": "058a68f4-c498-4397-b29a-de943543f5f5",
+      "commitSha": "931e3dbeef96b95218d2a0d530e9f2de7b783bdd",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-25T11:05:08-03:00",
+      "title": "Grava contato da rede ao corrigir dados no recovery por CNPJ",
+      "summary": "Persiste nome, e-mail e celular no cadastro da rede ao enviar o código com correção de contato e ao atualizar o challenge no cooldown.",
+      "category": "fix",
+      "areas": [
+        "api"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
+      "id": "f51b7dee-db5b-4c31-ae3f-c1b4a27bf751",
+      "commitSha": "3a3a6c405d570100c8a9d377062e1d86ed15a314",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-25T10:01:58-03:00",
+      "title": "Sincroniza changelog após feat de onboarding parceiro",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "e6483e4a-3a77-496d-b250-16170f897e29",
       "commitSha": "65ec0964bf3af9c31d7e7ed0d779d9ec4f860588",
       "repository": "api",
