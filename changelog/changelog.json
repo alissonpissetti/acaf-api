@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "e840f214-e28a-4811-8e60-23b4fa9a773b",
+      "commitSha": "519562c6d82ed04619fe0e9820ab3cdaef91f21d",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-25T11:15:26-03:00",
+      "title": "Sincroniza entrada de changelog do commit 95a441d",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "7a3d33bf-3d52-4455-9540-55fcd53547c8",
       "commitSha": "95a441dde819193d58cb7771b13791a0b0c0d848",
       "repository": "api",
