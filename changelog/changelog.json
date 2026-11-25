@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "e92f1a9a-59d8-41c6-a44b-bfc12ee3a89b",
+      "commitSha": "d210b5a80095f1fbca6bf1009550662fce4c6198",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-25T11:05:25-03:00",
+      "title": "Sincroniza changelog após fix de contato no recovery CNPJ",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "541bbebc-ea11-41d8-b555-08a2c32a6311",
       "commitSha": "ce935c60129b14ca52cae6c9ec32969b2822bb01",
       "repository": "api",
