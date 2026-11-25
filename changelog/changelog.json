@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "541bbebc-ea11-41d8-b555-08a2c32a6311",
+      "commitSha": "ce935c60129b14ca52cae6c9ec32969b2822bb01",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-25T11:05:14-03:00",
+      "title": "Grava contato da rede ao corrigir dados no recovery por CNPJ",
+      "summary": "Persiste nome, e-mail e celular no cadastro da rede ao enviar o código com correção de contato e ao atualizar o challenge no cooldown.",
+      "category": "fix",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "058a68f4-c498-4397-b29a-de943543f5f5",
       "commitSha": "931e3dbeef96b95218d2a0d530e9f2de7b783bdd",
       "repository": "api",
