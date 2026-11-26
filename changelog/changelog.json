@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "7587b6c6-b0ce-49a0-b31d-f220a8b3cc83",
+      "commitSha": "847e9be4862142610edcb9168c2809939c956a90",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-26T15:02:28-03:00",
+      "title": "Restringe catálogo do app a redes com portal ativo e refina onboarding.",
+      "summary": "O catálogo só expõe parceiros com usuário vinculado; o overview do admin passa a contar onboarding concluído. Inclui also ajustes no e-mail de convite e assets do welcome.",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "7ab159a2-764a-4373-98ef-ed90b53968f2",
       "commitSha": "49d03a154026db61a015f0a5be3b626605684542",
       "repository": "app",
