@@ -7,10 +7,11 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PermissionsService } from '../access-control/access-control.service';
 import { SmsService } from '../sms/sms.service';
-import { User, UserRole } from '../users/user.entity';
+import { User, UserRole, userHasRole } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import { AuthOtpPurpose } from './auth-otp.entity';
 import { AuthOtpService } from './auth-otp.service';
+import { AuthPortalEligibilityService } from './auth-portal-eligibility.service';
 
 const OTP_REQUEST_MESSAGE =
   'Se o número estiver cadastrado, você receberá um código no celular em instantes.';
@@ -24,7 +25,17 @@ export class AuthService {
     private readonly permissions: PermissionsService,
     private readonly otp: AuthOtpService,
     private readonly sms: SmsService,
+    private readonly portalEligibility: AuthPortalEligibilityService,
   ) {}
+
+  private async assertLoginAllowed(user: User): Promise<void> {
+    if (!user.active) {
+      throw new UnauthorizedException('E-mail ou senha inválidos.');
+    }
+    if (userHasRole(user, UserRole.ADMIN)) return;
+    if (await this.portalEligibility.canAccessAssociationPortal(user)) return;
+    throw new UnauthorizedException('E-mail ou senha inválidos.');
+  }
 
   async login(email: string, password: string) {
     const user = await this.users.findByEmail(email);
@@ -32,7 +43,7 @@ export class AuthService {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
-    this.users.assertAdminAccess(user);
+    await this.assertLoginAllowed(user);
 
     const valid = await this.users.validatePassword(user, password);
     if (!valid) {
@@ -48,7 +59,7 @@ export class AuthService {
 
     if (user) {
       try {
-        this.users.assertAdminAccess(user);
+        await this.assertLoginAllowed(user);
       } catch {
         return { ok: true, message: OTP_REQUEST_MESSAGE };
       }
@@ -86,7 +97,7 @@ export class AuthService {
       throw new UnauthorizedException('Código inválido ou expirado.');
     }
 
-    this.users.assertAdminAccess(user);
+    await this.assertLoginAllowed(user);
     return this.issueSession(user);
   }
 
@@ -111,7 +122,7 @@ export class AuthService {
       throw new UnauthorizedException('Código inválido ou expirado.');
     }
 
-    this.users.assertAdminAccess(user);
+    await this.assertLoginAllowed(user);
     await this.users.resetPasswordById(userId, newPassword);
 
     return { ok: true, message: 'Senha alterada com sucesso. Faça login com a nova senha.' };
@@ -122,7 +133,7 @@ export class AuthService {
     if (!user?.active) {
       throw new UnauthorizedException('Sessão inválida.');
     }
-    this.users.assertAdminAccess(user);
+    await this.assertLoginAllowed(user);
     const normalized = await this.users.ensureAvatarColor(user);
     const profile = await this.users.toSafeUserDetailed(normalized);
     const permissionKeys = await this.permissions.getUserPermissionKeys(userId);

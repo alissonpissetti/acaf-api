@@ -41,10 +41,10 @@ export class PermissionsService {
 
   async getUserPermissionKeys(userId: string): Promise<string[]> {
     const user = await this.users.findOne({ where: { id: userId } });
-    if (!user || !userHasRole(user, UserRole.ADMIN)) return [];
+    if (!user) return [];
 
     let groupId = user.userGroupId;
-    if (!groupId) {
+    if (!groupId && userHasRole(user, UserRole.ADMIN)) {
       const adminGroup = await this.getAdminGroup();
       groupId = adminGroup?.id ?? null;
     }
@@ -61,6 +61,52 @@ export class PermissionsService {
   async userHasPermission(userId: string, key: string): Promise<boolean> {
     const keys = await this.getUserPermissionKeys(userId);
     return keys.includes(key);
+  }
+
+  async ensureGroupHasPermissionKey(groupId: string, permissionKey: string): Promise<void> {
+    const permission = await this.permissions.findOne({ where: { key: permissionKey } });
+    if (!permission) return;
+
+    const existing = await this.groupPermissions.findOne({
+      where: { groupId, permissionId: permission.id },
+    });
+    if (existing) return;
+
+    await this.groupPermissions.save(
+      this.groupPermissions.create({ groupId, permissionId: permission.id }),
+    );
+  }
+
+  /**
+   * Garante grupo + permissão do portal ao vincular usuário à associação no admin.
+   */
+  async ensureUserAssociationPortalAccess(
+    userId: string,
+    association: { slug: string; name: string },
+    permissionKey: string,
+  ): Promise<void> {
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) return;
+
+    let groupId = user.userGroupId;
+    if (!groupId) {
+      const groupName = `Portal · ${association.name}`.trim();
+      let group = await this.groups.findOne({ where: { name: groupName } });
+      if (!group) {
+        group = await this.groups.save(
+          this.groups.create({
+            name: groupName,
+            description: `Acesso ao portal da associação ${association.slug}`,
+            active: true,
+          }),
+        );
+      }
+      groupId = group.id;
+      user.userGroupId = groupId;
+      await this.users.save(user);
+    }
+
+    await this.ensureGroupHasPermissionKey(groupId, permissionKey);
   }
 
   async userHasAnyPermission(userId: string, keys: string[]): Promise<boolean> {

@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "85cfce80-ed12-48ed-90a6-314637af65e1",
+      "commitSha": "9db9db3dc9230605c79243915dca4af6d239676d",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-26T15:02:37-03:00",
+      "title": "Registra entrada do changelog pós-commit.",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "c4c4622f-b670-4ed5-a8d2-9335bae90198",
       "commitSha": "176ce3ff722bf78a892d936e78574881057d60bf",
       "repository": "api",

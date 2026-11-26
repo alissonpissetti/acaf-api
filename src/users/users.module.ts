@@ -6,7 +6,9 @@ import { UserGroup } from '../access-control/user-group.entity';
 import { StorageModule } from '../storage/storage.module';
 import { PlatformUser } from '../platform-users/platform-user.entity';
 import { UnitPartnerAccess } from '../platform-users/unit-partner-access.entity';
+import { AccessControlModule } from '../access-control/access-control.module';
 import { Association } from '../associations/association.entity';
+import { AssociationsModule } from '../associations/associations.module';
 import { User } from './user.entity';
 import { UsersController } from './users.controller';
 import { UsersMigrationService } from './users-migration.service';
@@ -16,6 +18,8 @@ import { UsersService } from './users.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, PlatformUser, UnitPartnerAccess, UserGroup, JobPosition, Association]),
+    AccessControlModule,
+    AssociationsModule,
     StorageModule,
     forwardRef(() => AsaasModule),
   ],

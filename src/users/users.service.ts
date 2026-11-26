@@ -17,6 +17,9 @@ import { UserGroup } from '../access-control/user-group.entity';
 import { UnitPartnerAccess } from '../platform-users/unit-partner-access.entity';
 import { connectFallbackMemberEmail } from '../asaas/connect-checkout-identity';
 import { purgeHolderFromPartnerStore } from '../partner/purgeHolderFromStore';
+import { PermissionsService } from '../access-control/access-control.service';
+import { AssociationsService } from '../associations/associations.service';
+import { associationPartnersPermissionKey } from '../associations/association-permissions';
 import { Association } from '../associations/association.entity';
 import { User, UserRole, userHasRole } from './user.entity';
 import {
@@ -92,6 +95,8 @@ export class UsersService implements OnModuleInit {
     private readonly associations: Repository<Association>,
     private readonly config: ConfigService,
     private readonly storage: NextcloudService,
+    private readonly permissionsService: PermissionsService,
+    private readonly associationsService: AssociationsService,
   ) {}
 
   async onModuleInit() {
@@ -714,6 +719,7 @@ export class UsersService implements OnModuleInit {
       user.passwordHash = await bcrypt.hash(patch.password, 10);
     }
 
+    let associationLinked: Association | null = null;
     if (patch.associationId !== undefined) {
       const raw = patch.associationId;
       if (raw === null || raw === '') {
@@ -727,6 +733,7 @@ export class UsersService implements OnModuleInit {
           throw new BadRequestException('Associação inativa.');
         }
         user.associationId = association.id;
+        associationLinked = association;
       }
     }
 
@@ -755,6 +762,20 @@ export class UsersService implements OnModuleInit {
     await this.assertUniquePersonFields(user.cpf ?? undefined, user.mobilePhone ?? undefined, id);
 
     const saved = await this.users.save(user);
+
+    if (associationLinked) {
+      await this.associationsService.ensurePartnersPermission(
+        associationLinked.slug,
+        associationLinked.name,
+      );
+      const permKey = associationPartnersPermissionKey(associationLinked.slug);
+      await this.permissionsService.ensureUserAssociationPortalAccess(
+        saved.id,
+        { slug: associationLinked.slug, name: associationLinked.name },
+        permKey,
+      );
+    }
+
     return this.toSafeUserDetailed(saved);
   }
 

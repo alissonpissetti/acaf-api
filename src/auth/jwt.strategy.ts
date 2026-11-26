@@ -4,6 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { UserRole } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
+import { AuthPortalEligibilityService } from './auth-portal-eligibility.service';
 
 type JwtPayload = {
   sub: string;
@@ -17,6 +18,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     config: ConfigService,
     private readonly users: UsersService,
+    private readonly portalEligibility: AuthPortalEligibilityService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -39,14 +41,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           ? [payload.role]
           : [];
 
-    if (!roles.includes(UserRole.ADMIN)) {
-      throw new UnauthorizedException('Sessão inválida.');
+    if (roles.includes(UserRole.ADMIN)) {
+      return {
+        userId: user.id,
+        email: user.email,
+        roles,
+      };
     }
 
-    return {
-      userId: user.id,
-      email: user.email,
-      roles,
-    };
+    if (await this.portalEligibility.canAccessAssociationPortal(user)) {
+      return {
+        userId: user.id,
+        email: user.email,
+        roles,
+      };
+    }
+
+    throw new UnauthorizedException('Sessão inválida.');
   }
 }

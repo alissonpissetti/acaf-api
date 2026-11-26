@@ -4,11 +4,13 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AccessControlModule } from '../access-control/access-control.module';
+import { Association } from '../associations/association.entity';
 import { SmsModule } from '../sms/sms.module';
 import { UsersModule } from '../users/users.module';
 import { AuthOtp } from './auth-otp.entity';
 import { AuthOtpService } from './auth-otp.service';
 import { AuthController } from './auth.controller';
+import { AuthPortalEligibilityService } from './auth-portal-eligibility.service';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 
@@ -17,7 +19,7 @@ import { JwtStrategy } from './jwt.strategy';
     UsersModule,
     AccessControlModule,
     SmsModule,
-    TypeOrmModule.forFeature([AuthOtp]),
+    TypeOrmModule.forFeature([AuthOtp, Association]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -29,7 +31,7 @@ import { JwtStrategy } from './jwt.strategy';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, AuthOtpService, JwtStrategy],
-  exports: [AuthService, AuthOtpService, JwtModule],
+  providers: [AuthService, AuthOtpService, AuthPortalEligibilityService, JwtStrategy],
+  exports: [AuthService, AuthOtpService, AuthPortalEligibilityService, JwtModule],
 })
 export class AuthModule {}
