@@ -358,6 +358,7 @@ export class PartnerOnboardingService {
     expiresAt: string;
     inviteKind: PartnerInviteKind;
     suggestedPartnerContactName: string | null;
+    suggestedPartnerContactEmail: string | null;
   }> {
     const row = await this.findValidInvite(token);
     const store = loadStore();
@@ -368,12 +369,15 @@ export class PartnerOnboardingService {
     const inviteKind =
       row.kind === PARTNER_INVITE_KIND_TEAM ? PARTNER_INVITE_KIND_TEAM : PARTNER_INVITE_KIND_ONBOARDING;
 
+    const inviteRecipient = this.resolveInviteRecipientForNetwork(network, store);
+
     return {
       networkId: network.id,
       networkName: network.name,
       expiresAt: row.expiresAt.toISOString(),
       inviteKind,
       suggestedPartnerContactName: resolvePartnerContactName(network),
+      suggestedPartnerContactEmail: inviteRecipient?.email ?? null,
     };
   }
 
@@ -642,6 +646,7 @@ export class PartnerOnboardingService {
   async sendOnboardingInviteEmail(
     networkId: string,
     createdByUserId: string | null,
+    options?: { forceResend?: boolean },
   ): Promise<{
     sent: boolean;
     recipientEmail: string;
@@ -671,7 +676,7 @@ export class PartnerOnboardingService {
         sentOn: today,
       },
     });
-    if (existing) {
+    if (existing && !options?.forceResend) {
       throw new BadRequestException(
         'Já foi enviado um convite por e-mail hoje para esta academia/rede. Tente novamente amanhã.',
       );
@@ -708,16 +713,22 @@ export class PartnerOnboardingService {
       throw new BadRequestException(mailResult.reason ?? manualHint);
     }
 
-    await this.emailSends.save(
-      this.emailSends.create({
-        scopeType: resolved.scopeType,
-        scopeId: resolved.scopeId,
-        sentOn: today,
-        networkId: network.id,
-        recipientEmail: resolved.email,
-        createdByUserId,
-      }),
-    );
+    if (existing) {
+      existing.recipientEmail = resolved.email;
+      existing.createdByUserId = createdByUserId;
+      await this.emailSends.save(existing);
+    } else {
+      await this.emailSends.save(
+        this.emailSends.create({
+          scopeType: resolved.scopeType,
+          scopeId: resolved.scopeId,
+          sentOn: today,
+          networkId: network.id,
+          recipientEmail: resolved.email,
+          createdByUserId,
+        }),
+      );
+    }
 
     return {
       sent: true,

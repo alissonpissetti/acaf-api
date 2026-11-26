@@ -354,10 +354,18 @@ export class AdminService {
     return this.users.listByAssociationId(associationId);
   }
 
-  getOverview() {
+  async getOverview() {
     const now = new Date();
     updateStoreIf((draft) => syncAssociateRepasseState(draft, now));
     const store = loadStore();
+    const catalogUnits = store.units.filter((u) => store.networks.some((n) => n.id === u.networkId));
+    const partnerAccessibleNetworkIds = await this.partnerAccess.networkIdsWithPartnerAccessFromUnits(
+      catalogUnits.map((u) => ({ id: u.id, networkId: u.networkId })),
+    );
+    const partnerPortalAccess = {
+      withAccessCount: store.networks.filter((n) => partnerAccessibleNetworkIds.has(n.id)).length,
+      totalNetworks: store.networks.length,
+    };
     const domain = getDomain() as ConnectDomain;
     const ar = getAssociateRepasseOverview(store, now);
     const instantaneousTier = resolveAcafRepasseTier(ar.payingLivesCount);
@@ -368,6 +376,7 @@ export class AdminService {
     }));
     return {
       networks: store.networks,
+      partnerPortalAccess,
       unitCount: store.units.length,
       planCount: domain.connectPlans?.length ?? 0,
       connectFeePercent: domain.connectFeePercent,

@@ -128,8 +128,14 @@ export class AdminController {
   }
 
   @Post('networks/:id/partner-onboarding-invite-email')
-  sendPartnerOnboardingInviteEmail(@Req() req: AuthRequest, @Param('id') networkId: string) {
-    return this.partnerOnboarding.sendOnboardingInviteEmail(networkId, req.user.userId);
+  sendPartnerOnboardingInviteEmail(
+    @Req() req: AuthRequest,
+    @Param('id') networkId: string,
+    @Body() body?: { forceResend?: boolean },
+  ) {
+    return this.partnerOnboarding.sendOnboardingInviteEmail(networkId, req.user.userId, {
+      forceResend: body?.forceResend === true,
+    });
   }
 
   @Post('associates/import')

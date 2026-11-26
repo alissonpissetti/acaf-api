@@ -83,6 +83,7 @@ import {
   type ConnectMemberProfile,
 } from './connectMember';
 import { UsersService } from '../users/users.service';
+import { PartnerAccessService } from '../platform-users/partner-access.service';
 import { subscribeUnitGymPlan, type SubscribeUnitGymInput } from './unit-gym-subscription';
 import {
   ConnectCheckoutService,
@@ -128,6 +129,7 @@ export class PartnerService {
     @InjectRepository(AccountReceivable)
     private readonly connectReceivables: Repository<AccountReceivable>,
     private readonly partnerStorePersistence: PartnerStorePersistenceService,
+    private readonly partnerAccess: PartnerAccessService,
   ) {}
 
   private async ensureOperationalStoreReady(): Promise<void> {
@@ -996,23 +998,39 @@ export class PartnerService {
     };
   }
 
-  getCatalogCities() {
+  private async catalogAccessibleNetworkIds(store: ApiStore): Promise<Set<string>> {
+    const catalogUnits = this.unitsForCatalog(store);
+    return this.partnerAccess.networkIdsWithPartnerAccessFromUnits(
+      catalogUnits.map((u) => ({ id: u.id, networkId: u.networkId })),
+    );
+  }
+
+  private assertUnitVisibleInCatalog(unit: GymUnit, allowedNetworkIds: Set<string>): void {
+    if (!allowedNetworkIds.has(unit.networkId)) {
+      throw new NotFoundException('Unidade não encontrada.');
+    }
+  }
+
+  async getCatalogCities() {
     const store = loadStore();
+    const allowedNetworkIds = await this.catalogAccessibleNetworkIds(store);
     const cities = new Set<string>();
     for (const unit of this.unitsForCatalog(store)) {
+      if (!allowedNetworkIds.has(unit.networkId)) continue;
       const city = unit.city.split('/')[0].trim();
       if (city) cities.add(city);
     }
     return { cities: [...cities].sort((a, b) => a.localeCompare(b, 'pt-BR')) };
   }
 
-  getCatalog(filters?: { city?: string; q?: string }) {
+  async getCatalog(filters?: { city?: string; q?: string }) {
     const store = loadStore();
+    const allowedNetworkIds = await this.catalogAccessibleNetworkIds(store);
     const networkMap = new Map(store.networks.map((n) => [n.id, n]));
     const cityNeedle = filters?.city?.trim().toLowerCase();
     const q = filters?.q?.trim().toLowerCase();
 
-    let units = this.unitsForCatalog(store);
+    let units = this.unitsForCatalog(store).filter((u) => allowedNetworkIds.has(u.networkId));
     if (cityNeedle) {
       units = units.filter((u) => u.city.toLowerCase().includes(cityNeedle));
     }
@@ -1035,29 +1053,36 @@ export class PartnerService {
 
     const unitRows = units.map((unit) => this.toCatalogUnitDto(unit, networkMap.get(unit.networkId)));
     const networks = store.networks
+      .filter((network) => allowedNetworkIds.has(network.id))
       .map((network) => ({
         id: network.id,
         name: network.name,
         logoUrl: network.logoUrl ?? null,
         unitCount: units.filter((u) => u.networkId === network.id).length,
+        social: catalogNetworkSocial(network.social),
       }))
       .filter((network) => network.unitCount > 0);
 
     return { networks, units: unitRows };
   }
 
-  getCatalogUnit(unitId: string) {
+  async getCatalogUnit(unitId: string) {
     const store = loadStore();
+    const allowedNetworkIds = await this.catalogAccessibleNetworkIds(store);
     const unit = this.unitsForCatalog(store).find((u) => u.id === unitId);
     if (!unit) throw new NotFoundException('Unidade não encontrada.');
+    this.assertUnitVisibleInCatalog(unit, allowedNetworkIds);
     const network = store.networks.find((n) => n.id === unit.networkId);
     return this.toCatalogUnitDto(unit, network, true);
   }
 
-  streamUnitHeroPhoto(unitId: string, res: Response) {
+  async streamUnitHeroPhoto(unitId: string, res: Response) {
     const store = loadStore();
-    const unit = store.units.find((u) => u.id === unitId);
-    const photoRef = unit?.heroPhotoDataUrl;
+    const allowedNetworkIds = await this.catalogAccessibleNetworkIds(store);
+    const unit = this.unitsForCatalog(store).find((u) => u.id === unitId);
+    if (!unit) throw new NotFoundException('Unidade não encontrada.');
+    this.assertUnitVisibleInCatalog(unit, allowedNetworkIds);
+    const photoRef = unit.heroPhotoDataUrl;
     if (!photoRef) throw new NotFoundException('Foto não encontrada.');
     if (isRemotePhotoUrl(photoRef)) {
       res.redirect(photoRef);
@@ -1066,10 +1091,12 @@ export class PartnerService {
     this.streamDataUrl(photoRef, res);
   }
 
-  streamUnitGalleryPhoto(unitId: string, index: number, res: Response) {
+  async streamUnitGalleryPhoto(unitId: string, index: number, res: Response) {
     const store = loadStore();
-    const unit = store.units.find((u) => u.id === unitId);
+    const allowedNetworkIds = await this.catalogAccessibleNetworkIds(store);
+    const unit = this.unitsForCatalog(store).find((u) => u.id === unitId);
     if (!unit) throw new NotFoundException('Unidade não encontrada.');
+    this.assertUnitVisibleInCatalog(unit, allowedNetworkIds);
     const photoRef = unit.galleryPhotoDataUrls[index];
     if (!photoRef) throw new NotFoundException('Foto não encontrada.');
     if (isRemotePhotoUrl(photoRef)) {
@@ -1091,10 +1118,10 @@ export class PartnerService {
 
   private toCatalogUnitDto(
     unit: GymUnit,
-    network?: { id: string; name: string; logoUrl?: string | null },
+    network?: { id: string; name: string; logoUrl?: string | null; social?: NetworkSocialContacts },
     includeDescription = false,
   ) {
-    const { heroPhotoDataUrl, galleryPhotoDataUrls, ...rest } = unit;
+    const { heroPhotoDataUrl, galleryPhotoDataUrls } = unit;
     const scheduledModalities = getScheduledModalities(unit);
     const galleryPhotoUrls = galleryPhotoDataUrls
       .map((url, index) =>
@@ -1107,15 +1134,21 @@ export class PartnerService {
       networkId: unit.networkId,
       networkName: network?.name ?? unit.networkId,
       networkLogoUrl: network?.logoUrl ?? null,
+      networkSocial: catalogNetworkSocial(network?.social),
       name: unit.unitName,
       unitName: unit.unitName,
       neighborhood: unit.neighborhood,
       city: unit.city,
+      state: unit.state?.trim() ?? '',
+      zip: unit.zip?.trim() ?? '',
+      address: unit.address?.trim() ?? '',
+      number: unit.number?.trim() ?? '',
+      complement: unit.complement?.trim() ?? '',
       openHours: unit.openHours,
       weeklySchedule: unit.weeklySchedule
         ? normalizeWeeklySchedule(unit.weeklySchedule)
         : undefined,
-      description: unit.description?.trim() ?? '',
+      description: includeDescription ? unit.description?.trim() ?? '' : unit.description?.trim() ?? '',
       modalities: unit.modalities,
       dailyPassPrice: unit.dailyPassPrice,
       dailyPassActive: unit.dailyPassActive,
@@ -1130,13 +1163,6 @@ export class PartnerService {
         `/api/catalog/units/${unit.id}/hero`,
       ),
       galleryPhotoUrls,
-      ...(!includeDescription
-        ? {}
-        : {
-            address: rest.address,
-            zip: rest.zip,
-            state: rest.state,
-          }),
     };
   }
 
@@ -1148,4 +1174,19 @@ export class PartnerService {
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.send(buffer);
   }
+}
+
+function catalogNetworkSocial(social?: NetworkSocialContacts): NetworkSocialContacts | null {
+  if (!social) return null;
+  const normalized: NetworkSocialContacts = {
+    website: social.website?.trim() ?? '',
+    instagram: social.instagram?.trim() ?? '',
+    facebook: social.facebook?.trim() ?? '',
+    whatsapp: social.whatsapp?.trim() ?? '',
+    tiktok: social.tiktok?.trim() ?? '',
+    youtube: social.youtube?.trim() ?? '',
+    linkedin: social.linkedin?.trim() ?? '',
+  };
+  const hasAny = Object.values(normalized).some((value) => value.length > 0);
+  return hasAny ? normalized : null;
 }

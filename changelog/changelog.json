@@ -2,6 +2,77 @@
   "version": 1,
   "entries": [
     {
+      "id": "7ab159a2-764a-4373-98ef-ed90b53968f2",
+      "commitSha": "49d03a154026db61a015f0a5be3b626605684542",
+      "repository": "app",
+      "source": "changelog",
+      "committedAt": "2026-11-26T15:02:25-03:00",
+      "title": "Aprimora tela de rede, redes sociais e catálogo no app Movly.",
+      "summary": "Hero e unidades recolhíveis, endereço por unidade com fallback da API, fileira rolável de ícones de marca e filtro indireto via catálogo restrito no servidor.",
+      "category": "maintenance",
+      "areas": [
+        "app"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
+      "id": "37d21ffd-f79f-41d1-944f-cad77a2218f5",
+      "commitSha": "fc37295ab6578737a678addc8c0b44d735127744",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-26T15:02:25-03:00",
+      "title": "Restringe catálogo do app a redes com portal ativo e refina onboarding.",
+      "summary": "O catálogo só expõe parceiros com usuário vinculado; o overview do admin passa a contar onboarding concluído. Inclui also ajustes no e-mail de convite e assets do welcome.",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
+      "id": "f7a22a46-94bc-4586-8132-2d9417cfafa5",
+      "commitSha": "0fc46d5e84e7e8d54ea0ed994a05befbffb67184",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-26T15:02:20-03:00",
+      "title": "Restringe catálogo do app a redes com portal ativo e refina onboarding.",
+      "summary": "O catálogo só expõe parceiros com usuário vinculado; o overview do admin passa a contar onboarding concluído. Inclui also ajustes no e-mail de convite e assets do welcome.",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
+      "id": "695c6c23-4d03-44fc-beca-5f48628c7227",
+      "commitSha": "40a198fe4175e2e8d49ff5de5c71e1927a0b33e5",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-25T11:15:34-03:00",
+      "title": "Sincroniza changelog",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "e840f214-e28a-4811-8e60-23b4fa9a773b",
       "commitSha": "519562c6d82ed04619fe0e9820ab3cdaef91f21d",
       "repository": "api",

@@ -126,4 +126,28 @@ export class PartnerAccessService {
   async countLinkedUsersForUnit(unitId: string): Promise<number> {
     return this.countLinkedUsersForUnits([unitId]);
   }
+
+  /** Redes com ao menos um usuário parceiro vinculado a alguma unidade listada. */
+  async networkIdsWithPartnerAccessFromUnits(
+    units: { id: string; networkId: string }[],
+  ): Promise<Set<string>> {
+    if (!units.length) return new Set();
+
+    const unitIds = units.map((u) => u.id);
+    const unitToNetwork = new Map(units.map((u) => [u.id, u.networkId]));
+
+    const rows = await this.access
+      .createQueryBuilder('access')
+      .select('DISTINCT access.unitId', 'unitId')
+      .where('access.unitId IN (:...unitIds)', { unitIds })
+      .andWhere('access.userId IS NOT NULL')
+      .getRawMany<{ unitId: string }>();
+
+    const networkIds = new Set<string>();
+    for (const row of rows) {
+      const networkId = unitToNetwork.get(row.unitId);
+      if (networkId) networkIds.add(networkId);
+    }
+    return networkIds;
+  }
 }

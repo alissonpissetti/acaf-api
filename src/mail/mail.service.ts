@@ -16,6 +16,7 @@ import {
   buildPartnerOnboardingInviteSubject,
   buildPartnerOnboardingInviteText,
 } from './partner-onboarding-invite.template';
+import { resolvePartnerOnboardingWelcomeEmailAssets } from './partner-onboarding-welcome-email-assets';
 import {
   buildPartnerTeamInviteHtml,
   buildPartnerTeamInviteSubject,
@@ -380,16 +381,22 @@ export class MailService implements OnModuleInit {
       dateStyle: 'short',
       timeStyle: 'short',
     });
+    const logoUrl = await this.employeeInviteLogoUrl();
+    const welcomeAssets = await resolvePartnerOnboardingWelcomeEmailAssets(
+      this.storage,
+      this.config,
+      logoUrl,
+    );
     const inviteContent = {
       networkName: input.networkName,
       inviteUrl: input.inviteUrl.trim(),
       expiresAtLabel,
-      logoUrl: await this.employeeInviteLogoUrl(),
+      logoUrl,
     };
 
     const subject = buildPartnerOnboardingInviteSubject(input.networkName);
     const text = buildPartnerOnboardingInviteText(inviteContent);
-    const html = buildPartnerOnboardingInviteHtml(inviteContent);
+    const html = buildPartnerOnboardingInviteHtml(inviteContent, welcomeAssets);
 
     const provider = this.mailProvider();
     if (!provider) {
