@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "bae784f1-18a5-4a85-bb51-f8e03f13f6b4",
+      "commitSha": "7199f95d84baafb322a18829ec7d01ddd8a11369",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-27T11:54:48-03:00",
+      "title": "Atualiza changelog após commit do cronograma e repasse.",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "94ee0e65-647d-4a08-b553-8dae88191978",
       "commitSha": "51161ca85baa9cb9cec61f8333df49b27930ee0c",
       "repository": "app",
