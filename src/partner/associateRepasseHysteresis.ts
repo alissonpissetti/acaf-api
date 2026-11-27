@@ -1,7 +1,11 @@
 import type { AcafRepasseTier } from './acafRepassePolicy';
 import { ACAF_REPASSE_TIERS, resolveAcafRepasseTier } from './acafRepassePolicy';
 import type { ApiStore, AssociateRepasseDailySnapshot, AssociateRepasseEffectiveState } from './types';
-import { countAssociatePayingLives } from './associatePayingLives';
+import {
+  countAssociatePayingLives,
+  countAssociatePayingLivesThroughDate,
+  earliestPlanCheckInBrDateInMonth,
+} from './associatePayingLives';
 
 /** Fuso usado para “dia” operacional (Brasil). */
 export const ASSOCIATE_REPASSE_TIMEZONE = 'America/Sao_Paulo';
@@ -175,6 +179,37 @@ export function capAssociateRepasseSnapshots(rows: AssociateRepasseDailySnapshot
   const sorted = normalizeAssociateRepasseSnapshots(rows);
   if (sorted.length <= MAX_SNAPSHOTS) return sorted;
   return sorted.slice(sorted.length - MAX_SNAPSHOTS);
+}
+
+/** Pico de vidas pagantes já gravado em snapshots no mês civil (prefixo YYYY-MM). */
+export function maxPayingLivesInCalendarMonth(
+  snapshots: AssociateRepasseDailySnapshot[],
+  monthKey: string,
+  options?: { excludeDate?: string },
+): number {
+  let max = 0;
+  for (const row of snapshots) {
+    const date = String(row?.date ?? '');
+    if (!date.startsWith(monthKey)) continue;
+    if (options?.excludeDate && date === options.excludeDate) continue;
+    max = Math.max(max, Math.floor(Number(row.payingLivesCount) || 0));
+  }
+  return max;
+}
+
+/**
+ * Contagem oficial no mês: titulares distintos com ≥1 check-in de plano no mês civil,
+ * nunca abaixo do máximo já registrado no mesmo mês (só recomeça em mês novo).
+ */
+export function resolveMonthlyPayingLivesCount(
+  store: ApiStore,
+  liveDistinctCount: number,
+  dateStr: string,
+): number {
+  const monthKey = dateStr.slice(0, 7);
+  const rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
+  const monthFloor = maxPayingLivesInCalendarMonth(rows, monthKey, { excludeDate: dateStr });
+  return Math.max(Math.max(0, Math.floor(liveDistinctCount)), monthFloor);
 }
 
 /** Dias consecutivos (mesma faixa instantânea) terminando no índice `endIdx`. */
@@ -377,7 +412,9 @@ export type AssociateRepasseOverview = {
 };
 
 export function getAssociateRepasseOverview(store: ApiStore, now = new Date()): AssociateRepasseOverview {
-  const payingLivesCount = countAssociatePayingLives(store);
+  const dateStr = formatDateYyyyMmDdInTimeZone(now, ASSOCIATE_REPASSE_TIMEZONE);
+  const liveDistinct = countAssociatePayingLives(store);
+  const payingLivesCount = resolveMonthlyPayingLivesCount(store, liveDistinct, dateStr);
   const inst = resolveAcafRepasseTier(payingLivesCount);
   const rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
 
@@ -389,7 +426,6 @@ export function getAssociateRepasseOverview(store: ApiStore, now = new Date()): 
   }
 
   if (!effective) {
-    const dateStr = formatDateYyyyMmDdInTimeZone(now, ASSOCIATE_REPASSE_TIMEZONE);
     effective = defaultEffectiveFromInstant(payingLivesCount, dateStr, now.toISOString());
   }
 
@@ -423,22 +459,105 @@ export function getAssociateRepasseOverview(store: ApiStore, now = new Date()): 
 }
 
 /**
+ * Detecta lacunas ou contagens abaixo do acumulado de check-ins no mês civil corrente.
+ */
+export function associateRepasseSnapshotsNeedRebuild(
+  store: ApiStore,
+  monthKey: string,
+  throughYmd: string,
+): boolean {
+  if (!throughYmd.startsWith(monthKey)) return false;
+  const live = countAssociatePayingLives(store);
+  if (live <= 0) return false;
+  const firstCheckIn = earliestPlanCheckInBrDateInMonth(store, monthKey);
+  if (!firstCheckIn) return false;
+
+  const rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
+  const byDate = new Map(rows.map((r) => [r.date, r]));
+  const endDay = parseInt(throughYmd.slice(8), 10);
+  let running = 0;
+
+  for (let day = 1; day <= endDay; day++) {
+    const ymd = `${monthKey}-${String(day).padStart(2, '0')}`;
+    const distinctThrough = countAssociatePayingLivesThroughDate(store, monthKey, ymd);
+    running = Math.max(running, distinctThrough);
+    const snap = byDate.get(ymd);
+    if (ymd >= firstCheckIn) {
+      if (!snap || snap.payingLivesCount !== running) return true;
+    } else if (snap && snap.payingLivesCount !== 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Reconstrói snapshots diários do mês a partir do log de check-ins (pico acumulado por dia).
+ * Corrige dias anteriores quando o job diário não rodou ou gravou 0 antes do teste de check-in.
+ */
+export function rebuildAssociateRepasseSnapshotsForMonth(
+  store: ApiStore,
+  monthKey: string,
+  throughYmd: string,
+  nowIso = new Date().toISOString(),
+): boolean {
+  if (!throughYmd.startsWith(monthKey)) return false;
+  const endDay = parseInt(throughYmd.slice(8), 10);
+  if (!Number.isFinite(endDay) || endDay < 1) return false;
+
+  let running = 0;
+  const rebuilt: AssociateRepasseDailySnapshot[] = [];
+  for (let day = 1; day <= endDay; day++) {
+    const ymd = `${monthKey}-${String(day).padStart(2, '0')}`;
+    const distinctThrough = countAssociatePayingLivesThroughDate(store, monthKey, ymd);
+    running = Math.max(running, distinctThrough);
+    rebuilt.push(buildDailySnapshot(running, ymd));
+  }
+
+  const outsideMonth = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots).filter(
+    (s) => !s.date.startsWith(monthKey),
+  );
+  const afterThrough = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots).filter(
+    (s) => s.date.startsWith(monthKey) && s.date > throughYmd,
+  );
+  const merged = capAssociateRepasseSnapshots([...outsideMonth, ...rebuilt, ...afterThrough]);
+
+  const prevJson = JSON.stringify(store.associateRepasseSnapshots ?? []);
+  if (prevJson === JSON.stringify(merged)) return false;
+
+  store.associateRepasseSnapshots = merged;
+  const eff =
+    recomputeAssociateRepasseEffective(merged, nowIso) ??
+    defaultEffectiveFromInstant(running, throughYmd, nowIso);
+  store.associateRepasseEffective = eff;
+  return true;
+}
+
+/**
  * Sincroniza histórico do dia e estado efetivo (reprocessamento se o código ou dados divergirem).
  * @returns true se houve alteração persistível no store.
  */
 export function syncAssociateRepasseState(store: ApiStore, now = new Date()): boolean {
   const dateStr = formatDateYyyyMmDdInTimeZone(now, ASSOCIATE_REPASSE_TIMEZONE);
+  const monthKey = dateStr.slice(0, 7);
   let rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
-  const liveCount = countAssociatePayingLives(store);
+
+  let changed = false;
+  if (associateRepasseSnapshotsNeedRebuild(store, monthKey, dateStr)) {
+    changed = rebuildAssociateRepasseSnapshotsForMonth(store, monthKey, dateStr, now.toISOString());
+    rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
+  }
+  const liveDistinct = countAssociatePayingLives(store);
+  const payingLivesCount = resolveMonthlyPayingLivesCount(store, liveDistinct, dateStr);
 
   let snapshotChanged = false;
   const todayIdx = rows.findIndex((r) => r.date === dateStr);
   if (todayIdx < 0) {
     snapshotChanged = recordAssociateRepasseDailySnapshotIfNeeded(store, now);
     rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
-  } else if (rows[todayIdx].payingLivesCount !== liveCount) {
+  } else if (rows[todayIdx].payingLivesCount !== payingLivesCount) {
     rows = [...rows];
-    rows[todayIdx] = buildDailySnapshot(liveCount, dateStr);
+    rows[todayIdx] = buildDailySnapshot(payingLivesCount, dateStr);
     store.associateRepasseSnapshots = capAssociateRepasseSnapshots(rows);
     snapshotChanged = true;
   }
@@ -447,7 +566,7 @@ export function syncAssociateRepasseState(store: ApiStore, now = new Date()): bo
     recomputeAssociateRepasseEffective(
       normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots),
       now.toISOString(),
-    ) ?? defaultEffectiveFromInstant(liveCount, dateStr, now.toISOString());
+    ) ?? defaultEffectiveFromInstant(payingLivesCount, dateStr, now.toISOString());
 
   const cur = store.associateRepasseEffective;
   const effectiveChanged =
@@ -458,7 +577,7 @@ export function syncAssociateRepasseState(store: ApiStore, now = new Date()): bo
   if (effectiveChanged) {
     store.associateRepasseEffective = replayed;
   }
-  return snapshotChanged || effectiveChanged;
+  return changed || snapshotChanged || effectiveChanged;
 }
 
 /**
@@ -472,7 +591,8 @@ export function recordAssociateRepasseDailySnapshotIfNeeded(
   const rows = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots);
   if (rows.some((r) => r.date === dateStr)) return false;
 
-  const payingLivesCount = countAssociatePayingLives(store);
+  const liveDistinct = countAssociatePayingLives(store);
+  const payingLivesCount = resolveMonthlyPayingLivesCount(store, liveDistinct, dateStr);
   const snap = buildDailySnapshot(payingLivesCount, dateStr);
   const merged = capAssociateRepasseSnapshots([...rows, snap]);
   store.associateRepasseSnapshots = merged;

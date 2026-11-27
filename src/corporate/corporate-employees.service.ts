@@ -450,6 +450,33 @@ export class CorporateEmployeesService {
     return this.employees.count({ where: { companyId, status } });
   }
 
+  /** Totais globais por status (base corporativa). */
+  async countEmployeesOverview(): Promise<{
+    total: number;
+    active: number;
+    invited: number;
+    pending: number;
+    inactive: number;
+  }> {
+    const rows = await this.employees
+      .createQueryBuilder('e')
+      .select('e.status', 'status')
+      .addSelect('COUNT(*)', 'cnt')
+      .groupBy('e.status')
+      .getRawMany<{ status: CompanyEmployeeStatus; cnt: string }>();
+
+    const out = { total: 0, active: 0, invited: 0, pending: 0, inactive: 0 };
+    for (const row of rows) {
+      const n = Number(row.cnt) || 0;
+      out.total += n;
+      if (row.status === 'active') out.active = n;
+      else if (row.status === 'invited') out.invited = n;
+      else if (row.status === 'pending') out.pending = n;
+      else if (row.status === 'inactive') out.inactive = n;
+    }
+    return out;
+  }
+
   /**
    * No cadastro público da empresa, o gestor já tem usuário corporativo — cria o vínculo
    * em acaf_company_employees para aparecer na lista "Colaboradores" (mesmo fluxo que add manual).

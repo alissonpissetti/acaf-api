@@ -12,14 +12,25 @@ function isConnectPlanCheckInType(type: string | undefined): boolean {
   return t === 'connect_member' || t === 'connect_visitor';
 }
 
+/** Data civil (Brasília) do evento de check-in. */
+function checkInBrDateKey(validatedAt: string): string {
+  const raw = String(validatedAt ?? '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return brDateKeyFromIso(raw);
+}
+
 /** Data do check-in no fuso Brasil, alinhada ao mês civil de vidas pagantes. */
 function checkInValidatedInMonth(validatedAt: string, monthPrefix: string): boolean {
-  const raw = String(validatedAt ?? '').trim();
-  if (!raw) return false;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    return raw.slice(0, 7) === monthPrefix;
-  }
-  return brDateKeyFromIso(raw).startsWith(monthPrefix);
+  const d = checkInBrDateKey(validatedAt);
+  if (!d) return false;
+  return d.slice(0, 7) === monthPrefix;
+}
+
+function checkInOnOrBeforeBrDate(validatedAt: string, monthPrefix: string, throughYmd: string): boolean {
+  const d = checkInBrDateKey(validatedAt);
+  if (!d || !d.startsWith(monthPrefix)) return false;
+  return d <= throughYmd;
 }
 
 function unitAllowed(unitIds: Set<string> | undefined, unitId: string): boolean {
@@ -30,6 +41,30 @@ function unitAllowed(unitIds: Set<string> | undefined, unitId: string): boolean 
  * Titulares únicos com check-in de plano no mês (confirmado no log ou pendente na recepção).
  * Esta é a definição de vida pagante: sem check-in no mês, não há mensalidade da empresa naquele período.
  */
+function collectCheckInHolderKeysThroughDate(
+  store: ApiStore,
+  monthPrefix: string,
+  throughYmd: string,
+  keys: Set<string>,
+  unitIds?: Set<string>,
+): void {
+  for (const entry of store.checkInLog ?? []) {
+    if (!isConnectPlanCheckInType(entry.type)) continue;
+    if (!unitAllowed(unitIds, entry.unitId)) continue;
+    if (!checkInOnOrBeforeBrDate(entry.validatedAt, monthPrefix, throughYmd)) continue;
+    const key = normalizeHolderKey(entry.holderName);
+    if (key) keys.add(key);
+  }
+  for (const pending of store.pendingCheckIns ?? []) {
+    if (pending.status !== 'pending') continue;
+    if (!isConnectPlanCheckInType(pending.type)) continue;
+    if (!unitAllowed(unitIds, pending.unitId)) continue;
+    if (!checkInOnOrBeforeBrDate(pending.requestedAt, monthPrefix, throughYmd)) continue;
+    const key = normalizeHolderKey(pending.holderName);
+    if (key) keys.add(key);
+  }
+}
+
 function collectCheckInHolderKeysThisMonth(
   store: ApiStore,
   monthPrefix: string,
@@ -172,10 +207,43 @@ export function diagnoseAssociatePayingLives(store: ApiStore): PayingLivesDiagno
 }
 
 /**
- * Vidas pagantes para faixas de repasse e evolução mensal: titulares únicos com
- * pelo menos um check-in de plano Movly no mês civil (America/Sao_Paulo) — confirmado
- * ou ainda pendente na recepção. Assinatura sem check-in no mês não conta.
+ * Titulares únicos com ≥1 check-in de plano no mês civil (Brasília), confirmado ou pendente.
+ * O KPI oficial (snapshots / dashboard) aplica piso mensal: no mesmo mês civil o número
+ * não retrocede; só recomeça quando o mês muda.
  */
 export function countAssociatePayingLives(store: ApiStore): number {
   return payingLifeHolderKeys(store).size;
+}
+
+/**
+ * Titulares distintos com check-in de plano no mês civil até `throughYmd` (inclusive), horário de Brasília.
+ */
+export function countAssociatePayingLivesThroughDate(
+  store: ApiStore,
+  monthPrefix: string,
+  throughYmd: string,
+  unitIds?: Set<string>,
+): number {
+  const keys = new Set<string>();
+  collectCheckInHolderKeysThroughDate(store, monthPrefix, throughYmd, keys, unitIds);
+  return keys.size;
+}
+
+/** Primeira data (Brasília) com check-in de plano no mês, ou null. */
+export function earliestPlanCheckInBrDateInMonth(store: ApiStore, monthPrefix: string): string | null {
+  let min: string | null = null;
+  const consider = (validatedAt: string, type: string | undefined) => {
+    if (!isConnectPlanCheckInType(type)) return;
+    const d = checkInBrDateKey(validatedAt);
+    if (!d.startsWith(monthPrefix)) return;
+    if (!min || d < min) min = d;
+  };
+  for (const entry of store.checkInLog ?? []) {
+    consider(entry.validatedAt, entry.type);
+  }
+  for (const pending of store.pendingCheckIns ?? []) {
+    if (pending.status !== 'pending') continue;
+    consider(pending.requestedAt, pending.type);
+  }
+  return min;
 }

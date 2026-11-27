@@ -88,6 +88,7 @@ import { ProjectTask } from './project-tasks/project-task.entity';
 import { ProjectTaskAttachment } from './project-tasks/project-task-attachment.entity';
 import { ProjectTaskComment } from './project-tasks/project-task-comment.entity';
 import { ProjectTaskEvent } from './project-tasks/project-task-event.entity';
+import { ProjectTaskWatcher } from './project-tasks/project-task-watcher.entity';
 import { SocialPostsModule } from './social-posts/social-posts.module';
 import { SocialPost } from './social-posts/social-post.entity';
 import { SocialPostArte } from './social-posts/social-post-arte.entity';
@@ -179,6 +180,7 @@ import { SocialChannel } from './social-posts/social-channel.entity';
             ProjectTaskAttachment,
             ProjectTaskComment,
             ProjectTaskEvent,
+            ProjectTaskWatcher,
             SocialPost,
             SocialPostArte,
             SocialPostBuffer,

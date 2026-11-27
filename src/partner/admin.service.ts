@@ -369,11 +369,18 @@ export class AdminService {
     const domain = getDomain() as ConnectDomain;
     const ar = getAssociateRepasseOverview(store, now);
     const instantaneousTier = resolveAcafRepasseTier(ar.payingLivesCount);
-    const payingDiagnostics = diagnoseAssociatePayingLives(store);
+    const payingDiagnostics = {
+      ...diagnoseAssociatePayingLives(store),
+      count: ar.payingLivesCount,
+    };
     const payingLivesSnapshots = normalizeAssociateRepasseSnapshots(store.associateRepasseSnapshots).map((s) => ({
       date: s.date,
       payingLivesCount: s.payingLivesCount,
     }));
+    const [corporateCompanies, corporateEmployees] = await Promise.all([
+      this.corporateAccess.countCompaniesOverview(),
+      this.corporateEmployees.countEmployeesOverview(),
+    ]);
     return {
       networks: store.networks,
       partnerPortalAccess,
@@ -441,6 +448,10 @@ export class AdminService {
         isInstantaneousTier: t.id === instantaneousTier.id,
       })),
       acafOverviewComputedAt: now.toISOString(),
+      corporateBase: {
+        companies: corporateCompanies,
+        employees: corporateEmployees,
+      },
     };
   }
 

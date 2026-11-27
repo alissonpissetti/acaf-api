@@ -9,6 +9,8 @@ export class ProjectTasksMigrationService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureTables();
+    await this.ensureTaskPatchesTable();
+    await this.applyRequesterAlissonPatch();
   }
 
   private async ensureTables() {
@@ -56,6 +58,48 @@ export class ProjectTasksMigrationService implements OnModuleInit {
     await this.ensureWatchersTable();
 
     this.logger.log('Tabelas de cronograma (project tasks) verificadas.');
+  }
+
+  private async ensureTaskPatchesTable() {
+    await this.dataSource.query(`
+      CREATE TABLE IF NOT EXISTS acaf_project_task_patches (
+        patch_key VARCHAR(64) NOT NULL PRIMARY KEY,
+        applied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  }
+
+  /** Patch único: todas as tarefas existentes com solicitante Alisson. */
+  private async applyRequesterAlissonPatch() {
+    const patchKey = 'requester_alisson_all_v1';
+    const applied = await this.dataSource.query(
+      `SELECT 1 FROM acaf_project_task_patches WHERE patch_key = ? LIMIT 1`,
+      [patchKey],
+    );
+    if (applied.length) return;
+
+    const users = await this.dataSource.query(
+      `SELECT id FROM acaf_users WHERE active = 1 AND name LIKE 'Alisson%' ORDER BY name LIMIT 1`,
+    );
+    if (!users[0]?.id) {
+      this.logger.warn(
+        'Cronograma: patch solicitante Alisson não aplicado — usuário não encontrado.',
+      );
+      return;
+    }
+
+    const uid = users[0].id;
+    const result = await this.dataSource.query(
+      `UPDATE acaf_project_tasks SET requester_user_id = ?`,
+      [uid],
+    );
+    const affected = result?.affectedRows ?? result?.changedRows ?? 0;
+    await this.dataSource.query(`INSERT INTO acaf_project_task_patches (patch_key) VALUES (?)`, [
+      patchKey,
+    ]);
+    this.logger.log(
+      `Cronograma: solicitante padrão Alisson aplicado em ${affected} tarefa(s) (patch ${patchKey}).`,
+    );
   }
 
   private async ensureCommentMentionsColumn() {

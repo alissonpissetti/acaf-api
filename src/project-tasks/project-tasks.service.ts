@@ -1,9 +1,18 @@
-import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { NextcloudService } from '../storage/nextcloud.service';
 import { UsersService } from '../users/users.service';
-import { PROJECT_TASK_PHASES } from './project-task.constants';
+import {
+  DEFAULT_CRONOGRAMA_REQUESTER_NAME_PREFIX,
+  PROJECT_TASK_PHASES,
+} from './project-task.constants';
 import { ProjectTask } from './project-task.entity';
 import { ProjectTaskEvent } from './project-task-event.entity';
 import type {
@@ -14,6 +23,8 @@ import type {
   ProjectTaskCommentDto,
   ProjectTaskDto,
   ProjectTaskEventDto,
+  ProjectTaskTouchDto,
+  RemoveProjectTaskCommentResult,
 } from './project-tasks.dto';
 import { ProjectTaskAttachment } from './project-task-attachment.entity';
 import { ProjectTaskComment } from './project-task-comment.entity';
@@ -121,6 +132,31 @@ export class ProjectTasksService implements OnModuleInit {
 
   async onModuleInit() {
     await this.seed.seedIfEmpty();
+    await this.backfillDefaultRequestersIfNeeded();
+  }
+
+  private async defaultRequesterUserId(): Promise<string | null> {
+    const fromEnv = process.env.CRONOGRAMA_DEFAULT_REQUESTER_EMAIL?.trim();
+    if (fromEnv) {
+      const user = await this.users.findByEmail(fromEnv);
+      if (user?.active) return user.id;
+    }
+    const all = await this.users.findAll();
+    const prefix = DEFAULT_CRONOGRAMA_REQUESTER_NAME_PREFIX.toLowerCase();
+    const match = all.find((u) => u.active !== false && u.name?.trim().toLowerCase().startsWith(prefix));
+    return match?.id ?? null;
+  }
+
+  /** Tarefas sem solicitante recebem o padrão (Alisson). */
+  private async backfillDefaultRequestersIfNeeded(): Promise<void> {
+    const requesterId = await this.defaultRequesterUserId();
+    if (!requesterId) return;
+    await this.tasks
+      .createQueryBuilder()
+      .update(ProjectTask)
+      .set({ requesterUserId: requesterId })
+      .where('requesterUserId IS NULL')
+      .execute();
   }
 
   async list(): Promise<ProjectTaskDto[]> {
@@ -150,6 +186,7 @@ export class ProjectTasksService implements OnModuleInit {
     const priority =
       body.priority && isValidPriority(body.priority) ? body.priority : 'medium';
     const tags = sanitizeTags(body.tags);
+    const defaultRequester = await this.defaultRequesterUserId();
     const entity = this.tasks.create({
       code,
       phase: body.phase,
@@ -161,7 +198,7 @@ export class ProjectTasksService implements OnModuleInit {
       tags,
       estimatedHours: parseEstimatedHours(body.estimatedHours),
       timeTrackedSeconds: Math.max(0, Math.floor(body.timeTrackedSeconds ?? 0)),
-      requesterUserId: body.requesterUserId?.trim() || userId,
+      requesterUserId: body.requesterUserId?.trim() || defaultRequester || userId,
       createdBy: userId,
       progress,
       owner: body.owner?.trim() || null,
@@ -386,7 +423,41 @@ export class ProjectTasksService implements OnModuleInit {
       }),
     );
     void this.taskNotifications.onComment(task, saved, userId);
-    return (await this.commentDtos([saved]))[0]!;
+    const dto = (await this.commentDtos([saved]))[0]!;
+    const touch = await this.touchTaskUpdated(task, userId);
+    return { ...dto, ...touch };
+  }
+
+  async removeComment(
+    taskId: string,
+    commentId: string,
+    userId: string,
+  ): Promise<RemoveProjectTaskCommentResult> {
+    const task = await this.assertTask(taskId);
+    const comment = await this.comments.findOne({ where: { id: commentId, taskId } });
+    if (!comment) throw new NotFoundException('Comentário não encontrado.');
+    if (!comment.userId || comment.userId !== userId) {
+      throw new ForbiddenException('Você só pode remover os seus próprios comentários.');
+    }
+
+    const rows = await this.comments.find({
+      where: { taskId },
+      order: { createdAt: 'ASC' },
+      take: 200,
+    });
+    const mine = rows.filter((c) => c.userId === userId);
+    const myLatest = mine[mine.length - 1];
+    if (!myLatest || myLatest.id !== commentId) {
+      throw new ForbiddenException('Só é possível remover o seu último comentário nesta tarefa.');
+    }
+    const lastOverall = rows[rows.length - 1];
+    if (!lastOverall || lastOverall.id !== commentId) {
+      throw new ForbiddenException('Não é possível remover: já há resposta depois deste comentário.');
+    }
+
+    await this.comments.remove(comment);
+    const touch = await this.touchTaskUpdated(task, userId);
+    return { ok: true, ...touch };
   }
 
   async listEvents(taskId: string): Promise<ProjectTaskEventDto[]> {
@@ -477,6 +548,17 @@ export class ProjectTasksService implements OnModuleInit {
       publicUrl: row.publicUrl,
       createdAt: row.createdAt.toISOString(),
     }));
+  }
+
+  private async touchTaskUpdated(task: ProjectTask, userId: string): Promise<ProjectTaskTouchDto> {
+    task.updatedBy = userId;
+    const saved = await this.tasks.save(task);
+    const dto = (await this.toDtos([saved]))[0]!;
+    return {
+      taskUpdatedAt: dto.updatedAt,
+      taskUpdatedBy: dto.updatedBy,
+      taskUpdatedByName: dto.updatedByName,
+    };
   }
 
   private async commentDtos(rows: ProjectTaskComment[]): Promise<ProjectTaskCommentDto[]> {

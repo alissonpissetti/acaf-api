@@ -35,6 +35,9 @@ const MAIL_LOGO_FILE = 'movly-logo-lime-on-purple.png';
 
 const HOSTINGER_MAIL_API_BASE = 'https://api.mail.hostinger.com';
 
+/** Cópia oculta nos convites de onboarding/equipe parceiro (debug operacional). */
+const DEFAULT_PARTNER_INVITE_MAIL_BCC = 'tecnologia@sejamovly.com';
+
 export type SendMailResult = {
   sent: boolean;
   enrollmentCode?: string;
@@ -97,6 +100,20 @@ export class MailService implements OnModuleInit {
     return name || undefined;
   }
 
+  /**
+   * BCC em convites/fluxos parceiros (onboarding, equipe, recuperação).
+   * `PARTNER_INVITE_MAIL_BCC` vazio desativa; se não definido, usa tecnologia@sejamovly.com.
+   */
+  private partnerInviteMailBcc(): string[] {
+    const raw = this.config.get<string>('PARTNER_INVITE_MAIL_BCC');
+    if (raw !== undefined && raw.trim() === '') return [];
+    const list = (raw?.trim() || DEFAULT_PARTNER_INVITE_MAIL_BCC)
+      .split(/[;,]/)
+      .map((e) => e.trim().toLowerCase())
+      .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+    return [...new Set(list)];
+  }
+
   private async resolveHostingerMailboxId(token: string): Promise<string> {
     if (this.hostingerMailboxId) return this.hostingerMailboxId;
 
@@ -137,6 +154,7 @@ export class MailService implements OnModuleInit {
     subject: string;
     text: string;
     html: string;
+    bcc?: string[];
   }): Promise<void> {
     const token = this.config.get<string>('HOSTINGER_MAIL_API_TOKEN')?.trim();
     if (!token) {
@@ -152,6 +170,7 @@ export class MailService implements OnModuleInit {
     };
     const displayName = this.hostingerDisplayName();
     if (displayName) body.displayName = displayName;
+    if (input.bcc?.length) body.bcc = input.bcc;
 
     const response = await fetch(
       `${HOSTINGER_MAIL_API_BASE}/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/send`,
@@ -410,17 +429,21 @@ export class MailService implements OnModuleInit {
 
     const from = this.defaultFromAddress();
 
+    const bcc = this.partnerInviteMailBcc();
+
     try {
       if (provider === 'hostinger') {
-        await this.sendViaHostinger({ to: input.to, subject, text, html });
+        await this.sendViaHostinger({ to: input.to, subject, text, html, bcc });
       } else {
         const transporter = this.getTransporter();
         if (!transporter) {
           return { sent: false, reason: 'SMTP_HOST não configurado na API.' };
         }
-        await transporter.sendMail({ from, to: input.to, subject, text, html });
+        await transporter.sendMail({ from, to: input.to, bcc: bcc.length ? bcc : undefined, subject, text, html });
       }
-      this.logger.log(`Convite de onboarding parceiro enviado para ${input.to}`);
+      this.logger.log(
+        `Convite de onboarding parceiro enviado para ${input.to}${bcc.length ? ` (BCC: ${bcc.join(', ')})` : ''}`,
+      );
       return { sent: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -463,17 +486,21 @@ export class MailService implements OnModuleInit {
 
     const from = this.defaultFromAddress();
 
+    const bcc = this.partnerInviteMailBcc();
+
     try {
       if (provider === 'hostinger') {
-        await this.sendViaHostinger({ to: input.to, subject, text, html });
+        await this.sendViaHostinger({ to: input.to, subject, text, html, bcc });
       } else {
         const transporter = this.getTransporter();
         if (!transporter) {
           return { sent: false, reason: 'SMTP_HOST não configurado na API.' };
         }
-        await transporter.sendMail({ from, to: input.to, subject, text, html });
+        await transporter.sendMail({ from, to: input.to, bcc: bcc.length ? bcc : undefined, subject, text, html });
       }
-      this.logger.log(`Convite de equipe parceiro enviado para ${input.to}`);
+      this.logger.log(
+        `Convite de equipe parceiro enviado para ${input.to}${bcc.length ? ` (BCC: ${bcc.join(', ')})` : ''}`,
+      );
       return { sent: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -501,6 +528,7 @@ export class MailService implements OnModuleInit {
       html: buildPartnerOnboardingRecoveryCodeHtml(content),
       logLabel: 'código de verificação onboarding',
       missingConfigHint: `Código: ${input.code}`,
+      bcc: this.partnerInviteMailBcc(),
     });
   }
 
@@ -520,6 +548,7 @@ export class MailService implements OnModuleInit {
       text: buildPartnerOnboardingAlreadyConfiguredText(content),
       html: buildPartnerOnboardingAlreadyConfiguredHtml(content),
       logLabel: 'aviso de acesso já configurado',
+      bcc: this.partnerInviteMailBcc(),
     });
   }
 
@@ -530,6 +559,7 @@ export class MailService implements OnModuleInit {
     html: string;
     logLabel: string;
     missingConfigHint?: string;
+    bcc?: string[];
   }): Promise<SendPartnerOnboardingInviteResult> {
     const provider = this.mailProvider();
     if (!provider) {
@@ -545,6 +575,7 @@ export class MailService implements OnModuleInit {
     }
 
     const from = this.defaultFromAddress();
+    const bcc = input.bcc ?? [];
 
     try {
       if (provider === 'hostinger') {
@@ -553,6 +584,7 @@ export class MailService implements OnModuleInit {
           subject: input.subject,
           text: input.text,
           html: input.html,
+          bcc,
         });
       } else {
         const transporter = this.getTransporter();
@@ -562,12 +594,15 @@ export class MailService implements OnModuleInit {
         await transporter.sendMail({
           from,
           to: input.to,
+          bcc: bcc.length ? bcc : undefined,
           subject: input.subject,
           text: input.text,
           html: input.html,
         });
       }
-      this.logger.log(`${input.logLabel} enviado para ${input.to}`);
+      this.logger.log(
+        `${input.logLabel} enviado para ${input.to}${bcc.length ? ` (BCC: ${bcc.join(', ')})` : ''}`,
+      );
       return { sent: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -35,3 +35,6 @@ export const LEGACY_STATUS_TO_API: Record<string, ProjectTaskStatus> = {
 export const DEFAULT_PILOT_DATE = '2027-01-18';
 
 export const PILOT_MILESTONE_CODE = 'm-piloto';
+
+/** Primeiro nome do solicitante padrão do cronograma (match em `acaf_users.name`). */
+export const DEFAULT_CRONOGRAMA_REQUESTER_NAME_PREFIX = 'Alisson';

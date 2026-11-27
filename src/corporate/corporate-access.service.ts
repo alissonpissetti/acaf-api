@@ -121,6 +121,31 @@ export class CorporateAccessService {
     return this.companies.find({ order: { createdAt: 'DESC' } });
   }
 
+  /** Totais por status para dashboard / relatórios. */
+  async countCompaniesOverview(): Promise<{
+    total: number;
+    active: number;
+    pending: number;
+    suspended: number;
+  }> {
+    const rows = await this.companies
+      .createQueryBuilder('c')
+      .select('c.status', 'status')
+      .addSelect('COUNT(*)', 'cnt')
+      .groupBy('c.status')
+      .getRawMany<{ status: CompanyStatus; cnt: string }>();
+
+    const out = { total: 0, active: 0, pending: 0, suspended: 0 };
+    for (const row of rows) {
+      const n = Number(row.cnt) || 0;
+      out.total += n;
+      if (row.status === 'active') out.active = n;
+      else if (row.status === 'pending') out.pending = n;
+      else if (row.status === 'suspended') out.suspended = n;
+    }
+    return out;
+  }
+
   async updateCompanyStatus(
     id: string,
     status: CompanyStatus,

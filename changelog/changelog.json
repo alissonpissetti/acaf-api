@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "9c14ed60-23c7-4079-a6f4-b5404fb3da91",
+      "commitSha": "d96bae8622367f851571218af8e97b37d77a72bd",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-26T16:09:27-03:00",
+      "title": "Atualiza changelog após commit de acesso ao portal da associação.",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "8f50423f-d952-4e35-bf6e-de9adf45d0bc",
       "commitSha": "b29dfae55ec7729ddd5f5e440e63712dbfba32e5",
       "repository": "api",

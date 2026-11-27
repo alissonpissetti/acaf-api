@@ -74,6 +74,16 @@ export class ProjectTasksAdminController {
     return this.projectTasks.addComment(id, req.user.userId, body);
   }
 
+  @Delete(':id/comments/:commentId')
+  @RequirePermissions('operacao.cronograma.manage')
+  deleteComment(
+    @Req() req: AuthRequest,
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+  ) {
+    return this.projectTasks.removeComment(id, commentId, req.user.userId);
+  }
+
   @Get(':id/attachments')
   @RequirePermissions('operacao.cronograma')
   attachments(@Param('id') id: string) {

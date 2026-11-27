@@ -39,6 +39,13 @@ export type ProjectTaskEventDto = {
   createdAt: string;
 };
 
+/** Metadados da tarefa após interação (comentário etc.). */
+export type ProjectTaskTouchDto = {
+  taskUpdatedAt: string;
+  taskUpdatedBy: string | null;
+  taskUpdatedByName: string | null;
+};
+
 export type ProjectTaskCommentDto = {
   id: string;
   taskId: string;
@@ -47,7 +54,9 @@ export type ProjectTaskCommentDto = {
   body: string;
   mentionedUserIds: string[];
   createdAt: string;
-};
+} & Partial<ProjectTaskTouchDto>;
+
+export type RemoveProjectTaskCommentResult = { ok: true } & Partial<ProjectTaskTouchDto>;
 
 export type CreateProjectTaskBody = {
   code?: string | null;

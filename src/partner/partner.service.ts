@@ -510,7 +510,7 @@ export class PartnerService {
 
     let message = '';
     let failed = '';
-    let status: 'pending_partner' | undefined;
+    let status: 'pending_partner' | 'confirmed' | undefined;
     let pendingId: string | undefined;
 
     const store = updateStore((s) => {
@@ -532,7 +532,17 @@ export class PartnerService {
       message = result.message;
       status = result.status;
       pendingId = result.pendingId;
-      if (result.status === 'pending_partner') {
+      if (result.status === 'pending_partner' && pendingId) {
+        const unit = s.units.find((u) => u.id === unitId);
+        if (unit?.autoApproveCheckIn !== false) {
+          const out = approvePendingCheckIn(s, pendingId, unitId);
+          if (!out.ok) {
+            failed = out.message;
+            return;
+          }
+          message = out.message;
+          status = 'confirmed';
+        }
         syncAssociateRepasseState(s, new Date());
       }
     });

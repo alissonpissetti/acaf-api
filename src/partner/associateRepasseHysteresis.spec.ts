@@ -6,7 +6,9 @@ import {
   buildDailySnapshot,
   formatDateYyyyMmDdInTimeZone,
   netChurnPercentForMonthBeforeTransitionDate,
+  rebuildAssociateRepasseSnapshotsForMonth,
   recomputeAssociateRepasseEffective,
+  resolveMonthlyPayingLivesCount,
   syncAssociateRepasseState,
 } from './associateRepasseHysteresis';
 import { brDateKeyToday, brLocalToUtcIso } from './gymLocalTime';
@@ -93,6 +95,20 @@ describe('associateRepasseHysteresis', () => {
     expect(eff?.repassePercent).toBe(21.05);
   });
 
+  it('mantém pico do mês civil: não reduz vidas pagantes no mesmo mês', () => {
+    const store = createEmptyStore() as ApiStore;
+    store.associateRepasseSnapshots = [buildDailySnapshot(10, '2026-03-14')];
+    expect(resolveMonthlyPayingLivesCount(store, 0, '2026-03-15')).toBe(10);
+    expect(resolveMonthlyPayingLivesCount(store, 12, '2026-03-15')).toBe(12);
+  });
+
+  it('recomeça contagem ao mudar o mês civil', () => {
+    const store = createEmptyStore() as ApiStore;
+    store.associateRepasseSnapshots = [buildDailySnapshot(40, '2026-02-28')];
+    expect(resolveMonthlyPayingLivesCount(store, 0, '2026-03-01')).toBe(0);
+    expect(resolveMonthlyPayingLivesCount(store, 3, '2026-03-01')).toBe(3);
+  });
+
   it('atualiza o snapshot do dia quando vidas pagantes mudam no mesmo dia', () => {
     const now = new Date(brLocalToUtcIso(brDateKeyToday(), 16, 0));
     const dateStr = formatDateYyyyMmDdInTimeZone(now, ASSOCIATE_REPASSE_TIMEZONE);
@@ -127,5 +143,62 @@ describe('associateRepasseHysteresis', () => {
     const changed = syncAssociateRepasseState(store, now);
     expect(changed).toBe(true);
     expect(store.associateRepasseSnapshots?.find((s) => s.date === dateStr)?.payingLivesCount).toBe(1);
+  });
+
+  it('reconstrói snapshots anteriores no mês após check-in de teste (dias sem job diário)', () => {
+    const today = brDateKeyToday();
+    const monthKey = today.slice(0, 7);
+    const checkInDay = new Date();
+    checkInDay.setDate(checkInDay.getDate() - 4);
+    const checkInYmd = formatDateYyyyMmDdInTimeZone(checkInDay, ASSOCIATE_REPASSE_TIMEZONE);
+    expect(checkInYmd.startsWith(monthKey)).toBe(true);
+
+    const now = new Date(brLocalToUtcIso(today, 16, 0));
+    const dateStr = formatDateYyyyMmDdInTimeZone(now, ASSOCIATE_REPASSE_TIMEZONE);
+    const store = {
+      ...createEmptyStore(),
+      associateRepasseSnapshots: [
+        buildDailySnapshot(0, `${monthKey}-01`),
+        buildDailySnapshot(0, checkInYmd),
+        buildDailySnapshot(1, dateStr),
+      ],
+      checkInLog: [],
+      connectMembers: [],
+    } as ApiStore;
+    store.checkInLog.push({
+      id: 'ci-backfill',
+      unitId: 'u1',
+      code: 'CHK-BF',
+      type: 'connect_member',
+      holderName: 'Titular Teste',
+      validatedAt: brLocalToUtcIso(checkInYmd, 11, 0),
+    });
+    store.units = [
+      {
+        id: 'u1',
+        unitName: 'Centro',
+        modalities: [],
+        dailyPassPrice: 0,
+        dailyPassActive: false,
+        dailyPassNotes: '',
+        dailyPassModalities: [],
+        planSpecs: [],
+      } as ApiStore['units'][number],
+    ];
+
+    const rebuilt = rebuildAssociateRepasseSnapshotsForMonth(store, monthKey, dateStr);
+    expect(rebuilt).toBe(true);
+
+    const snapOnCheckIn = store.associateRepasseSnapshots?.find((s) => s.date === checkInYmd);
+    expect(snapOnCheckIn?.payingLivesCount).toBe(1);
+
+    for (const row of store.associateRepasseSnapshots ?? []) {
+      if (row.date >= checkInYmd && row.date <= dateStr) {
+        expect(row.payingLivesCount).toBeGreaterThanOrEqual(1);
+      }
+    }
+
+    syncAssociateRepasseState(store, now);
+    expect(store.associateRepasseSnapshots?.find((s) => s.date === checkInYmd)?.payingLivesCount).toBe(1);
   });
 });
