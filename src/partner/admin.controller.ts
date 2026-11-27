@@ -379,6 +379,20 @@ export class AdminController {
     return this.admin.updateCompanyStatus(id, body.status, req.user.userId);
   }
 
+  @Post('companies/:id/manager-onboarding-invite')
+  createCompanyManagerOnboardingInvite(@Req() req: AuthRequest, @Param('id') id: string) {
+    return this.admin.createCompanyManagerOnboardingInvite(id, req.user.userId);
+  }
+
+  @Post('companies/:id/manager-onboarding-invite-email')
+  sendCompanyManagerOnboardingInviteEmail(
+    @Req() req: AuthRequest,
+    @Param('id') id: string,
+    @Body() body?: { forceResend?: boolean; to?: string },
+  ) {
+    return this.admin.sendCompanyManagerOnboardingInviteEmail(id, req.user.userId, body);
+  }
+
   @Post('companies/:id/access')
   addCompanyManager(
     @Param('id') id: string,
@@ -421,6 +435,11 @@ export class AdminController {
     @Param('employeeId') employeeId: string,
   ) {
     return this.admin.getCompanyEmployeeProfile(companyId, employeeId);
+  }
+
+  @Get('companies/:id/usage-overview')
+  getCompanyUsageOverview(@Param('id') id: string) {
+    return this.admin.getCompanyUsageOverview(id);
   }
 
   /** Extrato mensal corporativo — apenas meses já encerrados (histórico de fatura + uso). */

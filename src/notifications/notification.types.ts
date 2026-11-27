@@ -112,6 +112,22 @@ export const NOTIFICATION_TRIGGER_CATALOG: NotificationTriggerDefinition[] = [
     channels: ['in_app'],
     enabled: true,
   },
+  {
+    key: 'operacao.partner.onboarding.completed',
+    label: 'Onboarding de academia',
+    description: 'Academia parceira concluiu o cadastro inicial no portal.',
+    category: 'Operação',
+    channels: ['in_app'],
+    enabled: true,
+  },
+  {
+    key: 'corporativo.company.onboarding.completed',
+    label: 'Onboarding de empresa',
+    description: 'Empresa concluiu o cadastro do gestor no portal corporativo.',
+    category: 'Corporativo',
+    channels: ['in_app'],
+    enabled: true,
+  },
 ];
 
 export type NotifyUsersInput = {

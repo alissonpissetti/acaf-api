@@ -9,6 +9,8 @@ import { PartnerAuthModule } from './partner-auth/partner-auth.module';
 import { PartnerOnboardingCnpjChallenge } from './partner-auth/partner-onboarding-cnpj-challenge.entity';
 import { PartnerOnboardingEmailSend } from './partner-auth/partner-onboarding-email-send.entity';
 import { PartnerOnboardingInvite } from './partner-auth/partner-onboarding-invite.entity';
+import { CorporateManagerOnboardingCnpjChallenge } from './corporate-auth/corporate-manager-onboarding-cnpj-challenge.entity';
+import { CorporateManagerOnboardingInvite } from './corporate-auth/corporate-manager-onboarding-invite.entity';
 import { PartnerModule } from './partner/partner.module';
 import { PlatformUser } from './platform-users/platform-user.entity';
 import { PlatformUsersModule } from './platform-users/platform-users.module';
@@ -163,6 +165,8 @@ import { SocialChannel } from './social-posts/social-channel.entity';
             PartnerOnboardingInvite,
             PartnerOnboardingEmailSend,
             PartnerOnboardingCnpjChallenge,
+            CorporateManagerOnboardingInvite,
+            CorporateManagerOnboardingCnpjChallenge,
             EvolutionInstance,
             EvolutionMessage,
             EvolutionContactProfile,

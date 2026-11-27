@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "b30f874b-180b-419f-9bc7-8cb9bcfcaccc",
+      "commitSha": "1afb50d9db5a63884b79745a7699e6287ab8958c",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-27T11:55:00-03:00",
+      "title": "Sincroniza changelog com commit de manutenção.",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "bae784f1-18a5-4a85-bb51-f8e03f13f6b4",
       "commitSha": "7199f95d84baafb322a18829ec7d01ddd8a11369",
       "repository": "api",

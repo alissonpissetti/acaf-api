@@ -970,11 +970,23 @@ export class CommercialLeadsService {
 
     await this.leads.save(lead);
 
+    let managerOnboardingInviteUrl: string | null = null;
+    try {
+      const invite = await this.admin.createCompanyManagerOnboardingInvite(
+        company.id,
+        ownerUserId,
+      );
+      managerOnboardingInviteUrl = invite.inviteUrl;
+    } catch {
+      managerOnboardingInviteUrl = null;
+    }
+
     return {
       kind: 'corporate' as const,
       companyId: company.id,
       companyName: company.tradeName,
       route: `/m/corporativo/empresas?id=${encodeURIComponent(company.id)}`,
+      managerOnboardingInviteUrl,
     };
   }
 

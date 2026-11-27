@@ -625,4 +625,94 @@ export class MailService implements OnModuleInit {
       logLabel: 'Lembrete publicação manual (redes)',
     });
   }
+
+  async sendCorporateManagerOnboardingRecoveryCode(input: {
+    to: string;
+    companyName: string;
+    code: string;
+    ttlMinutes: number;
+  }): Promise<SendPartnerOnboardingInviteResult> {
+    const content = {
+      networkName: input.companyName,
+      code: input.code,
+      ttlMinutes: input.ttlMinutes,
+      logoUrl: await this.employeeInviteLogoUrl(),
+    };
+    return this.dispatchPartnerMail({
+      to: input.to,
+      subject: `Código para primeiro acesso — ${input.companyName.trim() || 'portal corporativo'}`,
+      text: buildPartnerOnboardingRecoveryCodeText(content),
+      html: buildPartnerOnboardingRecoveryCodeHtml(content),
+      logLabel: 'código de verificação onboarding corporativo',
+      missingConfigHint: `Código: ${input.code}`,
+      bcc: this.partnerInviteMailBcc(),
+    });
+  }
+
+  async sendCorporateManagerOnboardingAlreadyConfigured(input: {
+    to: string;
+    companyName: string;
+    loginUrl: string;
+  }): Promise<SendPartnerOnboardingInviteResult> {
+    const content = {
+      networkName: input.companyName,
+      loginUrl: input.loginUrl.trim(),
+      logoUrl: await this.employeeInviteLogoUrl(),
+    };
+    return this.dispatchPartnerMail({
+      to: input.to,
+      subject: buildPartnerOnboardingAlreadyConfiguredSubject(input.companyName),
+      text: buildPartnerOnboardingAlreadyConfiguredText(content),
+      html: buildPartnerOnboardingAlreadyConfiguredHtml(content),
+      logLabel: 'aviso de acesso corporativo já configurado',
+    });
+  }
+
+  async sendCorporateManagerOnboardingInvite(input: {
+    to: string;
+    companyName: string;
+    inviteUrl: string;
+    expiresAt: Date;
+  }): Promise<SendPartnerOnboardingInviteResult> {
+    const expiresAtLabel = input.expiresAt.toLocaleString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      dateStyle: 'short',
+      timeStyle: 'short',
+    });
+    const companyName = input.companyName.trim() || 'sua empresa';
+    const inviteUrl = input.inviteUrl.trim();
+    const subject = `Movly — primeiro acesso ao portal corporativo de ${companyName}`;
+    const text = [
+      `Olá,`,
+      '',
+      `A ${companyName} foi pré-cadastrada na Movly para oferecer o benefício de bem-estar aos colaboradores.`,
+      '',
+      `Use o link abaixo para criar seu acesso como gestor do RH no portal corporativo:`,
+      inviteUrl,
+      '',
+      `O link é válido até ${expiresAtLabel}.`,
+      '',
+      'Abra no navegador e preencha seus dados de acesso (nome, CPF, e-mail e senha).',
+      'Após concluir, a equipe Movly fará a aprovação final para liberar o benefício.',
+      '',
+      'Equipe Movly',
+    ].join('\n');
+    const html = `<!DOCTYPE html><html lang="pt-BR"><body style="font-family:system-ui,sans-serif;line-height:1.5;color:#1a1a2e">
+<p>Olá,</p>
+<p>A <strong>${companyName}</strong> foi pré-cadastrada na Movly para oferecer o benefício de bem-estar aos colaboradores.</p>
+<p><a href="${inviteUrl}" style="display:inline-block;padding:12px 18px;background:#4c1d95;color:#fff;text-decoration:none;border-radius:8px;font-weight:600">Criar meu acesso no portal</a></p>
+<p style="font-size:13px;color:#555">Ou copie o link: <a href="${inviteUrl}">${inviteUrl}</a><br/>Válido até ${expiresAtLabel}.</p>
+<p style="font-size:13px;color:#555">Após concluir o cadastro, a equipe Movly aprovará a empresa para liberar colaboradores e faturas.</p>
+<p>Equipe Movly</p>
+</body></html>`;
+
+    return this.dispatchPartnerMail({
+      to: input.to,
+      subject,
+      text,
+      html,
+      logLabel: 'convite de onboarding gestor corporativo',
+      missingConfigHint: 'Use "Gerar link" no admin e envie manualmente.',
+    });
+  }
 }

@@ -14,10 +14,12 @@ import { MailModule } from '../mail/mail.module';
 import { PartnerOnboardingCnpjChallenge } from './partner-onboarding-cnpj-challenge.entity';
 import { PartnerOnboardingEmailSend } from './partner-onboarding-email-send.entity';
 import { PartnerOnboardingInvite } from './partner-onboarding-invite.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PartnerOnboardingService } from './partner-onboarding.service';
 
 @Module({
   imports: [
+    NotificationsModule,
     MailModule,
     TypeOrmModule.forFeature([
       PartnerOnboardingInvite,

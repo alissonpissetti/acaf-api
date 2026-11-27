@@ -2,59 +2,104 @@ import type { AdminNetwork, GymUnit } from '../partner/types';
 import { isValidMobilePhone, normalizeMobilePhone } from '../users/person.utils';
 
 export type PartnerOnboardingInviteRecipient = {
+  /** Exibição no admin (vários endereços unidos com ` / `). */
   email: string;
+  /** Destinatários individuais para envio. */
+  emails: string[];
   source: 'network' | 'unit';
   unitId: string | null;
   scopeType: 'unit' | 'network';
   scopeId: string;
 };
 
-function normalizeEmail(value: string | undefined | null): string {
-  return String(value ?? '')
-    .trim()
-    .toLowerCase();
+const CONTACT_EMAIL_SPLIT = /[/,;]+/;
+
+function isPlausibleEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+/** Aceita um ou vários e-mails no mesmo campo (`a@x.com / b@x.com`). */
+export function parseContactEmailList(value: string | undefined | null): string[] {
+  const raw = String(value ?? '').trim();
+  if (!raw) return [];
+
+  const parts = raw
+    .split(CONTACT_EMAIL_SPLIT)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.length > 0);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    if (!isPlausibleEmail(part)) continue;
+    if (seen.has(part)) continue;
+    seen.add(part);
+    out.push(part);
+  }
+  return out;
+}
+
+export function formatContactEmailsForDisplay(emails: string[]): string {
+  return emails.join(' / ');
+}
+
+export function contactEmailIsInviteRecipient(
+  recipient: PartnerOnboardingInviteRecipient,
+  email: string,
+): boolean {
+  const normalized = email.trim().toLowerCase();
+  return recipient.emails.includes(normalized);
+}
+
+function recipientFromEmails(
+  emails: string[],
+  source: 'network' | 'unit',
+  scope: { scopeType: 'unit' | 'network'; scopeId: string; unitId: string | null },
+): PartnerOnboardingInviteRecipient {
+  return {
+    email: formatContactEmailsForDisplay(emails),
+    emails,
+    source,
+    unitId: scope.unitId,
+    scopeType: scope.scopeType,
+    scopeId: scope.scopeId,
+  };
 }
 
 export function resolvePartnerOnboardingInviteRecipient(
   network: AdminNetwork,
   unitsInNetwork: GymUnit[],
 ): PartnerOnboardingInviteRecipient | null {
-  const networkEmail = normalizeEmail(network.partnerContactEmail);
-  if (networkEmail) {
-    return {
-      email: networkEmail,
-      source: 'network',
-      unitId: null,
+  const networkEmails = parseContactEmailList(network.partnerContactEmail);
+  if (networkEmails.length) {
+    return recipientFromEmails(networkEmails, 'network', {
       scopeType: 'network',
       scopeId: network.id,
-    };
+      unitId: null,
+    });
   }
 
   if (unitsInNetwork.length === 1) {
     const unit = unitsInNetwork[0]!;
-    const email = normalizeEmail(unit.acafAssociate?.contactEmail);
-    if (email) {
-      return {
-        email,
-        source: 'unit',
-        unitId: unit.id,
+    const emails = parseContactEmailList(unit.acafAssociate?.contactEmail);
+    if (emails.length) {
+      return recipientFromEmails(emails, 'unit', {
         scopeType: 'unit',
         scopeId: unit.id,
-      };
+        unitId: unit.id,
+      });
     }
     return null;
   }
 
-  const withEmail = unitsInNetwork.find((u) => normalizeEmail(u.acafAssociate?.contactEmail));
+  const withEmail = unitsInNetwork.find((u) => parseContactEmailList(u.acafAssociate?.contactEmail).length > 0);
   if (withEmail) {
-    const email = normalizeEmail(withEmail.acafAssociate?.contactEmail);
-    return {
-      email,
-      source: 'unit',
-      unitId: withEmail.id,
+    const emails = parseContactEmailList(withEmail.acafAssociate?.contactEmail);
+    return recipientFromEmails(emails, 'unit', {
       scopeType: 'unit',
       scopeId: withEmail.id,
-    };
+      unitId: withEmail.id,
+    });
   }
 
   return null;

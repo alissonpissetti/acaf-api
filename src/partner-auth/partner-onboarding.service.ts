@@ -11,6 +11,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'node:crypto';
 import { In, IsNull, MoreThan, Repository } from 'typeorm';
+import { OnboardingNotificationsService } from '../notifications/onboarding-notifications.service';
 import { MailService } from '../mail/mail.service';
 import { SmsService } from '../sms/sms.service';
 import { PartnerAccessService } from '../platform-users/partner-access.service';
@@ -27,6 +28,8 @@ import { PartnerOnboardingInvite } from './partner-onboarding-invite.entity';
 import {
   resolvePartnerContactName,
   resolvePartnerContactPhone,
+  contactEmailIsInviteRecipient,
+  formatContactEmailsForDisplay,
   resolvePartnerOnboardingInviteRecipient,
   todayDateBr,
   type PartnerOnboardingInviteRecipient,
@@ -140,6 +143,7 @@ export class PartnerOnboardingService {
     private readonly mail: MailService,
     private readonly sms: SmsService,
     private readonly config: ConfigService,
+    private readonly onboardingNotifications: OnboardingNotificationsService,
   ) {}
 
   private partnerPortalBaseUrl(): string {
@@ -400,7 +404,7 @@ export class PartnerOnboardingService {
     const recipient = this.resolveInviteRecipientForNetwork(network, store);
     const normalized = email.trim().toLowerCase();
     const isInviteRecipient =
-      Boolean(recipient) && recipient!.email.trim().toLowerCase() === normalized;
+      Boolean(recipient) && contactEmailIsInviteRecipient(recipient!, normalized);
 
     const linkedUnitIds = await this.partnerAccess.listUnitIdsForUser(userId);
     const linkedToThisNetwork = linkedUnitIds.some((id) => unitIds.includes(id));
@@ -446,7 +450,23 @@ export class PartnerOnboardingService {
     row.usedByUserId = userId;
     await this.invites.save(row);
 
-    return this.partnerAuth.issueTokensForUserId(userId);
+    const authResult = await this.partnerAuth.issueTokensForUserId(userId);
+
+    if (row.kind === PARTNER_INVITE_KIND_ONBOARDING) {
+      const store = loadStore();
+      const network = store.networks.find((n) => n.id === row.networkId);
+      const user = await this.users.findById(userId);
+      if (network && user) {
+        void this.onboardingNotifications.onPartnerOnboardingCompleted({
+          networkId: network.id,
+          networkName: network.name,
+          userName: user.name,
+          userEmail: user.email,
+        });
+      }
+    }
+
+    return authResult;
   }
 
   async completeInvite(
@@ -650,6 +670,7 @@ export class PartnerOnboardingService {
   ): Promise<{
     sent: boolean;
     recipientEmail: string;
+    recipientEmails: string[];
     inviteUrl: string;
     expiresAt: string;
     inviteKind: PartnerInviteKind;
@@ -690,31 +711,41 @@ export class PartnerOnboardingService {
     );
     const expiresDate = new Date(expiresAt);
 
-    const mailResult =
-      inviteKind === PARTNER_INVITE_KIND_TEAM
-        ? await this.mail.sendPartnerTeamInvite({
-            to: resolved.email,
-            networkName: network.name,
-            inviteUrl,
-            expiresAt: expiresDate,
-          })
-        : await this.mail.sendPartnerOnboardingInvite({
-            to: resolved.email,
-            networkName: network.name,
-            inviteUrl,
-            expiresAt: expiresDate,
-          });
+    const sendTargets = resolved.emails.length ? resolved.emails : [resolved.email];
+    const recipientEmailLabel = formatContactEmailsForDisplay(sendTargets);
 
-    if (!mailResult.sent) {
-      const manualHint =
+    for (const to of sendTargets) {
+      const mailResult =
         inviteKind === PARTNER_INVITE_KIND_TEAM
-          ? 'Não foi possível enviar o e-mail. Use "Gerar link de equipe" e envie manualmente.'
-          : 'Não foi possível enviar o e-mail. Use "Gerar link" e envie manualmente.';
-      throw new BadRequestException(mailResult.reason ?? manualHint);
+          ? await this.mail.sendPartnerTeamInvite({
+              to,
+              networkName: network.name,
+              inviteUrl,
+              expiresAt: expiresDate,
+            })
+          : await this.mail.sendPartnerOnboardingInvite({
+              to,
+              networkName: network.name,
+              inviteUrl,
+              expiresAt: expiresDate,
+            });
+
+      if (!mailResult.sent) {
+        const manualHint =
+          inviteKind === PARTNER_INVITE_KIND_TEAM
+            ? 'Não foi possível enviar o e-mail. Use "Gerar link de equipe" e envie manualmente.'
+            : 'Não foi possível enviar o e-mail. Use "Gerar link" e envie manualmente.';
+        const detail = mailResult.reason ?? manualHint;
+        throw new BadRequestException(
+          sendTargets.length > 1
+            ? `${detail} (falha ao enviar para ${to}).`
+            : detail,
+        );
+      }
     }
 
     if (existing) {
-      existing.recipientEmail = resolved.email;
+      existing.recipientEmail = recipientEmailLabel;
       existing.createdByUserId = createdByUserId;
       await this.emailSends.save(existing);
     } else {
@@ -724,7 +755,7 @@ export class PartnerOnboardingService {
           scopeId: resolved.scopeId,
           sentOn: today,
           networkId: network.id,
-          recipientEmail: resolved.email,
+          recipientEmail: recipientEmailLabel,
           createdByUserId,
         }),
       );
@@ -732,7 +763,8 @@ export class PartnerOnboardingService {
 
     return {
       sent: true,
-      recipientEmail: resolved.email,
+      recipientEmail: recipientEmailLabel,
+      recipientEmails: sendTargets,
       inviteUrl,
       expiresAt,
       inviteKind,
@@ -801,7 +833,9 @@ export class PartnerOnboardingService {
       message: CNPJ_RECOVERY_CONFIRM_CONTACT_MESSAGE,
       networkName: network.name,
       channels: this.recoveryChannelsForNetwork(network, store),
-      maskedEmail: recipient ? maskEmailForDisplay(recipient.email) : null,
+      maskedEmail: recipient
+        ? recipient.emails.map((addr) => maskEmailForDisplay(addr)).join(' / ')
+        : null,
       maskedPhone: phone ? maskMobilePhoneForDisplay(phone) : null,
       contactName: name ? maskPersonNameForDisplay(name) : null,
     };
@@ -911,11 +945,14 @@ export class PartnerOnboardingService {
       if (inviteKind === PARTNER_INVITE_KIND_TEAM) {
         const recipient = this.resolveInviteRecipientForNetwork(network, store);
         if (recipient) {
-          await this.mail.sendPartnerOnboardingAlreadyConfigured({
-            to: recipient.email,
-            networkName: network.name,
-            loginUrl: `${this.partnerPortalBaseUrl()}/login`,
-          });
+          const targets = recipient.emails.length ? recipient.emails : [recipient.email];
+          for (const to of targets) {
+            await this.mail.sendPartnerOnboardingAlreadyConfigured({
+              to,
+              networkName: network.name,
+              loginUrl: `${this.partnerPortalBaseUrl()}/login`,
+            });
+          }
         }
         return this.alreadyConfiguredResult();
       }
@@ -937,7 +974,8 @@ export class PartnerOnboardingService {
       const recipient = this.resolveInviteRecipientForNetwork(network, store);
       const emailTo =
         deliveryChannel === 'email'
-          ? (contactCorrection?.email ?? recipient?.email ?? null)
+          ? (contactCorrection?.email ??
+            (recipient?.emails.length ? recipient.emails[0]! : recipient?.email ?? null))
           : null;
       const phoneTo =
         deliveryChannel === 'sms'

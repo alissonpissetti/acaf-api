@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Body, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthOtpPurpose } from '../auth/auth-otp.entity';
 import { CorporateAuthService } from './corporate-auth.service';
 import { CorporateJwtAuthGuard } from './corporate-jwt-auth.guard';
+import { CorporateManagerOnboardingService } from './corporate-manager-onboarding.service';
 
 type CorpAuthRequest = Request & {
   user: { userId: string; companyId: string; companyIds: string[] };
@@ -12,7 +13,54 @@ type CorpAuthRequest = Request & {
 @ApiTags('Corporativo · Auth')
 @Controller('corporate/auth')
 export class CorporateAuthController {
-  constructor(private readonly auth: CorporateAuthService) {}
+  constructor(
+    private readonly auth: CorporateAuthService,
+    private readonly managerOnboarding: CorporateManagerOnboardingService,
+  ) {}
+
+  @Post('onboarding/recover/request')
+  @HttpCode(200)
+  requestManagerOnboardingCnpjRecovery(
+    @Body()
+    body: {
+      cnpj?: string;
+      channel?: 'email' | 'sms';
+      contactCorrection?: { name?: string; email?: string; mobilePhone?: string };
+    },
+  ) {
+    const channel = body.channel === 'sms' || body.channel === 'email' ? body.channel : undefined;
+    return this.managerOnboarding.requestCnpjRecovery(
+      body.cnpj ?? '',
+      channel,
+      body.contactCorrection,
+    );
+  }
+
+  @Post('onboarding/recover/verify')
+  @HttpCode(200)
+  verifyManagerOnboardingCnpjRecovery(@Body() body: { cnpj?: string; code?: string }) {
+    return this.managerOnboarding.verifyCnpjRecovery(body.cnpj ?? '', body.code ?? '');
+  }
+
+  @Get('onboarding/:token/preview')
+  managerOnboardingPreview(@Param('token') token: string) {
+    return this.managerOnboarding.getPreviewByToken(token);
+  }
+
+  @Post('onboarding/:token/complete')
+  managerOnboardingComplete(
+    @Param('token') token: string,
+    @Body()
+    body: {
+      name: string;
+      email: string;
+      cpf: string;
+      mobilePhone: string;
+      password: string;
+    },
+  ) {
+    return this.managerOnboarding.completeInvite(token, body);
+  }
 
   @Post('signup')
   signup(

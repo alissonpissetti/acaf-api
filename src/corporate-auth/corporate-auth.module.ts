@@ -7,16 +7,29 @@ import { AuthOtp } from '../auth/auth-otp.entity';
 import { AuthOtpService } from '../auth/auth-otp.service';
 import { SmsModule } from '../sms/sms.module';
 import { UsersModule } from '../users/users.module';
+import { MailModule } from '../mail/mail.module';
+import { Company } from '../corporate/company.entity';
 import { CorporateModule } from '../corporate/corporate.module';
 import { CorporateAuthController } from './corporate-auth.controller';
 import { CorporateAuthService } from './corporate-auth.service';
 import { CorporateJwtStrategy } from './corporate-jwt.strategy';
+import { CorporateManagerOnboardingCnpjChallenge } from './corporate-manager-onboarding-cnpj-challenge.entity';
+import { CorporateManagerOnboardingInvite } from './corporate-manager-onboarding-invite.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { CorporateManagerOnboardingService } from './corporate-manager-onboarding.service';
 
 @Module({
   imports: [
+    NotificationsModule,
     forwardRef(() => UsersModule),
     SmsModule,
-    TypeOrmModule.forFeature([AuthOtp]),
+    TypeOrmModule.forFeature([
+      AuthOtp,
+      CorporateManagerOnboardingInvite,
+      CorporateManagerOnboardingCnpjChallenge,
+      Company,
+    ]),
+    MailModule,
     forwardRef(() => CorporateModule),
     PassportModule,
     JwtModule.registerAsync({
@@ -29,7 +42,12 @@ import { CorporateJwtStrategy } from './corporate-jwt.strategy';
     }),
   ],
   controllers: [CorporateAuthController],
-  providers: [CorporateAuthService, CorporateJwtStrategy, AuthOtpService],
-  exports: [CorporateAuthService, CorporateJwtStrategy],
+  providers: [
+    CorporateAuthService,
+    CorporateJwtStrategy,
+    AuthOtpService,
+    CorporateManagerOnboardingService,
+  ],
+  exports: [CorporateAuthService, CorporateJwtStrategy, CorporateManagerOnboardingService],
 })
 export class CorporateAuthModule {}

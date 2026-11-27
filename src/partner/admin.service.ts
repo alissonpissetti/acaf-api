@@ -21,6 +21,7 @@ import { CorporateEmployeesService } from '../corporate/corporate-employees.serv
 import { CorporateMonthlyStatementsService } from '../corporate/corporate-monthly-statements.service';
 import { PayerMembershipFeeStatementService } from '../finance/payer-membership-fee-statement.service';
 import type { Company, CompanyStatus } from '../corporate/company.entity';
+import { CompanyInvoice } from '../corporate/company-invoice.entity';
 import {
   normalizeCheckInMaxRadiusKmInput,
   normalizeGymSwitchMinCheckinsAtUnitInput,
@@ -85,6 +86,7 @@ import {
 } from './partnerClients';
 import { listUnitPrimaryMemberRows } from './unit-primary-members';
 import { PartnerOnboardingService } from '../partner-auth/partner-onboarding.service';
+import { CorporateManagerOnboardingService } from '../corporate-auth/corporate-manager-onboarding.service';
 import { isConnectSyntheticEmail } from '../asaas/connect-checkout-identity';
 
 type ConnectPlan = {
@@ -152,8 +154,11 @@ export class AdminService {
     private readonly suppliers: Repository<Supplier>,
     @InjectRepository(EvolutionInstance)
     private readonly evolutionInstances: Repository<EvolutionInstance>,
+    @InjectRepository(CompanyInvoice)
+    private readonly companyInvoices: Repository<CompanyInvoice>,
     private readonly systemSettings: SystemSettingsService,
     private readonly partnerOnboarding: PartnerOnboardingService,
+    private readonly corporateManagerOnboarding: CorporateManagerOnboardingService,
     private readonly associations: AssociationsService,
   ) {}
 
@@ -1474,16 +1479,35 @@ export class AdminService {
 
   async listCompanies(status?: CompanyStatus) {
     const rows = await this.corporateAccess.listCompanies(status);
+    if (!rows.length) return [];
+
+    const companyIds = rows.map((company) => company.id);
+    const invoiceCountByCompany = await this.invoiceCountsByCompanyIds(companyIds);
+    const receivableCountByCompany = await this.receivableCountsByCompanyIds(companyIds);
+    const payableCountByCompany = await this.payableCountsByCompanyCnpj(rows);
+
     const result = [];
     for (const company of rows) {
       const managers = await this.corporateAccess.listCompanyManagers(company.id);
       const employees = await this.corporateEmployees.listEmployees(company.id);
-      result.push(
-        await this.companyDtoWithOwner(company, {
+      const deletion = this.buildCompanyDeletionMeta({
+        employeeCount: employees.length,
+        invoiceCount: invoiceCountByCompany.get(company.id) ?? 0,
+        receivableCount: receivableCountByCompany.get(company.id) ?? 0,
+        payableCount: payableCountByCompany.get(company.id) ?? 0,
+      });
+      const managerOnboardingInvite =
+        managers.length === 0
+          ? await this.corporateManagerOnboarding.describePersistedInvite(company)
+          : null;
+      result.push({
+        ...(await this.companyDtoWithOwner(company, {
           managers: managers.length,
           employees: employees.length,
-        }),
-      );
+        })),
+        ...deletion,
+        managerOnboardingInvite,
+      });
     }
     return result;
   }
@@ -1493,14 +1517,52 @@ export class AdminService {
     if (!company) throw new NotFoundException('Empresa não encontrada.');
     const managers = await this.corporateAccess.listCompanyManagers(id);
     const employees = await this.corporateEmployees.listEmployees(id);
+    const { receivableCount, payableCount } = await this.financeCountsForCompany(company);
+    const invoiceCount = await this.companyInvoices.count({ where: { companyId: id } });
+    let deletion = this.buildCompanyDeletionMeta({
+      employeeCount: employees.length,
+      invoiceCount,
+      receivableCount,
+      payableCount,
+    });
+    if (deletion.canDelete && employees.length > 0) {
+      try {
+        this.assertEmployeesHaveNoCheckIns(employees);
+      } catch (err) {
+        if (err instanceof BadRequestException) {
+          deletion = { canDelete: false, deleteBlockedReason: err.message };
+        } else {
+          throw err;
+        }
+      }
+    }
+    const managerOnboardingInvite =
+      managers.length === 0
+        ? await this.corporateManagerOnboarding.describePersistedInvite(company)
+        : null;
+
     return {
       ...(await this.companyDtoWithOwner(company, {
         managers: managers.length,
         employees: employees.length,
       })),
+      ...deletion,
+      managerOnboardingInvite,
       managers,
       employees,
     };
+  }
+
+  createCompanyManagerOnboardingInvite(companyId: string, createdByUserId: string | null) {
+    return this.corporateManagerOnboarding.getOrCreateAdminPersistedInvite(companyId, createdByUserId);
+  }
+
+  sendCompanyManagerOnboardingInviteEmail(
+    companyId: string,
+    createdByUserId: string | null,
+    body?: { forceResend?: boolean; to?: string },
+  ) {
+    return this.corporateManagerOnboarding.sendInviteEmail(companyId, createdByUserId, body);
   }
 
   async updateCompanyStatus(id: string, status: CompanyStatus, actingUserId?: string) {
@@ -1542,13 +1604,23 @@ export class AdminService {
     }
 
     const employees = await this.corporateEmployees.listEmployees(id);
-
-    await this.assertCompanyHasNoFinanceEntries(company);
+    const { receivableCount, payableCount } = await this.financeCountsForCompany(company);
+    const invoiceCount = await this.companyInvoices.count({ where: { companyId: id } });
+    const deletion = this.buildCompanyDeletionMeta({
+      employeeCount: employees.length,
+      invoiceCount,
+      receivableCount,
+      payableCount,
+    });
+    if (!deletion.canDelete) {
+      throw new BadRequestException(deletion.deleteBlockedReason ?? 'Não é possível excluir a empresa.');
+    }
+    this.assertEmployeesHaveNoCheckIns(employees);
 
     await this.commercialLeads.update({ convertedCompanyId: id }, { convertedCompanyId: null });
     await this.corporateEmployees.removeAllForCompany(id);
     await this.corporateAccess.deleteCompany(id);
-    return { ok: true, removedEmployees: employees.length };
+    return { ok: true };
   }
 
   async removeCompanyEmployee(companyId: string, employeeId: string) {
@@ -1667,6 +1739,74 @@ export class AdminService {
     };
   }
 
+  async getCompanyUsageOverview(companyId: string) {
+    const company = await this.corporateAccess.findCompanyById(companyId);
+    if (!company) {
+      throw new NotFoundException('Empresa não encontrada.');
+    }
+
+    const employees = await this.corporateEmployees.listEmployees(companyId);
+    const store = loadStore();
+    const unitIds = store.units.map((unit) => unit.id);
+
+    let totalCheckIns = 0;
+    let checkInsThisMonth = 0;
+    let dailyPassesTotal = 0;
+    let dailyPassesThisMonth = 0;
+    let employeesWithUsage = 0;
+
+    const rows = employees.map((employee) => {
+      const linkedMember = findConnectMemberForPlatformUser(store, {
+        id: employee.userId,
+        name: employee.name,
+        email: employee.email,
+        cpf: employee.cpf ? normalizeCpf(employee.cpf) : null,
+      });
+      const holderKey = linkedMember?.holderKey ?? normalizeHolderKey(employee.name);
+      const client =
+        getPartnerClientDetail(store, unitIds, holderKey, 'all') ??
+        this.emptyClientProfile(employee.name, holderKey);
+
+      const empTotal = client.totalCheckIns ?? 0;
+      const empMonth = client.checkInsThisMonth ?? 0;
+      const empDaily = client.dailyPassesTotal ?? 0;
+      totalCheckIns += empTotal;
+      checkInsThisMonth += empMonth;
+      dailyPassesTotal += client.dailyPassesTotal ?? 0;
+      dailyPassesThisMonth += client.dailyPassesThisMonth ?? 0;
+      if (empTotal > 0 || empDaily > 0) {
+        employeesWithUsage += 1;
+      }
+
+      return {
+        id: employee.id,
+        name: employee.name,
+        email: employee.email,
+        status: employee.status,
+        totalCheckIns: empTotal,
+        checkInsThisMonth: empMonth,
+        dailyPassesTotal: client.dailyPassesTotal ?? 0,
+        dailyPassesThisMonth: client.dailyPassesThisMonth ?? 0,
+        lastVisit: client.lastVisit ?? null,
+        connectActive: Boolean(linkedMember?.active),
+      };
+    });
+
+    rows.sort((left, right) => left.name.localeCompare(right.name, 'pt-BR'));
+
+    return {
+      totals: {
+        employees: employees.length,
+        employeesWithUsage,
+        totalCheckIns,
+        checkInsThisMonth,
+        dailyPassesTotal,
+        dailyPassesThisMonth,
+      },
+      employees: rows,
+    };
+  }
+
   private emptyClientProfile(name: string, holderKey: string): PartnerClientDetail {
     return {
       holderKey,
@@ -1683,7 +1823,51 @@ export class AdminService {
     };
   }
 
-  private async assertCompanyHasNoFinanceEntries(company: Company): Promise<void> {
+  private buildCompanyDeletionMeta(parts: {
+    employeeCount: number;
+    invoiceCount: number;
+    receivableCount: number;
+    payableCount: number;
+  }): { canDelete: boolean; deleteBlockedReason: string | null } {
+    const reasons: string[] = [];
+    if (parts.employeeCount > 0) {
+      reasons.push(
+        parts.employeeCount === 1
+          ? '1 colaborador cadastrado'
+          : `${parts.employeeCount} colaboradores cadastrados`,
+      );
+    }
+    if (parts.invoiceCount > 0) {
+      reasons.push(
+        parts.invoiceCount === 1 ? '1 fatura emitida' : `${parts.invoiceCount} faturas emitidas`,
+      );
+    }
+    if (parts.receivableCount > 0) {
+      reasons.push(
+        parts.receivableCount === 1
+          ? '1 lançamento a receber no financeiro'
+          : `${parts.receivableCount} lançamentos a receber no financeiro`,
+      );
+    }
+    if (parts.payableCount > 0) {
+      reasons.push(
+        parts.payableCount === 1
+          ? '1 lançamento a pagar no financeiro'
+          : `${parts.payableCount} lançamentos a pagar no financeiro`,
+      );
+    }
+    if (!reasons.length) {
+      return { canDelete: true, deleteBlockedReason: null };
+    }
+    return {
+      canDelete: false,
+      deleteBlockedReason: `Não é possível excluir a empresa: ${reasons.join('; ')}.`,
+    };
+  }
+
+  private async financeCountsForCompany(
+    company: Company,
+  ): Promise<{ receivableCount: number; payableCount: number }> {
     const activeEntries = { status: Not(CashEntryStatus.CANCELLED) };
 
     const receivableCount = await this.receivables.count({
@@ -1712,19 +1896,90 @@ export class AdminService {
       }
     }
 
-    if (receivableCount === 0 && payableCount === 0) return;
+    return { receivableCount, payableCount };
+  }
 
-    const parts: string[] = [];
-    if (receivableCount > 0) {
-      parts.push(`${receivableCount} conta(s) a receber`);
+  private async invoiceCountsByCompanyIds(companyIds: string[]): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    if (!companyIds.length) return map;
+
+    const rows = await this.companyInvoices
+      .createQueryBuilder('inv')
+      .select('inv.companyId', 'companyId')
+      .addSelect('COUNT(*)', 'cnt')
+      .where('inv.companyId IN (:...companyIds)', { companyIds })
+      .groupBy('inv.companyId')
+      .getRawMany<{ companyId: string; cnt: string }>();
+
+    for (const row of rows) {
+      map.set(row.companyId, Number(row.cnt) || 0);
     }
-    if (payableCount > 0) {
-      parts.push(`${payableCount} conta(s) a pagar`);
+    return map;
+  }
+
+  private async receivableCountsByCompanyIds(companyIds: string[]): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    if (!companyIds.length) return map;
+
+    const rows = await this.receivables
+      .createQueryBuilder('r')
+      .select('r.payerRefId', 'companyId')
+      .addSelect('COUNT(*)', 'cnt')
+      .where('r.payerKind = :payerKind', { payerKind: 'company' })
+      .andWhere('r.payerRefId IN (:...companyIds)', { companyIds })
+      .andWhere('r.status != :cancelled', { cancelled: CashEntryStatus.CANCELLED })
+      .groupBy('r.payerRefId')
+      .getRawMany<{ companyId: string; cnt: string }>();
+
+    for (const row of rows) {
+      map.set(row.companyId, Number(row.cnt) || 0);
+    }
+    return map;
+  }
+
+  private async payableCountsByCompanyCnpj(companies: Company[]): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    const documentToCompanyId = new Map<string, string>();
+
+    for (const company of companies) {
+      const document = company.cnpj?.replace(/\D/g, '') ?? '';
+      if (!document) continue;
+      documentToCompanyId.set(document, company.id);
     }
 
-    throw new BadRequestException(
-      `Não é possível excluir a empresa: existem ${parts.join(' e ')} vinculadas. Remova ou cancele os lançamentos no financeiro antes de excluir.`,
-    );
+    const documents = [...documentToCompanyId.keys()];
+    if (!documents.length) return map;
+
+    const supplierRows = await this.suppliers.find({
+      where: { document: In(documents) },
+      select: ['id', 'document'],
+    });
+    if (!supplierRows.length) return map;
+
+    const supplierIdToCompanyId = new Map<string, string>();
+    for (const supplier of supplierRows) {
+      const document = supplier.document?.replace(/\D/g, '') ?? '';
+      const companyId = documentToCompanyId.get(document);
+      if (companyId) supplierIdToCompanyId.set(supplier.id, companyId);
+    }
+
+    const supplierIds = supplierRows.map((row) => row.id);
+    const payables = await this.payables
+      .createQueryBuilder('p')
+      .select('p.supplierId', 'supplierId')
+      .addSelect('COUNT(*)', 'cnt')
+      .where('p.supplierId IN (:...supplierIds)', { supplierIds })
+      .andWhere('p.status != :cancelled', { cancelled: CashEntryStatus.CANCELLED })
+      .groupBy('p.supplierId')
+      .getRawMany<{ supplierId: string; cnt: string }>();
+
+    for (const row of payables) {
+      const companyId = supplierIdToCompanyId.get(row.supplierId);
+      if (!companyId) continue;
+      const count = Number(row.cnt) || 0;
+      map.set(companyId, (map.get(companyId) ?? 0) + count);
+    }
+    return map;
   }
 
   private assertEmployeesHaveNoCheckIns(

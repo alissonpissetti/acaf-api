@@ -10,6 +10,7 @@ import { UsersModule } from '../users/users.module';
 import { StorageModule } from '../storage/storage.module';
 import { ModalitiesModule } from '../modalities/modalities.module';
 import { CorporateModule } from '../corporate/corporate.module';
+import { CorporateAuthModule } from '../corporate-auth/corporate-auth.module';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { PartnerController, SharedController } from './partner.controller';
@@ -25,6 +26,7 @@ import { MemberAuthModule } from '../member-auth/member-auth.module';
 import { AssociateRepasseDailyScheduler } from './associate-repasse-daily.scheduler';
 import { SystemSettingsModule } from '../system-settings/system-settings.module';
 import { EvolutionInstance } from '../evolution/evolution-instance.entity';
+import { CompanyInvoice } from '../corporate/company-invoice.entity';
 import { AssociationsModule } from '../associations/associations.module';
 import { AssociateStoreMigrationService } from '../associations/associate-store-migration.service';
 import { AsaasModule } from '../asaas/asaas.module';
@@ -45,6 +47,7 @@ import { FinanceModule } from '../finance/finance.module';
       AccountReceivable,
       Supplier,
       EvolutionInstance,
+      CompanyInvoice,
     ]),
     AddressesModule,
     StorageModule,
@@ -52,6 +55,7 @@ import { FinanceModule } from '../finance/finance.module';
     forwardRef(() => UsersModule),
     ModalitiesModule,
     forwardRef(() => CorporateModule),
+    forwardRef(() => CorporateAuthModule),
     SystemSettingsModule,
   ],
   controllers: [PartnerController, SharedController, AdminController],

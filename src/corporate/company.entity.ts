@@ -39,6 +39,13 @@ export class Company {
   @Column({ name: 'commercial_owner_user_id', type: 'uuid', nullable: true })
   commercialOwnerUserId: string | null;
 
+  /** Token em claro do convite de primeiro acesso do gestor (reuso do link no admin). */
+  @Column({ name: 'manager_onboarding_invite_token', type: 'varchar', length: 64, nullable: true })
+  managerOnboardingInviteToken: string | null;
+
+  @Column({ name: 'manager_onboarding_invite_expires_at', type: 'datetime', nullable: true })
+  managerOnboardingInviteExpiresAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
