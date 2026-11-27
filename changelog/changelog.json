@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "646db33a-a1be-493f-8b24-24880906b319",
+      "commitSha": "16adc25ed8f40bda9f65d743cdc8dfd38a941d6b",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-27T14:23:05-03:00",
+      "title": "Notifica o admin ao concluir onboarding e envia convite a vários e-mails.",
+      "summary": "Parceiros: divide contatos com barra no convite; corporativo: onboarding do gestor e gatilhos in-app para operação e empresas.",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "b30f874b-180b-419f-9bc7-8cb9bcfcaccc",
       "commitSha": "1afb50d9db5a63884b79745a7699e6287ab8958c",
       "repository": "api",
