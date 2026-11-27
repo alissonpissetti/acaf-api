@@ -2,6 +2,24 @@
   "version": 1,
   "entries": [
     {
+      "id": "51a2cc80-c370-4119-8b9c-b540503914ba",
+      "commitSha": "f8c6a135055298b62fb16aa6fd7071126701b6aa",
+      "repository": "api",
+      "source": "changelog",
+      "committedAt": "2026-11-27T14:23:20-03:00",
+      "title": "Atualiza changelog após notificações de onboarding e convites múltiplos.",
+      "summary": "Co-authored-by: Cursor <cursoragent@cursor.com>",
+      "category": "maintenance",
+      "areas": [
+        "api",
+        "plataforma"
+      ],
+      "highlights": [],
+      "author": "Alisson Pissetti",
+      "audience": "internal",
+      "published": true
+    },
+    {
       "id": "646db33a-a1be-493f-8b24-24880906b319",
       "commitSha": "16adc25ed8f40bda9f65d743cdc8dfd38a941d6b",
       "repository": "api",
